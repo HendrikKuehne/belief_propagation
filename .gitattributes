@@ -1,0 +1,6 @@
+# treat Mathematica notebooks as text files
+*.nb  text
+*.cdf text
+
+# treat PDF files as binary files
+*.pdf binary

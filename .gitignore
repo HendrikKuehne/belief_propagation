@@ -1,0 +1,29 @@
+
+# ignore Python temporary and compiled files
+__pycache__
+*.pyc
+
+# inore generated Jupyter files
+*.ipynb_checkpoints/
+
+# ignore compressed files
+*.zip
+*.tar.gz
+
+# Mac
+.DS_Store
+
+# ignore Latex temporary files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.log
+*.nav
+*.toc
+*.tcp
+*.tps
+*.snm
+*.fls
+*.synctex
+*.fdb_latexmk
