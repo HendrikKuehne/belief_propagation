@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def construct_network(chi: int, width: int, height: int, rng: np.random.Generator, psd: bool=False):
+def construct_network(chi: int, width: int, height: int, rng: np.random.Generator, real: bool=True, psd: bool=False):
     r"""
     Construct random tensors forming a network on a two-dimensional square lattice.
 
@@ -14,6 +14,10 @@ def construct_network(chi: int, width: int, height: int, rng: np.random.Generato
        \__3__/
           |
     """
+    if real:
+        randn = lambda size: rng.standard_normal(size)
+    else:
+        randn = lambda size: crandn(size, rng)
     tensors = []
     for i in range(height):
         row = []
@@ -26,15 +30,15 @@ def construct_network(chi: int, width: int, height: int, rng: np.random.Generato
             if psd:
                 h = int(np.sqrt(chi))
                 assert h**2 == chi
-                s = 0.3 * crandn((
+                s = 0.3 * randn((
                     1 if j == 0        else h,
                     1 if j == width-1  else h,
                     1 if i == 0        else h,
                     1 if i == height-1 else h,
-                    chi), rng)
+                    chi))
                 t = np.einsum(s, (0, 2, 4, 6, 8), s.conj(), (1, 3, 5, 7, 8), (0, 1, 2, 3, 4, 5, 6, 7)).reshape(dim) / chi**(3/4)
             else:
-                t = crandn(dim, rng) / chi**(3/4)
+                t = randn(dim) / chi**(3/4)
             row.append(t)
         tensors.append(row)
     return tensors
@@ -185,6 +189,47 @@ def message_passing_iteration(tensors, numiter: int):
     return msg_in_l, msg_in_r, msg_in_u, msg_in_d, eps_iter
 
 
+def normalize_messages(msg_in_l, msg_in_r, msg_in_u, msg_in_d):
+    """
+    Normalize messages such that the inner product between messages traveling
+    along the same bond but in opposite directions is one.
+    """
+    height = len(msg_in_l)
+    width  = len(msg_in_l[0])
+    msg_in_l_norm = []
+    msg_in_r_norm = []
+    msg_in_u_norm = []
+    msg_in_d_norm = []
+    for i in range(height):
+        row_in_l = []
+        row_in_r = []
+        # normalize incoming messages from "left" direction
+        row_in_l.append(np.array([1.]))
+        for j in range(1, width):
+            row_in_l.append(msg_in_l[i][j] / np.sqrt(np.abs(np.dot(msg_in_l[i][j], msg_in_r[i][j - 1]))))
+        # normalize incoming messages from "right" direction
+        for j in range(width - 1):
+            row_in_r.append(msg_in_r[i][j] / np.sqrt(np.abs(np.dot(msg_in_r[i][j], msg_in_l[i][j + 1]))))
+        row_in_r.append(np.array([1.]))
+        msg_in_l_norm.append(row_in_l)
+        msg_in_r_norm.append(row_in_r)
+    # normalize incoming messages from "up" direction
+    msg_in_u_norm.append(width * [np.array([1.])])
+    for i in range(1, height):
+        row_in_u = []
+        for j in range(width):
+            row_in_u.append(msg_in_u[i][j] / np.sqrt(np.abs(np.dot(msg_in_u[i][j], msg_in_d[i - 1][j]))))
+        msg_in_u_norm.append(row_in_u)
+    # normalize incoming messages from "down" direction
+    for i in range(height - 1):
+        row_in_d = []
+        for j in range(width):
+            row_in_d.append(msg_in_d[i][j] / np.sqrt(np.abs(np.dot(msg_in_d[i][j], msg_in_u[i + 1][j]))))
+        msg_in_d_norm.append(row_in_d)
+    msg_in_d_norm.append(width * [np.array([1.])])
+    return msg_in_l_norm, msg_in_r_norm, msg_in_u_norm, msg_in_d_norm
+
+
 def contract_tensors_messages(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d):
     """
     Fully contract each tensor with the incoming messages.
@@ -195,14 +240,14 @@ def contract_tensors_messages(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d):
     for i in range(height):
         row = []
         for j in range(width):
-            row.append(complex(
+            row.append(
                 np.einsum( tensors[i][j], (0, 1, 2, 3),
                           msg_in_l[i][j], (0,),
                           msg_in_r[i][j], (1,),
                           msg_in_u[i][j], (2,),
-                          msg_in_d[i][j], (3,), ())))
+                          msg_in_d[i][j], (3,), ()))
         cntr.append(row)
-    return cntr
+    return np.array(cntr)
 
 
 def crandn(size=None, rng: np.random.Generator=None):
@@ -222,7 +267,7 @@ def main():
 
     # construct network
     chi = 9
-    tensors = construct_network(chi, 4, 4, rng, True)
+    tensors = construct_network(chi, 4, 4, rng, real=False, psd=True)
 
     # reference contraction value
     c_ref = contract_network(tensors)
@@ -264,16 +309,21 @@ def main():
     # message passing iteration
     numiter = 30
     msg_in_l, msg_in_r, msg_in_u, msg_in_d, eps_iter = message_passing_iteration(s_tensors, numiter)
-    print("eps_iter:", eps_iter)
     plt.semilogy(range(1, numiter + 1), eps_iter)
     plt.xlabel("iteration")
     plt.ylabel("absolute change of message entries")
 
+    msg_in_l, msg_in_r, msg_in_u, msg_in_d = normalize_messages(msg_in_l, msg_in_r, msg_in_u, msg_in_d)
+
     # contract incoming messages with tensors
-    cntr = np.array(contract_tensors_messages(s_tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d))
+    cntr = contract_tensors_messages(s_tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d)
     print("cntr:")
     print(cntr)
-    print("np.sum(cntr):", np.sum(cntr))
+    print("np.prod(cntr):", np.prod(cntr))
+
+    # relative error
+    err = abs(np.prod(cntr) - c_ref) / abs(c_ref)
+    print("relative error:", err)
 
 
 if __name__ == "__main__":
