@@ -1,9 +1,22 @@
-Belief propagation for tensor network contraction
-=================================================
+# Belief propagation for tensor network contraction
 
+Forked on 11th of September from Mendl, so far (11.9.2024) just for initial exploration of the belief propagation algorithm.
 
-References
-----------
+## ToDo
+
+* Expand the alforithm to work on arbitary graphs.
+
+## Open questions
+
+This will be updated continuously, as questions come to mind.
+
+* How exactly does Christian's algorithm work? Which source does it resemble most closely, if any?
+    * How & why does the normalization work?
+* Why does it work only if `psd = True` in `construct_network`?
+    * Testing Christian's code on 11.9. without any modifications: rel. err. $\sim 10^{-3}$ for `psd=True`, and rel. err. $\mathcal{O}(1)$ if `psd=False`.
+
+## References
+
 - R. Alkabetz, I. Arad  
   Tensor networks contraction and the belief propagation algorithm  
   [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073) ([arXiv:2008.04433](https://arxiv.org/abs/2008.04433))

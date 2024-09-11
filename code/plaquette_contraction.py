@@ -43,7 +43,6 @@ def construct_network(chi: int, width: int, height: int, rng: np.random.Generato
         tensors.append(row)
     return tensors
 
-
 def contract_network(tensors):
     r"""
     Contract a tensor network on a two-dimensional square lattice.
@@ -70,8 +69,6 @@ def contract_network(tensors):
     assert a.shape == (1, 1, 1, 1)
     return a[0, 0, 0, 0]
 
-
-
 def construct_initial_messages(tensors):
     """
     Construct initial message vectors for a tensor network on a two-dimensional square lattice.
@@ -97,7 +94,6 @@ def construct_initial_messages(tensors):
         msg_in_u.append(row_in_u)
         msg_in_d.append(row_in_d)
     return msg_in_l, msg_in_r, msg_in_u, msg_in_d
-
 
 def message_passing_step(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d):
     """
@@ -161,7 +157,6 @@ def message_passing_step(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d):
     msg_in_d_next.append(width * [np.array([1.])])
     return msg_in_l_next, msg_in_r_next, msg_in_u_next, msg_in_d_next
 
-
 def message_passing_iteration(tensors, numiter: int):
     """
     Perform a message passing iteration.
@@ -187,7 +182,6 @@ def message_passing_iteration(tensors, numiter: int):
         msg_in_u = msg_in_u_next
         msg_in_d = msg_in_d_next
     return msg_in_l, msg_in_r, msg_in_u, msg_in_d, eps_iter
-
 
 def normalize_messages(msg_in_l, msg_in_r, msg_in_u, msg_in_d):
     """
@@ -229,7 +223,6 @@ def normalize_messages(msg_in_l, msg_in_r, msg_in_u, msg_in_d):
     msg_in_d_norm.append(width * [np.array([1.])])
     return msg_in_l_norm, msg_in_r_norm, msg_in_u_norm, msg_in_d_norm
 
-
 def contract_tensors_messages(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d):
     """
     Fully contract each tensor with the incoming messages.
@@ -249,7 +242,6 @@ def contract_tensors_messages(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d):
         cntr.append(row)
     return np.array(cntr)
 
-
 def crandn(size=None, rng: np.random.Generator=None):
     """
     Draw random samples from the standard complex normal (Gaussian) distribution.
@@ -259,15 +251,13 @@ def crandn(size=None, rng: np.random.Generator=None):
     # 1/sqrt(2) is a normalization factor
     return (rng.normal(size=size) + 1j*rng.normal(size=size)) / np.sqrt(2)
 
-
 def main():
-
     # random number generator
     rng = np.random.default_rng()
 
     # construct network
     chi = 9
-    tensors = construct_network(chi, 4, 4, rng, real=False, psd=True)
+    tensors = construct_network(chi, 4, 4, rng, real=False, psd=False)
 
     # reference contraction value
     c_ref = contract_network(tensors)
@@ -323,8 +313,7 @@ def main():
 
     # relative error
     err = abs(np.prod(cntr) - c_ref) / abs(c_ref)
-    print("relative error:", err)
-
+    print("relative error: {:.3e}".format(err))
 
 if __name__ == "__main__":
     main()
