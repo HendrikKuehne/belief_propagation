@@ -79,10 +79,11 @@ def contract_network(tensors:list):
     if not a.shape == (1, 1, 1, 1): warnings.warn("Unexpected shape after contracting the network; continuing.")
     return a.flatten()[0]
 
-def coarse_grain(tensors:list):
+def block_bp(tensors:list):
     """
-    Approximate contraction based on modified belief propagation. This amounts to constructing a 2x2 grid
-    from the 4x4 grid, which is returned by `construct_network`.
+    A kind of coarse-grainig inspired by the Block Belief Propagation
+    algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is the
+    initialization of said algorithm.
     """
     # s0: Turning the upper-left 3x3 plaquettes into one plaquette; first, we construct an MPO
     mpo = tensors[0][:3]
@@ -222,7 +223,7 @@ def message_passing_step(tensors:list,msg_in_l:list,msg_in_r:list,msg_in_u:list,
 
 def message_passing_iteration(tensors:list,numiter:int,verbose:bool=True):
     """
-    Perform a message passing iteration.
+    Perform a message passing iteration. Algorithm taken from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
     """
     if verbose: print(f"Message passing: {numiter} iterations.")
     # initialization
@@ -340,7 +341,7 @@ def main():
     print("c_ref:", c_ref)
 
     # approximate contraction based on modified belief propagation
-    s_tensors = coarse_grain(tensors)
+    s_tensors = block_bp(tensors)
     c_s = contract_network(s_tensors)
     print("c_s:", c_s)
     assert np.isclose(c_s, c_ref)

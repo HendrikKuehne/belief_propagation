@@ -17,6 +17,7 @@ This will be updated continuously, as questions come to mind.
 * How and why does the normalization in `message_passing_step` work? We're simply dividing the message by the sum of it's elements; this is coming completely out of the blue for me.
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`coarse_grain`) as "approximate contraction based on modified belief propagation"? That method is exact.
+    * :arrow_right:
 
 ## References
 
