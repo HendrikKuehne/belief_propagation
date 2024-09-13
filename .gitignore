@@ -27,3 +27,7 @@ __pycache__
 *.fls
 *.synctex
 *.fdb_latexmk
+
+# ignore test files
+test.py
+test.ipynb
