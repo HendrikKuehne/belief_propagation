@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import itertools
 
-def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.Graph:
+def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
     """
     Generates a `D`-regular graph with `nNodes` vertices. WORK IN PROGRESS; this algorithm might not terminate,
     which is why I have included an ugly brake that re-initializes the graph and starts again. Off the top of
@@ -15,10 +15,7 @@ def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.Graph:
     # sanity check
     if nNodes < D + 1 or (nNodes * D) % 2 == 1: raise ValueError(f"There is no {D}-regular graph with {nNodes} vertices.")
 
-    G = nx.Graph()
-    G.add_nodes_from(np.arange(nNodes))
-
-    # adding edges
+    # defining edges
     stubs = D * [node for node in range(nNodes)]
     edges = []
     while len(stubs) > 1:
@@ -42,20 +39,20 @@ def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.Graph:
 
             edges += [{node1,node2},]
 
-    G.add_edges_from(edges)
-
+    G = nx.MultiGraph(incoming_graph_data=edges)
     return G
 
-def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.Graph:
+def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
     """
     Algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)), which
     generates a bipartite, regular graph.
     """
-    blue_nodes = [(f"b{node}",{"color":"blue"}) for node in range(nNodes)]
-    red_nodes = [(f"r{node}",{"color":"red"}) for node in range(nNodes)]
+    # blue nodes' labels run from 0 to nNodes, red nodes' labels run from nNodes to 2*nNodes
+    blue_nodes = [node for node in range(nNodes)]
+    red_nodes = [node + nNodes for node in range(nNodes)]
 
     blue_stubs = D * [node for node in range(nNodes)]
-    red_stubs = D * [node for node in range(nNodes)]
+    red_stubs = D * [node + nNodes for node in range(nNodes)]
     edges = []
 
     while len(blue_stubs) > 0:
@@ -63,7 +60,7 @@ def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.Graph:
         red_node = np.random.choice(red_stubs)
 
         i = 0
-        while {f"b{blue_node}",f"r{red_node}"} in edges:
+        while {blue_node,red_node} in edges:
             blue_node = np.random.choice(blue_stubs)
             red_node = np.random.choice(red_stubs)
 
@@ -71,19 +68,18 @@ def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.Graph:
             if i > maxiter:
                 print(f"Algorithm has not terminated after {maxiter} iterations; starting again.")
                 blue_stubs = D * [node for node in range(nNodes)]
-                red_stubs = D * [node for node in range(nNodes)]
+                red_stubs = D * [node + nNodes for node in range(nNodes)]
                 edges = []
                 break
 
         if i <= maxiter:
-            edges += [{f"b{blue_node}",f"r{red_node}"},]
+            if len({blue_node,red_node}) == 1:
+                print({blue_node,red_node})
+            edges += [{blue_node,red_node},]
             blue_stubs.remove(blue_node)
             red_stubs.remove(red_node)
 
-    G = nx.Graph()
-    G.add_nodes_from(blue_nodes + red_nodes)
-    G.add_edges_from(edges)
-
+    G = nx.MultiGraph(incoming_graph_data=edges)
     return G
 
 def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.Graph:
@@ -98,13 +94,13 @@ def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.Graph:
     biG = bipartite_regular_graph(nNodes,D)
 
     edges = []
-    for red_node in range(nNodes):
+    for red_node in np.arange(nNodes,2*nNodes):
         # projecting onto the blue nodes
-        for blue1,blue2 in itertools.combinations(biG.adj[f"r{red_node}"],r=2):
+        for blue1,blue2 in itertools.combinations(biG.adj[red_node],r=2):
             if {blue1,blue2} not in edges: edges += [{blue1,blue2},]
         
         # removing the red node
-        biG.remove_node(f"r{red_node}")
+        biG.remove_node(red_node)
 
     biG.add_edges_from(edges)
 
@@ -114,15 +110,23 @@ def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.Graph:
         edge = list(biG.edges)[iEdge]
         biG.remove_edge(*edge)
 
-    return biG
+    # extracting the largest connected component
+    largest_cc = max(nx.connected_components(biG), key=len)
+
+    return biG.subgraph(largest_cc).copy()
+    # we need to copy the subgraph because this removes the freeze of the subgraph
 
 if __name__ == "__main__":
-    loopyG = short_loop_graph(70,3,.6)
+    loopyG = short_loop_graph(35,3,.6)
     print("Network created")
 
-    #nx.draw(loopyG,with_labels=True,font_weight="bold")
-    #plt.show()
-
-    cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(loopyG)]
-    plt.hist(cycle_lengths,bins=max(cycle_lengths)-min(cycle_lengths))
+    # drawing the network
+    nx.draw(loopyG,with_labels=True,font_weight="bold")
     plt.show()
+
+    ## investigating the cycles that occur in the network
+    #cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(loopyG)]
+    #plt.hist(cycle_lengths,bins=max(cycle_lengths)-min(cycle_lengths))
+    #plt.xlabel("cycle length")
+    #plt.ylabel("count")
+    #plt.show()

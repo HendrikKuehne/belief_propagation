@@ -4,6 +4,7 @@ Code from Christian Mendl - the base on which I will build. Not to be modified i
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
+from utils import crandn
 
 def construct_network(chi:int,width:int,height:int,rng:np.random.Generator,real:bool=True,psd:bool=False):
     r"""
@@ -36,7 +37,7 @@ def construct_network(chi:int,width:int,height:int,rng:np.random.Generator,real:
                 1 if i == height-1 else chi)
             if psd:
                 h = int(np.sqrt(chi))
-                assert h**2 == chi, "if psd=True, chi must have an integer root!"
+                assert h**2 == chi, "if psd=True, chi must have an integer root."
                 s = 0.3 * randn((
                     1 if j == 0        else h,
                     1 if j == width-1  else h,
@@ -318,15 +319,6 @@ def contract_tensors_messages(tensors:list,msg_in_l:list,msg_in_r:list,msg_in_u:
                           msg_in_d[i][j], (3,), ()))
         cntr.append(row)
     return np.array(cntr)
-
-def crandn(size=None,rng:np.random.Generator=None):
-    """
-    Draw random samples from the standard complex normal (Gaussian) distribution.
-    """
-    if rng is None:
-        rng = np.random.default_rng()
-    # 1/sqrt(2) is a normalization factor
-    return (rng.normal(size=size) + 1j*rng.normal(size=size)) / np.sqrt(2)
 
 def main():
     # random number generator
