@@ -1,5 +1,5 @@
 """
-Creation and processing of various graphs.
+Creation of various graphs.
 """
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -48,9 +48,6 @@ def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
     generates a bipartite, regular graph.
     """
     # blue nodes' labels run from 0 to nNodes, red nodes' labels run from nNodes to 2*nNodes
-    blue_nodes = [node for node in range(nNodes)]
-    red_nodes = [node + nNodes for node in range(nNodes)]
-
     blue_stubs = D * [node for node in range(nNodes)]
     red_stubs = D * [node + nNodes for node in range(nNodes)]
     edges = []
@@ -82,7 +79,7 @@ def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
     G = nx.MultiGraph(incoming_graph_data=edges)
     return G
 
-def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.Graph:
+def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.MultiGraph:
     """
     Algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)), which
     generates a network with short primitive cycles.

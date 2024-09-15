@@ -2,12 +2,11 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 from graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph
-from utils import crandn,delta_network,network_sanity_check
+from utils import crandn,delta_network,network_sanity_check,dummynet1,dummynet2,dummynet3,dummynet4
 
-# NOT ADAPTED TO MULTIGRAPH CLASS
-def contract_edge(node1:int,node2:int,G:nx.Graph) -> None:
+def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph) -> None:
     """
-    Contracts the nodes `node1` and `node2` in the tensor network `G`. `G` is modified in-place.
+    Contracts the edge `(node1,node2,key)` in the tensor network `G`. `G` is modified in-place.
     
     Every edge in the network corresponds to the contraction of the tensors in the adjacent nodes. To execute this contraction, we need to know
     which legs of the tensors correspond to the edge. This is what the attribute `legs` of the edges gives: The edge `(node1,node2)` has
@@ -16,46 +15,103 @@ def contract_edge(node1:int,node2:int,G:nx.Graph) -> None:
     * contract the tensors,
     * and update the values in `legs`.
 
-    We first contract the tensors, then we re-wire the legs from `node2` to connect to `node2`, and re-label the legs. Afterwards, node `node2` is deleted.
+    We first contract the tensors, then we re-wire the legs from `node2` to connect to `node1`, and re-label the legs. Afterwards, node `node2` is deleted.
     """
+    if node1 == node2:
+        # trace edge
+
+        # initialization
+        i1,i2 = G[node1][node2][key]["indices"]
+        update_leg = lambda i: i - (i >= i1) - (i >= i2)
+
+        # contracting the tensor and inserting in node1
+        G.nodes[node1]["T"] = np.trace(G.nodes[node1]["T"],axis1=i1,axis2=i2)
+
+        # removing the contracted edge
+        G.remove_edge(node1,node2,key)
+
+        # updating leg entries incident to the node
+        for _,neighbor,key1 in G.edges(node1,keys=True):
+            assert node1 == _
+            if G[node1][neighbor][key1]["trace"]:
+                # trace edge on node1: Both legs need to be updated
+                G[node1][neighbor][key1]["indices"] = {update_leg(i) for i in G[node1][neighbor][key1]["indices"]}
+            else:
+                old_leg = G[node1][neighbor][key1]["legs"][node1]
+                G[node1][neighbor][key1]["legs"][node1] = update_leg(old_leg)
+
+        return
+
     # initialization
-    i1 = G[node1][node2]["legs"][node1]
-    i2 = G[node1][node2]["legs"][node2]
+    i1 = G[node1][node2][key]["legs"][node1]
+    i2 = G[node1][node2][key]["legs"][node2]
     nLegs1 = len(G.nodes[node1]["T"].shape)
+    update_leg1 = lambda i: i if i < i1 else i - 1
+    update_leg2 = lambda i: nLegs1 - 1 + i if i < i2 else nLegs1 - 1 + i - 1
 
     # contracting the tensors, and inserting the new tensor in node1
     T_res = np.tensordot(G.nodes[node1]["T"],G.nodes[node2]["T"],(i1,i2))
     G.nodes[node1]["T"] = T_res
 
     # removing the contracted edge
-    G.remove_edge(node1,node2)
+    G.remove_edge(node1,node2,key)
 
     # updating leg entries incident to node1
-    for node in G.adj[node1]:
-        old_leg = G[node][node1]["legs"][node1]
-        G[node1][node]["legs"][node1] = old_leg if old_leg < i1 else old_leg - 1
+    for _,neighbor,key1 in G.edges(node1,keys=True):
+        assert node1 == _
+        if G[node1][neighbor][key1]["trace"]:
+            # trace edge on node1: Both legs need to be updated
+            G[node1][neighbor][key1]["indices"] = {update_leg1(i) for i in G[node1][neighbor][key1]["indices"]}
+        else:
+            old_leg = G[node1][neighbor][key1]["legs"][node1]
+            G[node1][neighbor][key1]["legs"][node1] = update_leg1(old_leg)
 
     # re-wiring edges incident to node2 to connect to node1
-    for node in G.adj[node2]:
-        G.add_edge(node1,node,legs=G[node][node2]["legs"])
+    for _,neighbor,key2 in G.edges(node2,keys=True):
+        assert node2 == _
+        if node2 == neighbor:
+            # trace edge on node2, needs to be transferred to node1
+            keyvals = {
+                "legs":None,
+                "trace":True,
+                "indices":{update_leg2(i) for i in G[node2][neighbor][key2]["indices"]},
+            }
+            # adding the new edge
+            G.add_edge(node1,node1,**keyvals)
+        elif node1 == neighbor:
+            # edge between node1 and node2 becomes trace edge on node1
+            keyvals = {
+                "legs":None,
+                "trace":True,
+                "indices":{
+                    G[node2][neighbor][key2]["legs"][node1],                    # this leg was updated when the legs incident to node1 were updated
+                    update_leg2(G[node2][neighbor][key2]["legs"][node2]),
+                },
+            }
+            # adding the new edge
+            G.add_edge(node1,neighbor,**keyvals)
+        else:
+            # edge from another node to node2
+            old_leg = G[node2][neighbor][key2]["legs"][node2]
+            new_leg = update_leg2(old_leg)
 
-        # new legs entry
-        old_leg = G[node][node2]["legs"][node2]
-        G[node1][node]["legs"][node1] = nLegs1 - 1 + old_leg if old_leg < i2 else nLegs1 - 1 + old_leg - 1
-
-        # removing the old legs entry
-        G[node1][node]["legs"].pop(node2)
+            keyvals = {
+                "legs":{
+                    node1:new_leg,
+                    neighbor:G[node2][neighbor][key2]["legs"][neighbor]
+                },
+                "trace":False,
+                "indices":None,
+            }
+            # adding the new edge
+            G.add_edge(node1,neighbor,**keyvals)
 
     # removing node2
     G.remove_node(node2)
 
-def construct_network(
-    G:nx.MultiGraph,
-    chi:int,
-    rng:np.random.Generator=np.random.default_rng(),
-    real:bool=True,
-    psd:bool=False
-) -> None:
+    return
+
+def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False) -> None:
     """
     Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
     The graph `G` is manipulated in-place.
@@ -67,9 +123,12 @@ def construct_network(
         randn = lambda size: crandn(size,rng)
 
     for edge in G.edges:
-        # each edge carries with it an indices dictionary. The keys are the labels
-        # of the adjacent nodes, and their values are the indices of the tensor legs this edge connects
+        # each edge has a "legs" key, whose value is itself a dictionary. The keys are the labels of the adjacent nodes, and their values are the indices of the tensor legs this edge connects
         G[edge[0]][edge[1]][0]["legs"] = {}
+        # each ede has a "trace" key, which is true if this edge corresponds to the trace of a tensor (i.e. if this edge connects a node to itself)
+        G[edge[0]][edge[1]][0]["trace"] = False
+        # each edge has an "indices" key, which holds the legs that the adjacent tensors are summed over as a set (only used for edges that represent a trace)
+        G[edge[0]][edge[1]][0]["indices"] = None
 
     for node in G.nodes:
         nLegs = len(G.adj[node])
@@ -94,24 +153,32 @@ def construct_network(
         for i,neighbor in enumerate(G.adj[node]):
             G[node][neighbor][0]["legs"][node] = i
 
-# NOT ADAPTED TO MULTIGRAPH CLASS
-def contract_network(G:nx.Graph) -> float:
+def contract_network(G:nx.MultiGraph,sanity_check:False) -> float:
     """
-    Contracts the tensor network `G`.
+    Contracts the tensor network `G`. The contraction order is random; this might be incredibly inefficient.
     """
     while G.number_of_edges() > 0:
-        print(G.number_of_edges())
-        print("Network intact?",network_sanity_check(G))
-        node1,node2 = list(G.edges)[0]
-        contract_edge(node1,node2,G)
+        iEdge = np.random.randint(G.number_of_edges())
+        node1,node2,key = list(G.edges(keys=True))[iEdge]
+        contract_edge(node1,node2,key,G)
+        if sanity_check: assert network_sanity_check(G)
 
-    return G.nodes.data("T")
+    return G.nodes(data=True)[0]["T"]
 
-if __name__ == "__main__":
+if __name__ == None:#"__main__":
     G = short_loop_graph(10,3,.5)
     #construct_network(G,3)
     delta_network(G,3)
     print("Network intact?",network_sanity_check(G))
 
-    #res = contract_network(G)
-    #print(res.shape)
+    res = contract_network(G)
+    print(res.shape)
+
+if __name__ == "__main__":
+    G,refval = dummynet4()
+
+    cntr = contract_network(G,sanity_check=True)
+    print(np.isclose(cntr,refval))
+
+    #nx.draw(G,with_labels=True,font_weight="bold")
+    #plt.show()
