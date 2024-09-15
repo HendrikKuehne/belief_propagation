@@ -7,15 +7,7 @@ from utils import crandn,delta_network,network_sanity_check,dummynet1,dummynet2,
 def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph) -> None:
     """
     Contracts the edge `(node1,node2,key)` in the tensor network `G`. `G` is modified in-place.
-    
-    Every edge in the network corresponds to the contraction of the tensors in the adjacent nodes. To execute this contraction, we need to know
-    which legs of the tensors correspond to the edge. This is what the attribute `legs` of the edges gives: The edge `(node1,node2)` has
-    `legs = {node1:i1,node2:i2}`, which means that the contraction runs over the `i1`th leg of `node1` and the `i2`th leg of `node2`. This function thus has
-    to accomplish the following:
-    * contract the tensors,
-    * and update the values in `legs`.
-
-    We first contract the tensors, then we re-wire the legs from `node2` to connect to `node1`, and re-label the legs. Afterwards, node `node2` is deleted.
+    `node2` is removed, and the new node assumes the label `node1`.
     """
     if node1 == node2:
         # trace edge
