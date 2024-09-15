@@ -11,3 +11,7 @@ Edges between nodes represent contractions, of course. Which legs of the tensors
 # The `contract_edge` function
 
 ![alt text](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/imgs/contraction_cases.jpeg?raw=true)
+
+<p align="center">
+  <img width="300" height="300" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/imgs/contraction_cases.jpeg">
+</p>
