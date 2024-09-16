@@ -27,3 +27,18 @@ Contracting the two tensors is easy, and afterwards, the edge `(node1,node2,key)
 * connecting any nodes to `node1` that were previously connected to `node2`.
 
 Each step requires distinguishing whether the edge under consideration is a trace edge or not.
+
+The function `contract_edge` is used in `contract_network`, which has been tested against test cases (`utils.dummynet1` through `utils.dummynet5`) and against the plaquette code (`utils.grid_net`).
+
+# Belief propagation
+
+each edge `(node1,node2)` has a key `msg`, that contains the messages on this edge.
+
+```
+    edge["msg"] = {
+        node1:message_to_node_1,
+        node2:message_to_node_2
+    }
+```
+
+The message `G[node1][node2][0]["msg"][node1]` is thus the message from `node2` to `node1`. It is a vector which connects to leg `G[node1][node2][0]["legs"][node1]` of the tensor `G.nodes[node1]["T"]`.

@@ -8,12 +8,12 @@ import itertools
 
 def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
     """
-    Generates a `D`-regular graph with `nNodes` vertices. WORK IN PROGRESS; this algorithm might not terminate,
+    Generates a `D`-regular graph with `nNodes` nodes. WORK IN PROGRESS; this algorithm might not terminate,
     which is why I have included an ugly brake that re-initializes the graph and starts again. Off the top of
-    my head I just don't know how to generate a D-regular graph.
+    my head I don't know how to generate a D-regular graph, and it is not as important for me to look this up.
     """
     # sanity check
-    if nNodes < D + 1 or (nNodes * D) % 2 == 1: raise ValueError(f"There is no {D}-regular graph with {nNodes} vertices.")
+    if nNodes < D + 1 or (nNodes * D) % 2 == 1: raise ValueError(f"There is no {D}-regular graph with {nNodes} nodes.")
 
     # defining edges
     stubs = D * [node for node in range(nNodes)]
@@ -82,7 +82,7 @@ def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
 def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.MultiGraph:
     """
     Algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)), which
-    generates a network with short primitive cycles.
+    generates a network with few short primitive cycles.
     """
     # sanity check
     if p > 1 or p < 0: raise ValueError("p must be a value between zero and one.")
@@ -111,7 +111,7 @@ def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.MultiGraph:
     largest_cc = max(nx.connected_components(biG), key=len)
 
     return biG.subgraph(largest_cc).copy()
-    # we need to copy the subgraph because this removes the freeze of the subgraph
+    # we need to copy because this removes the freeze of the subgraph
 
 if __name__ == "__main__":
     loopyG = short_loop_graph(35,3,.6)

@@ -1,107 +1,12 @@
+"""
+Belief propagation on graphs, i.e. on various geometries.
+"""
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
+import copy
 from graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph
-from utils import crandn,delta_network,network_sanity_check,dummynet1,dummynet2,dummynet3,dummynet4
-
-def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph) -> None:
-    """
-    Contracts the edge `(node1,node2,key)` in the tensor network `G`. `G` is modified in-place.
-    `node2` is removed, and the new node assumes the label `node1`.
-    """
-    if node1 == node2:
-        # trace edge
-
-        # initialization
-        i1,i2 = G[node1][node2][key]["indices"]
-        update_leg = lambda i: i - (i >= i1) - (i >= i2)
-
-        # contracting the tensor and inserting in node1
-        G.nodes[node1]["T"] = np.trace(G.nodes[node1]["T"],axis1=i1,axis2=i2)
-
-        # removing the contracted edge
-        G.remove_edge(node1,node2,key)
-
-        # updating leg entries incident to the node
-        for _,neighbor,key1 in G.edges(node1,keys=True):
-            assert node1 == _
-            if G[node1][neighbor][key1]["trace"]:
-                # trace edge on node1: Both legs need to be updated
-                G[node1][neighbor][key1]["indices"] = {update_leg(i) for i in G[node1][neighbor][key1]["indices"]}
-            else:
-                old_leg = G[node1][neighbor][key1]["legs"][node1]
-                G[node1][neighbor][key1]["legs"][node1] = update_leg(old_leg)
-
-        return
-
-    # initialization
-    i1 = G[node1][node2][key]["legs"][node1]
-    i2 = G[node1][node2][key]["legs"][node2]
-    nLegs1 = len(G.nodes[node1]["T"].shape)
-    update_leg1 = lambda i: i if i < i1 else i - 1
-    update_leg2 = lambda i: nLegs1 - 1 + i if i < i2 else nLegs1 - 1 + i - 1
-
-    # contracting the tensors, and inserting the new tensor in node1
-    T_res = np.tensordot(G.nodes[node1]["T"],G.nodes[node2]["T"],(i1,i2))
-    G.nodes[node1]["T"] = T_res
-
-    # removing the contracted edge
-    G.remove_edge(node1,node2,key)
-
-    # updating leg entries incident to node1
-    for _,neighbor,key1 in G.edges(node1,keys=True):
-        assert node1 == _
-        if G[node1][neighbor][key1]["trace"]:
-            # trace edge on node1: Both legs need to be updated
-            G[node1][neighbor][key1]["indices"] = {update_leg1(i) for i in G[node1][neighbor][key1]["indices"]}
-        else:
-            old_leg = G[node1][neighbor][key1]["legs"][node1]
-            G[node1][neighbor][key1]["legs"][node1] = update_leg1(old_leg)
-
-    # re-wiring edges incident to node2 to connect to node1
-    for _,neighbor,key2 in G.edges(node2,keys=True):
-        assert node2 == _
-        if node2 == neighbor:
-            # trace edge on node2, needs to be transferred to node1
-            keyvals = {
-                "legs":None,
-                "trace":True,
-                "indices":{update_leg2(i) for i in G[node2][neighbor][key2]["indices"]},
-            }
-            # adding the new edge
-            G.add_edge(node1,node1,**keyvals)
-        elif node1 == neighbor:
-            # edge between node1 and node2 becomes trace edge on node1
-            keyvals = {
-                "legs":None,
-                "trace":True,
-                "indices":{
-                    G[node2][neighbor][key2]["legs"][node1],                    # this leg was updated when the legs incident to node1 were updated
-                    update_leg2(G[node2][neighbor][key2]["legs"][node2]),
-                },
-            }
-            # adding the new edge
-            G.add_edge(node1,neighbor,**keyvals)
-        else:
-            # edge from another node to node2
-            old_leg = G[node2][neighbor][key2]["legs"][node2]
-            new_leg = update_leg2(old_leg)
-
-            keyvals = {
-                "legs":{
-                    node1:new_leg,
-                    neighbor:G[node2][neighbor][key2]["legs"][neighbor]
-                },
-                "trace":False,
-                "indices":None,
-            }
-            # adding the new edge
-            G.add_edge(node1,neighbor,**keyvals)
-
-    # removing node2
-    G.remove_node(node2)
-
-    return
+from utils import crandn,contract_edge,network_intact_check,network_message_check,delta_network,dummynet5,grid_net
 
 def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False) -> None:
     """
@@ -145,32 +50,157 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
         for i,neighbor in enumerate(G.adj[node]):
             G[node][neighbor][0]["legs"][node] = i
 
-def contract_network(G:nx.MultiGraph,sanity_check:False) -> float:
+def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     """
-    Contracts the tensor network `G`. The contraction order is random; this might be incredibly inefficient.
+    Contracts the tensor network `G`. The contraction order is random; this might be highly inefficient. `G` is modified in-place.
     """
     while G.number_of_edges() > 0:
         iEdge = np.random.randint(G.number_of_edges())
         node1,node2,key = list(G.edges(keys=True))[iEdge]
         contract_edge(node1,node2,key,G)
-        if sanity_check: assert network_sanity_check(G)
+        if sanity_check: assert network_intact_check(G)
 
-    return G.nodes(data=True)[0]["T"]
+    return tuple(G.nodes(data=True))[0][1]["T"]
 
-if __name__ == None:#"__main__":
-    G = short_loop_graph(10,3,.5)
-    #construct_network(G,3)
-    delta_network(G,3)
-    print("Network intact?",network_sanity_check(G))
+def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
+    """
+    Initializes messages one the edges of `G`. Random initialisation except for leaf nodes, where the initial value
+    is the tensor of the leaf node. `G` is modified in-place.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
 
-    res = contract_network(G)
-    print(res.shape)
+    for node1,node2 in G.edges():
+        G[node1][node2][0]["msg"] = {}
+
+        for receiving_node in (node1,node2):
+            sending_node = node2 if receiving_node == node1 else node1
+            if len(G.adj[sending_node]) == 1:
+                # message from leaf node
+                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"]
+            else:
+                iLeg = G[node1][node2][0]["legs"][receiving_node]
+                # bond dimension
+                chi = G.nodes[receiving_node]["T"].shape[iLeg]
+                # initialization with normalized vector
+                G[node1][node2][0]["msg"][receiving_node] = np.ones(shape=(chi,)) / chi
+
+def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
+    """
+    Performs a message passing iteration. Algorithm taken from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
+    'G' is modified in-place. Returns the maximum change `eps` of message norm over the entire graph.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
+
+    old_G = copy.deepcopy(G)
+    """Copy of the graph used to store the old messages."""
+
+    eps = ()
+
+    for node1,node2 in G.edges():
+        for receiving_node in (node1,node2):
+            sending_node = node2 if receiving_node == node1 else node1
+
+            if len(G.adj[sending_node]) == 1:
+                # leaf node; no action necessary
+                continue
+
+            # The outcoming message on one edge is the result of absorbing all incoming messages on all other edges into the tensor
+            nLegs = G.nodes[sending_node]["T"].ndim
+            args = ()
+
+            for neighbor in G.adj[sending_node]:
+                if neighbor == receiving_node: continue
+                args += (old_G[sending_node][neighbor][0]["msg"][sending_node],(G[sending_node][neighbor][0]["legs"][sending_node],))
+            T_res = np.einsum(G.nodes[sending_node]["T"],list(range(nLegs)),*args)
+
+            # saving the normalized message
+            G[node1][node2][0]["msg"][receiving_node] = T_res / np.sum(T_res)
+
+            # saving the change in message norm
+            eps += (np.linalg.norm(G[node1][node2][0]["msg"][receiving_node] - old_G[node1][node2][0]["msg"][receiving_node]),)
+
+    return max(eps)
+
+def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,verbose:bool=True,sanity_check:bool=False) -> tuple:
+    """
+    Performs a message passing iteration. `G` is modified in-place. Returns the change `eps` in maximum
+    message norm for every iteration.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
+
+    # initialization
+    construct_initial_messages(G,sanity_check)
+
+    if verbose: print(f"Message passing: {numiter} iterations.")
+
+    eps_list = ()
+    for i in range(numiter):
+        eps = message_passing_step(G,sanity_check)
+        if verbose: print("    iteration {:3}: eps = {:.3e}".format(i,eps))
+        eps_list += (eps,)
+
+    return eps_list
+
+def normalize_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
+    """
+    Normalize messages such that the inner product between messages traveling along
+    the same edge but in opposite directions is one. `G` is modified in-place.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
+
+    for node1,node2 in G.edges():
+        norm = np.dot(G[node1][node2][0]["msg"][node1],G[node1][node2][0]["msg"][node2])
+        G[node1][node2][0]["msg"][node1] /= np.sqrt(np.abs(norm))
+        G[node1][node2][0]["msg"][node2] /= np.sqrt(np.abs(norm))
+
+def contract_tensors_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
+    """
+    Contracts all messages into the respective nodes, and adds the value to each node.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
+
+    for node in G.nodes():
+        nLegs = G.nodes[node]["T"].ndim
+        args = ()
+        for neighbor in G.adj[node]:
+            args += (G[node][neighbor][0]["msg"][node],(G[node][neighbor][0]["legs"][node],))
+        G.nodes[node]["cntr"] = np.einsum(G.nodes[node]["T"],list(range(nLegs)),*args)
 
 if __name__ == "__main__":
-    G,refval = dummynet4()
+    G = short_loop_graph(15,3,.5)
+    construct_network(G,4,real=False,psd=True)
+    #G,ground_truth = dummynet1(chi=3)
+    #_,G = grid_net(4,3,3,real=False,psd=True)
 
-    cntr = contract_network(G,sanity_check=True)
-    print(np.isclose(cntr,refval))
+    print("Sanity checks:")
+    print("    Network intact?",network_intact_check(G))
+    print("    Network message-ready?",network_message_check(G),"\n")
 
-    #nx.draw(G,with_labels=True,font_weight="bold")
-    #plt.show()
+    num_iter = 30
+    eps_list = message_passing_iteration(G,num_iter,sanity_check=True)
+    normalize_messages(G,True)
+
+    if False: # plotting
+        plt.figure("Tensor network")
+        nx.draw(G,with_labels=True,font_weight="bold")
+
+        plt.figure("Message norm vs. iterations")
+        plt.semilogy(np.arange(num_iter),eps_list)
+        plt.xlabel("Iteration")
+        plt.ylabel(r"max $\Delta |\mathrm{Message}|$")
+        plt.grid()
+
+        plt.show()
+
+    contract_tensors_messages(G,False)
+    cntr = 1
+    for node,val in G.nodes(data="cntr"): cntr *= val
+    refval = contract_network(G,True)
+
+    print("\nComparing direct contraction and message passing:\n    Contraction:     {}\n    Message passing: {}".format(np.real_if_close(refval),np.real_if_close(cntr)))
+    print("Relative error = {:.3e}".format((np.real_if_close(refval) - np.real_if_close(cntr)) / np.abs(refval)))
