@@ -2,10 +2,20 @@
 
 Forked on 11th of September from Mendl, so far (11.9.2024) just for initial exploration of the belief propagation algorithm.
 
+## Contents
+
+* `lib`
+    * `graph_creation.py` Creation of various graphs.
+    * `network_contraction.py` Belief propagation on graphs, i.e. on various geometries.
+    * `plaquette_contraction.py` Code from Christian Mendl. Not to be modified in any substantial way, for reference.
+    * `utils.py` Stuff that is useful here or there. `contract_edge` function for contracting an edge in a tensor network, sanity checks and test cases for `network_contraction.contract_network`.
+* `doc`
+    * `plots` Discussion of various plots that illustrate the behavior of the contents of this repo.
+
 ## ToDo
 
 * :white_check_mark: Expand the algorithm to work on arbitary graphs.
-    * The belief propagation code that uses the `networkx` package seems to perform slightly worse ($\frac{\Delta C}{C}\sim 10^{-3}$ for the plaquette code, vs. $\frac{\Delta C}{C}\sim 10^{-2}$ for the network code), although both frameworks agree exactly for exact contraction. How can that be?
+    * Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edgesin a tensor network.
 
 ## Open questions
 
@@ -17,7 +27,8 @@ This will be updated continuously, as questions come to mind.
     * :arrow_right: The function `message_passing_iteration` implements Kirkley's belief propagation for networks with loops (Kirkley, 2021: [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). It's messages correspond to marginal probabilities and, as such, need to be normalized; the normalization above is the one that this paper uses (see the discussion after Eq. 12).
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
-    * :arrow_right: This method is based on the "Block Belief Propagation" (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)) algorithm, which is not exact in general.
+    * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
+    * The accuracy improves when `blpck_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this plot](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/plots/pq_without_block_bp.jpeg)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly?
 
 ## References
 

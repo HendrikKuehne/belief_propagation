@@ -4,6 +4,8 @@ Comparison between the tensor network code and the plaquette code.
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
+import itertools
+import time
 
 import network_contraction as tn
 import plaquette_contraction as pq
@@ -52,32 +54,36 @@ def pq_routine_blocking(tensors:list,num_iter:int=30) -> float:
     return rel_err
 
 if __name__ == "__main__":
-    nTrials = 50
+    nTrials = 100
     chi = 4
     connectivity = 3
     p = .6
+    rng = np.random.default_rng()
     results = ()
-    for nNodes in range(5,20):
-        for iTrial in range(nTrials):
+    for iTrial in range(nTrials):
+        for width,height in itertools.product(np.arange(2,6),repeat=2):
             # constructing the tensors
-            G = graphs.short_loop_graph(nNodes,connectivity,p)
-            numer_of_nodes = G.number_of_nodes()
-            tn.construct_network(G,chi,real=False,psd=True)
+            #G = graphs.short_loop_graph(nNodes,connectivity,p)
+            #numer_of_nodes = G.number_of_nodes()
+            #tn.construct_network(G,chi,real=False,psd=True)
+            tensors = pq.construct_network(4,width,height,rng,real=False,psd=True)
 
-            tn_err = tn_routine(G)
+            t1 = time.time()
+            pq_err = pq_routine(tensors)
+            t2 = time.time()
+            #pq_block_err = pq_routine_blocking(tensors)
 
-            results += ((numer_of_nodes,connectivity,p,tn_err),)
+            #print("One contraction took {:.3f} seconds".format(t2-t1))
+
+            results += ((width*height,pq_err),)
+        print(f"Trial {iTrial}")
     results = np.array(results)
 
-    # preparing bins for a logarithmic hstogram
-    #min_err = np.min(results[psd_mask,1:4])
-    #max_err = np.max(results[psd_mask,1:4])
-    #numbins = 40
-    #bins = np.logspace(start=np.log10(min_err / (max_err - min_err)**(1/numbins)),stop=np.log10(max_err * (max_err - min_err)**(1/numbins)),num=numbins)
-
-    plt.scatter(results[:,0],results[:,-1],alpha=.5)
-    plt.suptitle("Bonding dimension chi = {}, node connectivity {}, edge discarding ratio {}".format(chi,connectivity,p))
+    plt.scatter(results[:,0],results[:,1],alpha=.5,label="pq")
+    #plt.scatter(results[:,0],results[:,-1],alpha=.5,label="pq_block")
+    plt.suptitle("Bonding dimension chi = {}".format(chi))
     plt.xlabel("Number of nodes")
     plt.ylabel(r"$\frac{\Delta C}{C}$")
     plt.yscale("log")
+    plt.legend()
     plt.show()
