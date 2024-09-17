@@ -4,7 +4,8 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 
 ## ToDo
 
-* Expand the algorithm to work on arbitary graphs.
+* :white_check_mark: Expand the algorithm to work on arbitary graphs.
+    * The belief propagation code that uses the `networkx` package seems to perform slightly worse ($\frac{\Delta C}{C}\sim 10^{-3}$ for the plaquette code, vs. $\frac{\Delta C}{C}\sim 10^{-2}$ for the network code), although both frameworks agree exactly for exact contraction. How can that be?
 
 ## Open questions
 

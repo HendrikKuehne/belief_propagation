@@ -5,6 +5,7 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import copy
+
 from graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph
 from utils import crandn,contract_edge,network_intact_check,network_message_check,delta_network,dummynet5,grid_net
 
@@ -55,12 +56,26 @@ def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     Contracts the tensor network `G`. The contraction order is random; this might be highly inefficient. `G` is modified in-place.
     """
     while G.number_of_edges() > 0:
-        iEdge = np.random.randint(G.number_of_edges())
+        iEdge = 0#np.random.randint(G.number_of_edges())
         node1,node2,key = list(G.edges(keys=True))[iEdge]
         contract_edge(node1,node2,key,G)
         if sanity_check: assert network_intact_check(G)
 
     return tuple(G.nodes(data=True))[0][1]["T"]
+
+def block_bp(G:nx.MultiGraph,width:int,height:int,sanity_check:bool=False) -> None:
+    """
+    A kind of coarse-grainig inspired by the Block Belief Propagation
+    algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is the
+    initialization of said algorithm. `G` is modified in-place.
+    """
+    # not yet implemented; this is a little subtle because implementing this might require merging edges, which
+    # I have not implemented
+    if width < 4 or height < 4: return
+
+    grid_to_node = lambda i,j: i*width+j
+
+    # s0: Turning the upper-left 3x3 plaquettes into one plaquette
 
 def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
     """
@@ -123,7 +138,7 @@ def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
 
     return max(eps)
 
-def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,verbose:bool=True,sanity_check:bool=False) -> tuple:
+def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,verbose:bool=False,sanity_check:bool=False) -> tuple:
     """
     Performs a message passing iteration. `G` is modified in-place. Returns the change `eps` in maximum
     message norm for every iteration.
@@ -172,10 +187,8 @@ def contract_tensors_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
         G.nodes[node]["cntr"] = np.einsum(G.nodes[node]["T"],list(range(nLegs)),*args)
 
 if __name__ == "__main__":
-    G = short_loop_graph(15,3,.5)
+    G = short_loop_graph(10,3,.6)
     construct_network(G,4,real=False,psd=True)
-    #G,ground_truth = dummynet1(chi=3)
-    #_,G = grid_net(4,3,3,real=False,psd=True)
 
     print("Sanity checks:")
     print("    Network intact?",network_intact_check(G))
@@ -201,6 +214,7 @@ if __name__ == "__main__":
     cntr = 1
     for node,val in G.nodes(data="cntr"): cntr *= val
     refval = contract_network(G,True)
+    rel_err = np.abs(refval - cntr) / np.abs(refval)
 
     print("\nComparing direct contraction and message passing:\n    Contraction:     {}\n    Message passing: {}".format(np.real_if_close(refval),np.real_if_close(cntr)))
-    print("Relative error = {:.3e}".format((np.real_if_close(refval) - np.real_if_close(cntr)) / np.abs(refval)))
+    print("Relative error = {:.3e}".format(rel_err))

@@ -8,7 +8,7 @@ Edges in the network represent contractions, of course. This code distinguishes 
 
 The edges also hold information about which legs of the adjacent tensors are involved in the contraction. Trace-edges possess an `indices`-key, whose value is a set `{i1,i2}` that holds the two legs of the tensor that the trace runs over. Default legs possess a `legs`-key, whose value is a dictionary `{node1:i2,node2:i2}`, that gives the leg for the respective node. The `legs`-value of trace-edges is `None`, and vice-versa.[^1]
 
-[^1]: Having two different different ways of saving the leg indices and two kinds of legs seems convoluted, but this is necessary because `network_contraction.contract_edge` needs to know if a given edge is a trace edge or not. The `indices`-values are sets as opposed to tuples or lists because the trace is symmetric with respect to the order of the legs.
+[^1]: Having two different ways of saving the leg indices and two kinds of legs seems convoluted, but this is necessary because `network_contraction.contract_edge` needs to know if a given edge is a trace edge or not. The `indices`-values are sets as opposed to tuples or lists because the trace is symmetric with respect to the order of the legs.
 
 # The `contract_edge` function
 

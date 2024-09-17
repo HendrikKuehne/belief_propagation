@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import itertools
 
-def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
+def regular_graph(nNodes:int,D:int,maxiter:int=1000,verbose:bool=False) -> nx.MultiGraph:
     """
     Generates a `D`-regular graph with `nNodes` nodes. WORK IN PROGRESS; this algorithm might not terminate,
     which is why I have included an ugly brake that re-initializes the graph and starts again. Off the top of
@@ -28,7 +28,7 @@ def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
             i += 1
 
             if i >= maxiter:
-                print(f"Algorithm has not terminated after {maxiter} iterations; starting again.")
+                if verbose: print(f"Algorithm has not terminated after {maxiter} iterations; starting again.")
                 stubs = D * [node for node in range(nNodes)]
                 edges = []
                 break
@@ -42,7 +42,7 @@ def regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
     G = nx.MultiGraph(incoming_graph_data=edges)
     return G
 
-def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
+def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000,verbose:bool=False) -> nx.MultiGraph:
     """
     Algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)), which
     generates a bipartite, regular graph.
@@ -63,7 +63,7 @@ def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
 
             i += 1
             if i > maxiter:
-                print(f"Algorithm has not terminated after {maxiter} iterations; starting again.")
+                if verbose: print(f"Algorithm has not terminated after {maxiter} iterations; starting again.")
                 blue_stubs = D * [node for node in range(nNodes)]
                 red_stubs = D * [node + nNodes for node in range(nNodes)]
                 edges = []
@@ -79,7 +79,7 @@ def bipartite_regular_graph(nNodes:int,D:int,maxiter:int=1000) -> nx.MultiGraph:
     G = nx.MultiGraph(incoming_graph_data=edges)
     return G
 
-def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.MultiGraph:
+def short_loop_graph(nNodes:int,D:int,p:float=0,verbose:bool=False) -> nx.MultiGraph:
     """
     Algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)), which
     generates a network with few short primitive cycles.
@@ -88,7 +88,7 @@ def short_loop_graph(nNodes:int,D:int,p:float=0) -> nx.MultiGraph:
     if p > 1 or p < 0: raise ValueError("p must be a value between zero and one.")
 
     # initial bipartite regular graph
-    biG = bipartite_regular_graph(nNodes,D)
+    biG = bipartite_regular_graph(nNodes,D,verbose=verbose)
 
     edges = []
     for red_node in np.arange(nNodes,2*nNodes):

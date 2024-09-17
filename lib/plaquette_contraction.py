@@ -80,7 +80,7 @@ def contract_network(tensors:list):
     if not a.shape == (1, 1, 1, 1): warnings.warn("Unexpected shape after contracting the network; continuing.")
     return a.flatten()[0]
 
-def block_bp(tensors:list):
+def block_bp(tensors:list,verbose:bool=False):
     """
     A kind of coarse-grainig inspired by the Block Belief Propagation
     algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is the
@@ -97,25 +97,25 @@ def block_bp(tensors:list):
     for a in mpo[1:]:
         s0 = np.einsum(s0, (0, 6, 2, 4), a, (6, 1, 3, 5), (0, 1, 2, 3, 4, 5)).reshape(
             (s0.shape[0], a.shape[1], s0.shape[2]*a.shape[2], s0.shape[3]*a.shape[3]))
-    print("s0.shape:", s0.shape)
+    if verbose: print("s0.shape:", s0.shape)
 
     # s1: 3x1 column at upper-right boundary
     s1 = tensors[0][3]
     for a in (tensors[1][3], tensors[2][3]):
         s1 = np.einsum(s1, (0, 1, 2, 6), a, (3, 4, 6, 5), (0, 1, 2, 3, 4, 5)).reshape(
             (s1.shape[0]*a.shape[0], s1.shape[1]*a.shape[1], s1.shape[2], a.shape[3]))
-    print("s1.shape:", s1.shape)
+    if verbose: print("s1.shape:", s1.shape)
 
     # s2: 1x3 row at lower-left boundary
     s2 = tensors[3][0]
     for a in tensors[3][1:3]:
         s2 = np.einsum(s2, (0, 6, 2, 4), a, (6, 1, 3, 5), (0, 1, 2, 3, 4, 5)).reshape(
             (s2.shape[0], a.shape[1], s2.shape[2]*a.shape[2], s2.shape[3]*a.shape[3]))
-    print("s2.shape:", s2.shape)
+    if verbose: print("s2.shape:", s2.shape)
 
     # s3: tensor at lower-right corner boundary
     s3 = tensors[3][3]
-    print("s3.shape:", s3.shape)
+    if verbose: print("s3.shape:", s3.shape)
 
     return [[s0, s1], [s2, s3]]
 
@@ -222,7 +222,7 @@ def message_passing_step(tensors:list,msg_in_l:list,msg_in_r:list,msg_in_u:list,
 
     return msg_in_l_next, msg_in_r_next, msg_in_u_next, msg_in_d_next
 
-def message_passing_iteration(tensors:list,numiter:int,verbose:bool=True):
+def message_passing_iteration(tensors:list,numiter:int,verbose:bool=False):
     """
     Perform a message passing iteration. Algorithm taken from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
     """
@@ -340,7 +340,7 @@ def main():
 
     # message passing iteration
     numiter = 30
-    msg_in_l, msg_in_r, msg_in_u, msg_in_d, eps_iter = message_passing_iteration(s_tensors, numiter)
+    msg_in_l, msg_in_r, msg_in_u, msg_in_d, eps_iter = message_passing_iteration(tensors, numiter)
     plt.semilogy(range(1, numiter + 1), eps_iter)
     plt.xlabel("iteration")
     plt.ylabel("absolute change of message entries")
@@ -349,7 +349,7 @@ def main():
     msg_in_l, msg_in_r, msg_in_u, msg_in_d = normalize_messages(msg_in_l, msg_in_r, msg_in_u, msg_in_d)
 
     # contract incoming messages with tensors
-    cntr = contract_tensors_messages(s_tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d)
+    cntr = contract_tensors_messages(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d)
     print("cntr:")
     print(cntr)
     print("np.prod(cntr):", np.prod(cntr))
