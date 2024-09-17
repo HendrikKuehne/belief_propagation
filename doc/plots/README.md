@@ -14,7 +14,7 @@ Comparison of the `networkx`- and the plaquette-approach; 200 sample networks of
 
 The belief propagation algorithm on arbitary graphs with few short loops (lokally tree-like). `psd=True` and `real=False`, bond dimension 4. The relative error stays constant for a growing number of qubits.
 
-# `loopy_graphs_bp.pdf`
+# `pq_without_block_bp.pdf`
 
 <p align="center">
   <img width="800" height="480" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/plots/pq_without_block_bp.jpeg">
@@ -22,4 +22,4 @@ The belief propagation algorithm on arbitary graphs with few short loops (lokall
 
 Belief propagation using the plaquette code, for different numbers of nodes[^1]. 100 samples each, bond dimension 4, `psd=True` and `real=False`. The relative error magnitude does not change when the number of nodes is increased.
 
-[^1] `width,height in itertools.product(np.arange(2,6),repeat=2)`
+[^1]: `width,height in itertools.product(np.arange(2,6),repeat=2)`

@@ -15,7 +15,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 ## ToDo
 
 * :white_check_mark: Expand the algorithm to work on arbitary graphs.
-    * Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edgesin a tensor network.
+    * Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
 
 ## Open questions
 
@@ -28,7 +28,7 @@ This will be updated continuously, as questions come to mind.
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
-    * The accuracy improves when `blpck_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this plot](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/plots/pq_without_block_bp.jpeg)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly?
+    * The accuracy improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#loopy_graphs_bppdf-1)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly?
 
 ## References
 
