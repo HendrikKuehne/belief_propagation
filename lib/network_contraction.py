@@ -161,7 +161,7 @@ def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
             T_res = np.einsum(G.nodes[sending_node]["T"],list(range(nLegs)),*args)
 
             # saving the normalized message
-            G[node1][node2][0]["msg"][receiving_node] = T_res# / np.sum(T_res)
+            G[node1][node2][0]["msg"][receiving_node] = T_res / np.sum(T_res)
 
             # saving the change in message norm
             eps += (np.linalg.norm(G[node1][node2][0]["msg"][receiving_node] - old_G[node1][node2][0]["msg"][receiving_node]),)
@@ -239,7 +239,7 @@ if __name__ == "__main__": # loopy Belief Propagation
 
     num_iter = 30
     eps_list = message_passing_iteration(G,num_iter,sanity_check=True)
-    #normalize_messages(G,True)
+    normalize_messages(G,True)
 
     if False: # plotting
         plt.figure("Tensor network")
