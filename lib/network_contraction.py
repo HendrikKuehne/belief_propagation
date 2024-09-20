@@ -6,8 +6,8 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import copy
 
-from graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph
-from utils import crandn,contract_edge,network_intact_check,network_message_check,delta_network,dummynet5,grid_net
+from graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph,tree
+from utils import crandn,contract_edge,merge_edges,network_intact_check,network_message_check,delta_network,dummynet5,grid_net
 
 def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False) -> None:
     """
@@ -63,19 +63,48 @@ def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
 
     return tuple(G.nodes(data=True))[0][1]["T"]
 
-def block_bp(G:nx.MultiGraph,width:int,height:int,sanity_check:bool=False) -> None:
+def block_bp(G:nx.MultiGraph,width:int,height:int,blocksize:int=3,sanity_check:bool=False) -> None:
     """
     A kind of coarse-grainig inspired by the Block Belief Propagation
     algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is the
     initialization of said algorithm. `G` is modified in-place.
     """
-    # not yet implemented; this is a little subtle because implementing this might require merging edges, which
-    # I have not implemented
-    if width < 4 or height < 4: return
+    if width <= blocksize or height <= blocksize: return
+
+    # sanity check
+    if sanity_check: assert network_intact_check(G)
 
     grid_to_node = lambda i,j: i*width+j
 
-    # s0: Turning the upper-left 3x3 plaquettes into one plaquette
+    # s0: Turning blocks into one plaquette by contracting their interior edges
+    iBlock = 0
+    jBlock = 0
+    while blocksize * iBlock < height:
+        while blocksize * jBlock < width:
+            # edges in block (iBlock,jBlock)
+            for i in range(blocksize * iBlock,min(blocksize * (iBlock + 1),height)):
+                for j in range(blocksize * jBlock,min(blocksize * (jBlock + 1),width)):
+                    if i == blocksize * iBlock and j == blocksize * jBlock: continue
+                    contract_edge(grid_to_node(blocksize * iBlock,blocksize * jBlock),grid_to_node(i,j),0,G)
+            jBlock += 1
+        jBlock = 0
+        iBlock += 1
+
+    # contract trace edges
+    trace_edges = ()
+    for node1,node2,key in G.edges(keys=True):
+        if node1 == node2: trace_edges += ((node1,node2,key),)
+    for edge in trace_edges:
+        contract_edge(*edge,G)
+
+    # merge parallel edges
+    parallel_edges = ()
+    for node1,node2 in G.edges():
+        if len(G[node1][node2]) > 1: parallel_edges += ({node1,node2},)
+    for edge in parallel_edges:
+        merge_edges(*edge,G)
+
+    return
 
 def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
     """
@@ -98,7 +127,8 @@ def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
                 # bond dimension
                 chi = G.nodes[receiving_node]["T"].shape[iLeg]
                 # initialization with normalized vector
-                G[node1][node2][0]["msg"][receiving_node] = np.ones(shape=(chi,)) / chi
+                msg = np.ones(shape=(chi,))#np.random.normal(size=(chi,))
+                G[node1][node2][0]["msg"][receiving_node] = msg / np.sum(msg)
 
 def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     """
@@ -186,9 +216,22 @@ def contract_tensors_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
             args += (G[node][neighbor][0]["msg"][node],(G[node][neighbor][0]["legs"][node],))
         G.nodes[node]["cntr"] = np.einsum(G.nodes[node]["T"],list(range(nLegs)),*args)
 
+def contract_opposing_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
+    """
+    Contracts the two messages on every edge, and adds the value to each edge.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
+
+    for node1,node2 in G.edges():
+        T_res = np.dot(G[node1][node2][0]["msg"][node1],G[node1][node2][0]["msg"][node1])
+        G[node1][node2][0]["cntr"] = T_res
+
 if __name__ == "__main__":
-    G = short_loop_graph(10,3,.6)
+    #G = tree(10)
+    G = short_loop_graph(20,3,.6)
     construct_network(G,4,real=False,psd=True)
+    nNodes = G.number_of_nodes()
 
     print("Sanity checks:")
     print("    Network intact?",network_intact_check(G))
@@ -198,7 +241,7 @@ if __name__ == "__main__":
     eps_list = message_passing_iteration(G,num_iter,sanity_check=True)
     normalize_messages(G,True)
 
-    if False: # plotting
+    if True: # plotting
         plt.figure("Tensor network")
         nx.draw(G,with_labels=True,font_weight="bold")
 
@@ -210,11 +253,23 @@ if __name__ == "__main__":
 
         plt.show()
 
-    contract_tensors_messages(G,False)
-    cntr = 1
-    for node,val in G.nodes(data="cntr"): cntr *= val
-    refval = contract_network(G,True)
-    rel_err = np.abs(refval - cntr) / np.abs(refval)
+    # contracting the network
+    contract_opposing_messages(G,True)
+    contract_tensors_messages(G,True)
 
-    print("\nComparing direct contraction and message passing:\n    Contraction:     {}\n    Message passing: {}".format(np.real_if_close(refval),np.real_if_close(cntr)))
-    print("Relative error = {:.3e}".format(rel_err))
+    rel_err = lambda true,approx: np.real_if_close(true - approx) / np.abs(true)
+
+    node_cntr_list = ()
+    for node,val in G.nodes(data="cntr"):
+        node_cntr_list += (val,)
+
+    edge_cntr_list = ()
+    for node1,node2,val in G.edges(data="cntr"):
+        edge_cntr_list += (val,)
+
+    refval = contract_network(G,True)
+    #for cntr in node_cntr_list: print(True if np.isclose(cntr,refval) else rel_err(refval,cntr))
+    #for cntr in edge_cntr_list: print(True if np.isclose(cntr,refval) else rel_err(refval,cntr))
+
+    print("Comparing direct contraction and message passing:\n    Contraction:     {}\n    Message passing: {}".format(np.real_if_close(refval),np.real_if_close(np.prod(node_cntr_list))))
+    print("Relative error = {:.3e}".format(rel_err(refval,np.prod(node_cntr_list))))

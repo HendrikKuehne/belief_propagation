@@ -45,11 +45,14 @@ def delta_network(G:nx.MultiGraph,chi:int,) -> None:
         for i,neighbor in enumerate(G.adj[node]):
             G[node][neighbor][0]["legs"][node] = i
 
-def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph) -> None:
+def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph,sanity_check:bool=False) -> None:
     """
     Contracts the edge `(node1,node2,key)` in the tensor network `G`. `G` is modified in-place.
     `node2` is removed, and the new node assumes the label `node1`.
     """
+    # sanity check
+    if sanity_check: assert network_intact_check(G)
+
     if node1 == node2:
         # trace edge
 
@@ -141,6 +144,80 @@ def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph) -> None:
 
     # removing node2
     G.remove_node(node2)
+
+    return
+
+def merge_edges(node1:int,node2:int,G:nx.multigraph,sanity_check:bool=False) -> None:
+    """
+    Merges all parallel edges between `node1` and `node2`. `G` is modified in-place.
+    """
+    if len(G[node1][node2]) < 2:
+        # there are no edges we could merge
+        return
+
+    # sanity check
+    if sanity_check: assert network_intact_check(G)
+
+    axes1 = []
+    """Makes up the `axes` argument for `np.transpose` with `legs1`."""
+    axes2 = []
+    """Makes up the `axes` argument for `np.transpose` with `legs2`."""
+    legs1 = list(range(G.nodes[node1]["T"].ndim))
+    """Makes up the `axes` argument for `np.transpose` with `axes1`."""
+    legs2 = list(range(G.nodes[node2]["T"].ndim))
+    """Makes up the `axes` argument for `np.transpose` with `axes2`."""
+    newshape1 = list(G.nodes[node1]["T"].shape)
+    """Part of the `shape` arhument for `np.reshape`."""
+    newshape2 = list(G.nodes[node2]["T"].shape)
+    """Part of the `shape` argument for `np.reshape`."""
+    keys = ()
+    """Keys of the parallel edges, for removal later."""
+
+    # the tensors of node1 and node2 must be transposed s.t. duplicate edges are the leading edges
+    for i,key in enumerate(G[node1][node2]):
+        legs1.remove(G[node1][node2][key]["legs"][node1])
+        legs2.remove(G[node1][node2][key]["legs"][node2])
+
+        axes1 += [G[node1][node2][key]["legs"][node1],]
+        axes2 += [G[node1][node2][key]["legs"][node2],]
+
+        keys += (key,)
+
+        newshape1[G[node1][node2][key]["legs"][node1]] = None
+        newshape2[G[node1][node2][key]["legs"][node2]] = None
+
+    newshape1 = [-1,] + [dim for dim in newshape1 if dim != None]
+    newshape2 = [-1,] + [dim for dim in newshape2 if dim != None]
+
+    # removing the parallel edges
+    for key in keys: G.remove_edge(node1,node2,key)
+
+    # transposing the tensors, s.t. the parallel edges connect to the leading dimensions
+    G.nodes[node1]["T"] = np.transpose(G.nodes[node1]["T"],axes1 + legs1)
+    G.nodes[node2]["T"] = np.transpose(G.nodes[node2]["T"],axes2 + legs2)
+
+    # re-shaping the tensors
+    G.nodes[node1]["T"] = np.reshape(G.nodes[node1]["T"],newshape1)
+    G.nodes[node2]["T"] = np.reshape(G.nodes[node2]["T"],newshape2)
+
+    # shifts of the leg indices for both nodes
+    legshift1 = lambda i: 1 - sum([i > leg for leg in axes1])
+    legshift2 = lambda i: 1 - sum([i > leg for leg in axes2])
+
+    # updating the leg entries of the edges to the rest of the network
+    for _,neighbor,key in G.edges(node1,keys=True):
+        if G[node1][neighbor][key]["trace"]:
+            G[node1][neighbor][key]["indices"] = {leg + legshift1(leg) for leg in G[node1][neighbor][key]["indices"]}
+        else:
+            G[node1][neighbor][key]["legs"][node1] += legshift1(G[node1][neighbor][key]["legs"][node1])
+    for _,neighbor,key in G.edges(node2,keys=True):
+        if G[node2][neighbor][key]["trace"]:
+            G[node2][neighbor][key]["indices"] = {leg + legshift2(leg) for leg in G[node2][neighbor][key]["indices"]}
+        else:
+            G[node2][neighbor][key]["legs"][node2] += legshift2(G[node2][neighbor][key]["legs"][node2])
+
+    # adding a new edge
+    G.add_edge(node1,node2,legs={node1:0,node2:0},trace=False,indices=None)
 
     return
 

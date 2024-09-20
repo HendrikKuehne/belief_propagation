@@ -6,9 +6,11 @@ __pycache__
 # inore generated Jupyter files
 *.ipynb_checkpoints/
 
-# ignore compressed files
+# ignore compressed files and pickles
 *.zip
 *.tar.gz
+*.pickle
+data/
 
 # Mac
 .DS_Store

@@ -15,7 +15,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 ## ToDo
 
 * :white_check_mark: Expand the algorithm to work on arbitary graphs.
-    * Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
+    * :white_check_mark: Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
 
 ## Open questions
 
@@ -23,6 +23,8 @@ This will be updated continuously, as questions come to mind.
 
 * Why does it work only if `psd = True` in `construct_network`?
     * Testing Christian's code on 11.9. without any modifications: rel. err. $\sim 10^{-3}$ for `psd=True`, and rel. err. $\mathcal{O}(1)$ if `psd=False`.
+    * `psd=True` is necessary for tree tensor networks too (see testing with `lib.graph_creation.tree`).
+    * Messages must not have positive entries; if `psd=True`, the algorithm works wiht messages that have negative entries (tested with messages generated from a normal distribution, and then normalized).
 * How and why does the normalization in `message_passing_step` work? We're simply dividing the message by the sum of it's elements; this is coming completely out of the blue for me.
     * :arrow_right: The function `message_passing_iteration` implements Kirkley's belief propagation for networks with loops (Kirkley, 2021: [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). It's messages correspond to marginal probabilities and, as such, need to be normalized; the normalization above is the one that this paper uses (see the discussion after Eq. 12).
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?

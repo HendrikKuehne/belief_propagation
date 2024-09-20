@@ -113,12 +113,30 @@ def short_loop_graph(nNodes:int,D:int,p:float=0,verbose:bool=False) -> nx.MultiG
     return biG.subgraph(largest_cc).copy()
     # we need to copy because this removes the freeze of the subgraph
 
+def tree(nNodes:int) -> nx.MultiGraph:
+    """
+    Generates a tree by appending nodes at random to the tree.
+    """
+    not_connected = [i for i in range(1,nNodes)]
+    connected = [0]
+    G = nx.MultiGraph()
+    G.add_node(0)
+
+    while len(not_connected) > 0:
+        node = np.random.choice(not_connected)
+        neighbor = np.random.choice(connected)
+        G.add_edge(node,neighbor)
+        connected += [node,]
+        not_connected.remove(node)
+
+    return G
+
 if __name__ == "__main__":
-    loopyG = short_loop_graph(35,3,.6)
+    treeG = tree(50)
     print("Network created")
 
     # drawing the network
-    nx.draw(loopyG,with_labels=True,font_weight="bold")
+    nx.draw(treeG,with_labels=True,font_weight="bold")
     plt.show()
 
     ## investigating the cycles that occur in the network
