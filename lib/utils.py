@@ -5,6 +5,7 @@ import numpy as np
 import networkx as nx
 import warnings
 import itertools
+import matplotlib.pyplot as plt
 
 def delta_tensor(nLegs:int,chi:int) -> np.ndarray:
     T = np.zeros(shape = nLegs * [chi])
@@ -222,7 +223,7 @@ def merge_edges(node1:int,node2:int,G:nx.multigraph,sanity_check:bool=False) -> 
     return
 
 # -------------------------------------------------------------------------------
-#                   sanity checks
+#                   sanity checks & diagnosis
 # -------------------------------------------------------------------------------
 
 def network_intact_check(G:nx.MultiGraph) -> bool:
@@ -287,6 +288,22 @@ def network_message_check(G:nx.MultiGraph) -> bool:
             #    return False
 
     return True
+
+def loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
+    """
+    Plots the histogram of the loop lengths of `G`.
+    """
+    plt.figure("Loop length histogram")
+    # investigating the cycles that occur in the network
+    cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(G)]
+    plt.hist(cycle_lengths,bins=max(cycle_lengths)-min(cycle_lengths))
+    plt.suptitle(f"Graph with {G.number_of_nodes()} nodes.")
+    plt.xlabel("cycle length")
+    plt.ylabel("count")
+    if show_plot:
+        plt.show()
+        return None
+    return plt.gcf()
 
 # -------------------------------------------------------------------------------
 #                   dummy tensor networks for testing

@@ -16,6 +16,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 
 * :white_check_mark: Expand the algorithm to work on arbitary graphs.
     * :white_check_mark: Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
+* Investigate if the effect of the `psd` option is an artefact of numerical inaccuracies (see [here](https://github.com/HendrikKuehne/belief_propagation/blob/main/BP_vs_loopyBP.md) for details).
 
 ## Open questions
 
@@ -24,13 +25,14 @@ This will be updated continuously, as questions come to mind.
 * Why does it work only if `psd = True` in `construct_network`?
     * Testing Christian's code on 11.9. without any modifications: rel. err. $\sim 10^{-3}$ for `psd=True`, and rel. err. $\mathcal{O}(1)$ if `psd=False`.
     * `psd=True` is necessary for tree tensor networks too (see testing with `lib.graph_creation.tree`).
-    * Messages must not have positive entries; if `psd=True`, the algorithm works wiht messages that have negative entries (tested with messages generated from a normal distribution, and then normalized).
+    * Messages must not have positive entries; if `psd=True`, the algorithm works with messages that have negative entries (tested with messages generated from a normal distribution, and then normalized).
 * How and why does the normalization in `message_passing_step` work? We're simply dividing the message by the sum of it's elements; this is coming completely out of the blue for me.
     * :arrow_right: The function `message_passing_iteration` implements Kirkley's belief propagation for networks with loops (Kirkley, 2021: [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). It's messages correspond to marginal probabilities and, as such, need to be normalized; the normalization above is the one that this paper uses (see the discussion after Eq. 12).
+    * This algorithm is significantly different from Message Passing on trees, which is exact. See [here](https://github.com/HendrikKuehne/belief_propagation/blob/main/BP_vs_loopyBP.md) for details.
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
-    * The accuracy improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#loopy_graphs_bppdf-1)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly?
+    * The relative error improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#tn_vs_pq_3x3_baselinepdf)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly?
 
 ## References
 

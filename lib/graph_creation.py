@@ -132,16 +132,19 @@ def tree(nNodes:int) -> nx.MultiGraph:
     return G
 
 if __name__ == "__main__":
-    treeG = tree(50)
+    #G = tree(50)
+    G = short_loop_graph(70,3,0.6)
     print("Network created")
 
     # drawing the network
-    nx.draw(treeG,with_labels=True,font_weight="bold")
+    nx.draw(G,with_labels=True,font_weight="bold")
     plt.show()
 
-    ## investigating the cycles that occur in the network
-    #cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(loopyG)]
-    #plt.hist(cycle_lengths,bins=max(cycle_lengths)-min(cycle_lengths))
-    #plt.xlabel("cycle length")
-    #plt.ylabel("count")
-    #plt.show()
+    plt.figure("Loop length histogram")
+    # investigating the cycles that occur in the network
+    cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(G)]
+    plt.hist(cycle_lengths,bins=max(cycle_lengths)-min(cycle_lengths))
+    plt.suptitle(f"Graph with {G.number_of_nodes()} nodes.")
+    plt.xlabel("cycle length")
+    plt.ylabel("count")
+    plt.show()

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import copy
 
 from graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph,tree
-from utils import crandn,contract_edge,merge_edges,network_intact_check,network_message_check,delta_network,dummynet5,grid_net
+from utils import crandn,contract_edge,merge_edges,network_intact_check,network_message_check,loop_hist,delta_network,dummynet5,grid_net
 
 def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False) -> None:
     """
@@ -161,7 +161,7 @@ def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
             T_res = np.einsum(G.nodes[sending_node]["T"],list(range(nLegs)),*args)
 
             # saving the normalized message
-            G[node1][node2][0]["msg"][receiving_node] = T_res / np.sum(T_res)
+            G[node1][node2][0]["msg"][receiving_node] = T_res# / np.sum(T_res)
 
             # saving the change in message norm
             eps += (np.linalg.norm(G[node1][node2][0]["msg"][receiving_node] - old_G[node1][node2][0]["msg"][receiving_node]),)
@@ -224,13 +224,13 @@ def contract_opposing_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
     if sanity_check: assert network_message_check(G)
 
     for node1,node2 in G.edges():
-        T_res = np.dot(G[node1][node2][0]["msg"][node1],G[node1][node2][0]["msg"][node1])
+        T_res = np.dot(G[node1][node2][0]["msg"][node1],G[node1][node2][0]["msg"][node2])
         G[node1][node2][0]["cntr"] = T_res
 
-if __name__ == "__main__":
-    #G = tree(10)
-    G = short_loop_graph(20,3,.6)
-    construct_network(G,4,real=False,psd=True)
+if __name__ == "__main__": # loopy Belief Propagation
+    G = tree(20)
+    #G = short_loop_graph(20,3,.6)
+    construct_network(G,4,real=False,psd=False)
     nNodes = G.number_of_nodes()
 
     print("Sanity checks:")
@@ -239,9 +239,9 @@ if __name__ == "__main__":
 
     num_iter = 30
     eps_list = message_passing_iteration(G,num_iter,sanity_check=True)
-    normalize_messages(G,True)
+    #normalize_messages(G,True)
 
-    if True: # plotting
+    if False: # plotting
         plt.figure("Tensor network")
         nx.draw(G,with_labels=True,font_weight="bold")
 
@@ -268,8 +268,9 @@ if __name__ == "__main__":
         edge_cntr_list += (val,)
 
     refval = contract_network(G,True)
-    #for cntr in node_cntr_list: print(True if np.isclose(cntr,refval) else rel_err(refval,cntr))
-    #for cntr in edge_cntr_list: print(True if np.isclose(cntr,refval) else rel_err(refval,cntr))
+
+    for cntr in node_cntr_list: print(np.isclose(cntr,refval))
+    for cntr in edge_cntr_list: print(np.isclose(cntr,refval))
 
     print("Comparing direct contraction and message passing:\n    Contraction:     {}\n    Message passing: {}".format(np.real_if_close(refval),np.real_if_close(np.prod(node_cntr_list))))
-    print("Relative error = {:.3e}".format(rel_err(refval,np.prod(node_cntr_list))))
+    print("Relative error = {:.3e}".format(rel_err(refval,np.prod(node_cntr_list)**(1/nNodes))))
