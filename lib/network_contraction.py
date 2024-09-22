@@ -189,7 +189,7 @@ def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,verbose:bool=False,
 
     return eps_list
 
-def normalize_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
+def normalize_messages(G:nx.MultiGraph,sanity_check:bool=False,norm_check:bool=False) -> None:
     """
     Normalize messages such that the inner product between messages traveling along
     the same edge but in opposite directions is one. `G` is modified in-place.
@@ -201,6 +201,23 @@ def normalize_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
         norm = np.dot(G[node1][node2][0]["msg"][node1],G[node1][node2][0]["msg"][node2])
         G[node1][node2][0]["msg"][node1] /= np.sqrt(np.abs(norm))
         G[node1][node2][0]["msg"][node2] /= np.sqrt(np.abs(norm))
+
+    if norm_check: # check if the messages, interpreted as matrices, are positive semi-definite
+        print("Message normalization check:")
+        h = int(np.sqrt(G[node1][node2][0]["msg"][node1].shape[0]))
+        if h**2 == G[node1][node2][0]["msg"][node1].shape[0]:
+           for node1,node2 in G.edges():
+               # check normalization
+               norm = np.dot(G[node1][node2][0]["msg"][node1],G[node1][node2][0]["msg"][node2])
+               if not np.isclose(norm,1): print("    Edge ({},{}) normalized to {:.3f}".format(node1,node2,norm))
+
+                # check positive semi-definite
+               for node in (node1,node2):
+                   # calculate the eigenvalues
+                   eigvals = np.linalg.eigvals(G[node1][node2][0]["msg"][node].reshape(h,h))
+                   # are they non-negative real numbers?
+                   all_positive = all([np.real(eigval) >= 0 if np.real_if_close(eigval) == np.real(eigval) else False for eigval in eigvals])
+                   if not all_positive: print(f"    Message G[{node1}][{node2}][0][\"msg\"][{node}] is not positive semi-definite.")
 
 def contract_tensors_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
     """
@@ -228,9 +245,9 @@ def contract_opposing_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
         G[node1][node2][0]["cntr"] = T_res
 
 if __name__ == "__main__": # loopy Belief Propagation
-    G = tree(20)
-    #G = short_loop_graph(20,3,.6)
-    construct_network(G,4,real=False,psd=False)
+    #G = tree(20)
+    G = short_loop_graph(15,3,.6)
+    construct_network(G,4,real=True,psd=False)
     nNodes = G.number_of_nodes()
 
     print("Sanity checks:")
@@ -239,7 +256,7 @@ if __name__ == "__main__": # loopy Belief Propagation
 
     num_iter = 30
     eps_list = message_passing_iteration(G,num_iter,sanity_check=True)
-    normalize_messages(G,True)
+    normalize_messages(G,True,True)
 
     if False: # plotting
         plt.figure("Tensor network")
@@ -269,8 +286,8 @@ if __name__ == "__main__": # loopy Belief Propagation
 
     refval = contract_network(G,True)
 
-    for cntr in node_cntr_list: print(np.isclose(cntr,refval))
-    for cntr in edge_cntr_list: print(np.isclose(cntr,refval))
+    #for cntr in node_cntr_list: print(np.isclose(cntr,refval))
+    #for cntr in edge_cntr_list: print(np.isclose(cntr,refval))
 
     print("Comparing direct contraction and message passing:\n    Contraction:     {}\n    Message passing: {}".format(np.real_if_close(refval),np.real_if_close(np.prod(node_cntr_list))))
-    print("Relative error = {:.3e}".format(rel_err(refval,np.prod(node_cntr_list)**(1/nNodes))))
+    print("Relative error = {:.3e}".format(rel_err(refval,np.prod(node_cntr_list))))
