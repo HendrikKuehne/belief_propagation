@@ -245,8 +245,8 @@ def contract_opposing_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
         G[node1][node2][0]["cntr"] = T_res
 
 if __name__ == "__main__": # loopy Belief Propagation
-    #G = tree(20)
-    G = short_loop_graph(15,3,.6)
+    G = tree(20)
+    #G = short_loop_graph(15,3,.6)
     construct_network(G,4,real=True,psd=False)
     nNodes = G.number_of_nodes()
 

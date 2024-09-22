@@ -16,7 +16,8 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 
 * :white_check_mark: Expand the algorithm to work on arbitary graphs.
     * :white_check_mark: Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
-* Investigate if the effect of the `psd` option is an artefact of numerical inaccuracies (see [here](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/README.md) for details).
+* Check if Bethe Free Energy is real if `psd=False` (eq. A12 in [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073) ([arXiv:2008.04433](https://arxiv.org/abs/2008.04433))).
+    * This seems to be necessary for the Belief Propagation algorithm to work, but I would not be surprised if it doesn't hold if `psd=False`.
 
 ## Open questions
 
@@ -26,9 +27,10 @@ This will be updated continuously, as questions come to mind.
     * Testing Christian's code on 11.9. without any modifications: rel. err. $\sim 10^{-3}$ for `psd=True`, and rel. err. $\mathcal{O}(1)$ if `psd=False`.
     * `psd=True` is necessary for tree tensor networks too (see testing with `lib.graph_creation.tree`).
     * Messages must not have positive entries; if `psd=True`, the algorithm works with messages that have negative entries (tested with messages generated from a normal distribution, and then normalized).
+    * I suspected `psd=False` might simply introduce numerical inaccuracies (see [here](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc#user-content-fn-?-4fb6243a02845a613734437310be5f32)), but that is not what it does; see [here](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc#the-effect-of-the-psd-option).
 * How and why does the normalization in `message_passing_step` work? We're simply dividing the message by the sum of it's elements; this is coming completely out of the blue for me.
     * :arrow_right: The function `message_passing_iteration` implements Kirkley's belief propagation for networks with loops (Kirkley, 2021: [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). It's messages correspond to marginal probabilities and, as such, need to be normalized; the normalization above is the one that this paper uses (see the discussion after Eq. 12).
-    * This algorithm is significantly different from Message Passing on trees, which is exact. See [here](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/README.md) for details.
+    * This algorithm is significantly different from Message Passing on trees, which is exact. See [here](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/README.md#belief-propagation-and-loopy-belief-propagation) for details.
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
