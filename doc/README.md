@@ -10,7 +10,7 @@ on every node, where $\text{tr}$ denotes contraction and $N(a)$ is the neighborh
 
 The MP algorithm simply iterates this equation on every node of a tree. At convergence, the value of the complete contraction can be extracted form any node, since any node is a valid root. Contracting any node with the inflowing messages gives the network value, and contracting two messages on the same node gives the network value. This gives exact results on tree-shaped networks.
 
-loopyBP adds a normalization step at two points wthin the algorithm:
+loopyBP adds a normalization step at two points in the algorithm:
 
 * After one iteration step (i.e. applying the BP equation), each message is divided by the sum of it's elements.
 * After convergence, on each edge, the messages are normalized s.t. their contraction is normalized to unity;[^1] on the edge $(a,b)$, we do
@@ -24,10 +24,10 @@ $$
 The loopyBP algorithm is exact on trees, too. The approximation that it carries out is drastically different, however: MP directly implements the contraction of the network, s.t. each node holds the contraction value $\text{cntr}$. Let $\text{cntr}_a$ be the result of the contraction of tensor $a$ with it's inflowing messages, then MP gives
 
 $$
-    \text{cntr} = \text{cntr}_x = \left(\prod_x\text{cntr}_x\right)^{1/L},
+    \text{cntr} = \text{cntr}_x = \left(\prod_a\text{cntr}_a\right)^{1/L}
 $$
 
-where $L$ is the number of nodes. This works whether `psd=True` or `psd=False`.[^2] In loopyBP, the contraction value is the product of all node values:
+for all nodes $x$, where $L$ is the number of nodes. This works whether `psd=True` or `psd=False`.[^2] In loopyBP, the contraction value is the product of all node values:
 
 [^2]: The value of `psd` has an influence on numerical accuracy, however. Whether `psd=True` or `psd=False`, the code in `lib/network_contraction` yields messages s.t. $\text{cntr}_a=\text{cntr}$ for every node $a$. Numerically verifying $\text{cntr} = \left(\prod_x\text{cntr}_x\right)^{1/L}$ only succeeds when `psd=True` (using the Numpy standard accuracy). If `psd=False`, the relative error is in $\mathcal{O}(10^{-1})$. Based on this, one could assume that the `psd` option in loopyBP only introduces numerical inaccuracies, too. This does not seem to be the case; loopyBP misses $\text{cntr}$ by one order of magnitude in real and imaginary part when `psd=False`, while relative errors in $\mathcal{O}(10^{-3})$ are achieved when `psd=True`.
 
