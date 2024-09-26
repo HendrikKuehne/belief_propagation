@@ -12,10 +12,9 @@ import plotly.express as px
 import pickle
 from datetime import datetime
 
-from lib import network_contraction as tn
-from lib import plaquette_contraction as pq
-from lib import utils
-from lib import graph_creation as graphs
+from lib import loopyBP as tn
+from lib import plaquette as pq
+from lib import networks
 
 def tn_routine(G:nx.MultiGraph,num_iter:int=30) -> float:
     """
@@ -103,7 +102,7 @@ if __name__ == "__main__":
         itertools.product(np.arange(2,5),repeat=2)
     ):
         width,height = width_height
-        tensors,G = utils.grid_net(chi,width,height,real=False,psd=psd)
+        tensors,G = networks.grid_net(chi,width,height,real=False,psd=psd)
 
         if time.time() - t0 > 120:
             t0 = time.time()
@@ -168,7 +167,7 @@ if __name__ == "dings":#"__main__":
         itertools.product(np.arange(2,5),repeat=2)
     ):
         width,height = width_height
-        tensors,G = utils.grid_net(chi,width,height,real=False,psd=psd)
+        tensors,G = networks.grid_net(chi,width,height,real=False,psd=psd)
 
         if time.time() - t0 > 120:
             t0 = time.time()

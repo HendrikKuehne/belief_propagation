@@ -1,88 +1,13 @@
 """
-Belief propagation on graphs, i.e. on various geometries.
+Belief propagation on graphs, i.e. on various geometries. Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073)).
 """
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import copy
 
-from lib.graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph,tree
-from lib.utils import crandn,contract_edge,merge_edges,network_intact_check,network_message_check,loop_hist,delta_network,dummynet5,grid_net
-
-def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False) -> None:
-    """
-    Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
-    The graph `G` is manipulated in-place.
-    """
-    # random number generation
-    if real:
-        randn = lambda size: rng.standard_normal(size)
-    else:
-        randn = lambda size: crandn(size,rng)
-
-    for edge in G.edges:
-        # each edge has a "legs" key, whose value is itself a dictionary. The keys are the labels of the adjacent nodes, and their values are the indices of the tensor legs this edge connects
-        G[edge[0]][edge[1]][0]["legs"] = {}
-        # each ede has a "trace" key, which is true if this edge corresponds to the trace of a tensor (i.e. if this edge connects a node to itself)
-        G[edge[0]][edge[1]][0]["trace"] = False
-        # each edge has an "indices" key, which holds the legs that the adjacent tensors are summed over as a set (only used for edges that represent a trace)
-        G[edge[0]][edge[1]][0]["indices"] = None
-
-    for node in G.nodes:
-        nLegs = len(G.adj[node])
-        dim = nLegs * [chi]
-        # constructing a new tensor
-        if psd:
-            h = int(np.sqrt(chi))
-            assert h**2 == chi, "if psd=True, chi must have an integer root."
-            s = randn(size = nLegs * [h,] + [chi,])
-            T = np.einsum(
-                s, [2*i for i in range(nLegs)] + [2*nLegs,],
-                s.conj(), [2*i+1 for i in range(nLegs)] + [2*nLegs,],
-                np.arange(2*nLegs)
-            ).reshape(dim) / chi**(3/4)
-        else:
-            T = randn(size = dim) / chi**(3/4)
-
-        # adding the tensor to this node
-        G.nodes[node]["T"] = T
-
-        # adding to the adjacent edges which index they correspond to
-        for i,neighbor in enumerate(G.adj[node]):
-            G[node][neighbor][0]["legs"][node] = i
-
-def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
-    """
-    Contracts the tensor network `G` using `np.einsum` and `np.einsum_path`.
-    """
-    if sanity_check: assert network_intact_check(G)
-
-    args = ()
-
-    # enumerating the edges in the graph
-    for i,nodes in enumerate(G.edges()):
-        node1,node2 = nodes
-        G[node1][node2][0]["label"] = i
-
-    # extracting the einsum arguments
-    for node,T in G.nodes(data="T"):
-        args += (T,)
-        legs = [None for i in range(T.ndim)]
-        for _,neighbor,edge_label in G.edges(nbunch=node,data="label"):
-            legs[G[node][neighbor][0]["legs"][node]] = edge_label
-        args += (tuple(legs),)
-
-    path,path_info = np.einsum_path(*args,optimize=True)
-    return np.einsum(*args,optimize=path)
-
-    # Old, random contraction order
-    while G.number_of_edges() > 0:
-        iEdge = 0#np.random.randint(G.number_of_edges())
-        node1,node2,key = list(G.edges(keys=True))[iEdge]
-        contract_edge(node1,node2,key,G)
-        if sanity_check: assert network_intact_check(G)
-
-    return tuple(G.nodes(data=True))[0][1]["T"]
+from lib.utils import network_intact_check,network_message_check
+from lib.networks import contract_edge,merge_edges
 
 def block_bp(G:nx.MultiGraph,width:int,height:int,blocksize:int=3,sanity_check:bool=False) -> None:
     """

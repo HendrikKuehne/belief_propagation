@@ -5,9 +5,10 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 ## Contents
 
 * `lib`
-    * `graph_creation.py` Creation of various graphs.
-    * `network_contraction.py` Belief propagation on graphs, i.e. on various geometries.
-    * `plaquette_contraction.py` Code from Christian Mendl. Not to be modified in any substantial way, for reference.
+    * `graphs.py` Creation of various graphs.
+    * `loopyBP.py` Belief propagation on graphs, i.e. on various geometries.  Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073))
+    * `plaquette.py` Code from Christian Mendl. Not to be modified in any substantial way, for reference.
+    * `networks.py` Functions for network creation and handling.
     * `utils.py` Stuff that is useful here or there. `contract_edge` function for contracting an edge in a tensor network, sanity checks and test cases for `network_contraction.contract_network`.
 * `doc`
     * `plots` Discussion of various plots that illustrate the behavior of the contents of this repo.
@@ -19,7 +20,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 * Check if Bethe Free Energy is real if `psd=False` (eq. A12 in [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073) ([arXiv:2008.04433](https://arxiv.org/abs/2008.04433))).
     * This seems to be necessary for the Belief Propagation algorithm to work, but I would not be surprised if it doesn't hold if `psd=False`.
 * Implement Belief Propagation algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211))
-    * Improve contraction accuracy by treating short loops using Kirkley and long loops using Feynman Contraction.[^1]
+* Improve contraction accuracy by treating short loops using Kirkley and long loops using Feynman Contraction.[^1]
 * Optimize exact contraction of tensor networks.
     * Exact contraction using [cotengra](https://github.com/jcmgray/cotengra)? Somehow the [method](https://cotengra.readthedocs.io/en/latest/basics.html#hyperoptimizer) that creates a contraction tree using the `cotengra.HyperOptimizer` object didn't work for me, but [`cotengra.array_contract`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/index.html#cotengra.array_contract) does work.
     * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.

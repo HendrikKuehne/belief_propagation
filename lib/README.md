@@ -8,11 +8,11 @@ Edges in the network represent contractions, of course. This code distinguishes 
 
 The edges also hold information about which legs of the adjacent tensors are involved in the contraction. Trace-edges possess an `indices`-key, whose value is a set `{i1,i2}` that holds the two legs of the tensor that the trace runs over. Default legs possess a `legs`-key, whose value is a dictionary `{node1:i2,node2:i2}`, that gives the leg for the respective node. The `legs`-value of trace-edges is `None`, and vice-versa.[^1]
 
-[^1]: Having two different ways of saving the leg indices and two kinds of legs seems convoluted, but this is necessary because `network_contraction.contract_edge` needs to know if a given edge is a trace edge or not. The `indices`-values are sets as opposed to tuples or lists because the trace is symmetric with respect to the order of the legs.
+[^1]: Having two different ways of saving the leg indices and two kinds of legs seems convoluted, but this is necessary because `network_tools.contract_edge` needs to know if a given edge is a trace edge or not. The `indices`-values are sets as opposed to tuples or lists because the trace is symmetric with respect to the order of the legs.
 
 # The `contract_edge` function
 
-This function - defined in `network_contraction.py` - does the heavy lifting of tensor network contraction. Given an edge `(node1,node2,key)`, it executes the respective contraction in the tensor network `G` in-place. This procedure is comparably easy if the edge in question is a trace edge. we take the respective trace, and save the resulting tensor in the node. Afterwards, the incident edges' `legs` or `indices` values need to be updated to reflect the changed indices of the tensor.
+This function - defined in `networks.py` - does the heavy lifting of tensor network contraction. Given an edge `(node1,node2,key)`, it executes the respective contraction in the tensor network `G` in-place. This procedure is comparably easy if the edge in question is a trace edge. we take the respective trace, and save the resulting tensor in the node. Afterwards, the incident edges' `legs` or `indices` values need to be updated to reflect the changed indices of the tensor.
 
 It gets a little more convoluted if we are contracting a default edge, because there are more cases. Each node might have trace indices attached. Furthermore, there could be multiple edges between `node1` and `node2`, and upon contraction of one of them the other ones turn into trace edges. See the image below for different scenarios.
 
@@ -28,7 +28,7 @@ Contracting the two tensors is easy, and afterwards, the edge `(node1,node2,key)
 
 Each step requires distinguishing whether the edge under consideration is a trace edge or not.
 
-The function `contract_edge` is used in `contract_network`, which has been tested against test cases (`utils.dummynet1` through `utils.dummynet5`) and against the plaquette code (`utils.grid_net`).
+The function `contract_edge` is used in `contract_network`, which has been tested against test cases (`utils.dummynet1` through `utils.dummynet5`) and against the plaquette code (`networks.grid_net`).
 
 # Belief propagation
 

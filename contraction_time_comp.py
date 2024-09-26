@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 import networkx as nx
 
 from lib.utils import network_message_check
-from lib.graph_creation import short_loop_graph
-from lib.network_contraction import construct_network,contract_network
+from lib.graphs import short_loop_graph
+from lib.networks import construct_network,contract_network
 
 def cotengra_contractiontree(G:nx.MultiGraph) -> float:
     tensors = ()
@@ -31,7 +31,7 @@ def cotengra_contractiontree(G:nx.MultiGraph) -> float:
     # optimal contraction order
     tree = opt.search(inputs=legs,output="",size_dict=sizes)
 
-    return ctg.array_contract(tensors,legs,size_dict=sizes,optimize=tree)
+    return ctg.array_contract(tensors,legs,size_dict=sizes)#,optimize=tree)
 
 def cotengra_array_contract(G:nx.MultiGraph) -> float:
     tensors = ()
@@ -94,7 +94,7 @@ if __name__ == "__main__":
 
     for i in range(nSamples):
         G = short_loop_graph(15,3,.6)
-        construct_network(G,5,real=False,psd=False)
+        construct_network(G,3,real=False,psd=False)
         assert network_message_check(G)
 
         t0 = time.time()
@@ -109,10 +109,17 @@ if __name__ == "__main__":
         ref4 = cotengra_contractiontree(copy.deepcopy(G))
         t5 = time.time()
 
-        times += ((t1-t0,t2-t1,t3-t2,t4-t3),)
+        sample_times = (t1-t0,)
+
+        sample_times = sample_times + (t2-t1,) if np.isclose(ref1,ref0) else sample_times + (None,)
+        sample_times = sample_times + (t3-t2,) if np.isclose(ref2,ref0) else sample_times + (None,)
+        sample_times = sample_times + (t4-t3,) if np.isclose(ref3,ref0) else sample_times + (None,)
+        sample_times = sample_times + (t5-t4,) if np.isclose(ref4,ref0) else sample_times + (None,)
+
+        times += (sample_times,)
 
     times = np.array(times)
-    method_labels = ("Random","Cotengra","Einsum","Einsum path")
+    method_labels = ("Random","Cotengra","Einsum","Einsum path","Cotengra tree")
 
     for iMethod in range(times.shape[1]):
         plt.scatter(iMethod * np.ones(times.shape[0]),times[:,iMethod],alpha=.5,label=method_labels[iMethod])
