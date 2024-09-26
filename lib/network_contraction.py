@@ -6,8 +6,8 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import copy
 
-from graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph,tree
-from utils import crandn,contract_edge,merge_edges,network_intact_check,network_message_check,loop_hist,delta_network,dummynet5,grid_net
+from lib.graph_creation import short_loop_graph,regular_graph,bipartite_regular_graph,tree
+from lib.utils import crandn,contract_edge,merge_edges,network_intact_check,network_message_check,loop_hist,delta_network,dummynet5,grid_net
 
 def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False) -> None:
     """
@@ -53,8 +53,29 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
 
 def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     """
-    Contracts the tensor network `G`. The contraction order is random; this might be highly inefficient. `G` is modified in-place.
+    Contracts the tensor network `G` using `np.einsum` and `np.einsum_path`.
     """
+    if sanity_check: assert network_intact_check(G)
+
+    args = ()
+
+    # enumerating the edges in the graph
+    for i,nodes in enumerate(G.edges()):
+        node1,node2 = nodes
+        G[node1][node2][0]["label"] = i
+
+    # extracting the einsum arguments
+    for node,T in G.nodes(data="T"):
+        args += (T,)
+        legs = [None for i in range(T.ndim)]
+        for _,neighbor,edge_label in G.edges(nbunch=node,data="label"):
+            legs[G[node][neighbor][0]["legs"][node]] = edge_label
+        args += (tuple(legs),)
+
+    path,path_info = np.einsum_path(*args,optimize=True)
+    return np.einsum(*args,optimize=path)
+
+    # Old, random contraction order
     while G.number_of_edges() > 0:
         iEdge = 0#np.random.randint(G.number_of_edges())
         node1,node2,key = list(G.edges(keys=True))[iEdge]
@@ -248,50 +269,5 @@ def contract_opposing_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
         T_res = np.dot(G[node1][node2][0]["msg"][node1],G[node1][node2][0]["msg"][node2])
         G[node1][node2][0]["cntr"] = T_res
 
-if __name__ == "__main__": # loopy Belief Propagation
-    G = tree(20)
-    #G = short_loop_graph(20,3,.6)
-    construct_network(G,4,real=False,psd=True)
-    nNodes = G.number_of_nodes()
-
-    print("Sanity checks:")
-    print("    Network intact?",network_intact_check(G))
-    print("    Network message-ready?",network_message_check(G),"\n")
-
-    num_iter = 30
-    eps_list = message_passing_iteration(G,num_iter,sanity_check=True)
-    normalize_messages(G,True)
-
-    if True: # plotting
-        plt.figure("Tensor network")
-        nx.draw(G,with_labels=True,font_weight="bold")
-
-        plt.figure("Message norm vs. iterations")
-        plt.semilogy(np.arange(num_iter),eps_list)
-        plt.xlabel("Iteration")
-        plt.ylabel(r"max $\Delta |\mathrm{Message}|$")
-        plt.grid()
-
-        plt.show()
-
-    # contracting the network
-    contract_opposing_messages(G,True)
-    contract_tensors_messages(G,True)
-
-    rel_err = lambda true,approx: np.real_if_close(true - approx) / np.abs(true)
-
-    node_cntr_list = ()
-    for node,val in G.nodes(data="cntr"):
-        node_cntr_list += (val,)
-
-    edge_cntr_list = ()
-    for node1,node2,val in G.edges(data="cntr"):
-        edge_cntr_list += (val,)
-
-    refval = contract_network(G,True)
-
-    #for cntr in node_cntr_list: print(np.isclose(cntr,refval))
-    #for cntr in edge_cntr_list: print(np.isclose(cntr,refval))
-
-    print("Comparing direct contraction and message passing:\n    Contraction:     {}\n    Message passing: {}".format(np.real_if_close(refval),np.real_if_close(np.prod(node_cntr_list))))
-    print("Relative error = {:.3e}".format(rel_err(refval,np.prod(node_cntr_list))))
+if __name__ == "__main__":
+    pass

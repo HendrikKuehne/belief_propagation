@@ -12,10 +12,10 @@ import plotly.express as px
 import pickle
 from datetime import datetime
 
-import network_contraction as tn
-import plaquette_contraction as pq
-import utils
-import graph_creation as graphs
+from lib import network_contraction as tn
+from lib import plaquette_contraction as pq
+from lib import utils
+from lib import graph_creation as graphs
 
 def tn_routine(G:nx.MultiGraph,num_iter:int=30) -> float:
     """
