@@ -12,7 +12,7 @@ import plotly.express as px
 import pickle
 from datetime import datetime
 
-from lib import loopyBP as tn
+from lib import BP as tn
 from lib import plaquette as pq
 from lib import networks
 

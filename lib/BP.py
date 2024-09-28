@@ -1,13 +1,12 @@
 """
-Belief propagation on graphs, i.e. on various geometries. Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073)).
+Belief propagation on graphs. Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073)).
 """
 import numpy as np
 import networkx as nx
-import matplotlib.pyplot as plt
 import copy
 
 from lib.utils import network_intact_check,network_message_check
-from lib.networks import contract_edge,merge_edges
+from lib.networks import contract_edge,merge_edges,construct_initial_messages
 
 def block_bp(G:nx.MultiGraph,width:int,height:int,blocksize:int=3,sanity_check:bool=False) -> None:
     """
@@ -51,30 +50,6 @@ def block_bp(G:nx.MultiGraph,width:int,height:int,blocksize:int=3,sanity_check:b
         merge_edges(*edge,G)
 
     return
-
-def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
-    """
-    Initializes messages one the edges of `G`. Random initialisation except for leaf nodes, where the initial value
-    is the tensor of the leaf node. `G` is modified in-place.
-    """
-    # sanity check
-    if sanity_check: assert network_message_check(G)
-
-    for node1,node2 in G.edges():
-        G[node1][node2][0]["msg"] = {}
-
-        for receiving_node in (node1,node2):
-            sending_node = node2 if receiving_node == node1 else node1
-            if len(G.adj[sending_node]) == 1:
-                # message from leaf node
-                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"]
-            else:
-                iLeg = G[node1][node2][0]["legs"][receiving_node]
-                # bond dimension
-                chi = G.nodes[receiving_node]["T"].shape[iLeg]
-                # initialization with normalized vector
-                msg = np.ones(shape=(chi,))#np.random.normal(size=(chi,))
-                G[node1][node2][0]["msg"][receiving_node] = msg / np.sum(msg)
 
 def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     """

@@ -6,7 +6,8 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 
 * `lib`
     * `graphs.py` Creation of various graphs.
-    * `loopyBP.py` Belief propagation on graphs, i.e. on various geometries.  Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073))
+    * `BP.py` Belief propagation on graphs, i.e. on various geometries.  Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073))
+    * `loopyNBP` Belief propagation on graphs using neighbor regions. Inspired by Kirkley et Al, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
     * `plaquette.py` Code from Christian Mendl. Not to be modified in any substantial way, for reference.
     * `networks.py` Functions for network creation and handling.
     * `utils.py` Stuff that is useful here or there. `contract_edge` function for contracting an edge in a tensor network, sanity checks and test cases for `network_contraction.contract_network`.

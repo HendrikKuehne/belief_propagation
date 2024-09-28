@@ -30,7 +30,7 @@ Each step requires distinguishing whether the edge under consideration is a trac
 
 The function `contract_edge` is used in `contract_network`, which has been tested against test cases (`utils.dummynet1` through `utils.dummynet5`) and against the plaquette code (`networks.grid_net`).
 
-# Belief propagation
+# Belief propagation in `BP.py`
 
 each edge `(node1,node2)` has a key `msg`, that contains the messages on this edge.
 
@@ -42,3 +42,11 @@ each edge `(node1,node2)` has a key `msg`, that contains the messages on this ed
 ```
 
 The message `G[node1][node2][0]["msg"][node1]` is thus the message from `node2` to `node1`. It is a vector which connects to leg `G[node1][node2][0]["legs"][node1]` of the tensor `G.nodes[node1]["T"]`.
+
+# Belief propagation in `loopyNBP.py`
+
+The loopy Neighborhood Belief Propagation (loopyNBP) algorithm is inspired by Kirkley et Al, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). It considers the effect of small loops by explicitly contracting them. This is achieved through neighborhoods; let $N_i^{(r)}$ be the neighborhood around node $i$. $N_i^{(r)}$ contains all loops (i.e. nodes and edges) of length $r+2$ and shorter. For $r=2$, this implies $N_i^{(2)}={i}$, in which case the algorithm reduces to normal Belief Propagation. For $r=1$, the neighborhoods contain loops with length 3, i.e. triangles, and so forth.
+
+Such loops render the BP algorithm inaccurate. The loopyNBP incorporates loops with length $r+2$ by passing messages not between individual nodes, but between neighborhoods. When calculating a new message iteratively, a network receives inbound messages at it's border. These entire neighborhood is contracted explicitly with it's inbound neighborhoods, and one outbound message emerges.
+
+The function `loopyNBP.neighborhood` returns the neighborhood $N_i^{(r)}$ as two sets: One contains the edges in the neighborhood, and the other one the nodes. During the message passing iterations, in this neighborhood, edges within the neighborhood are contracted while inbound messages are identified as messages to nodes in $N_i^{(r)}$, which live in edges that are not in $N_i^{(r)}$.

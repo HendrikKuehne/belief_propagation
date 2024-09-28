@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
-from lib.loopyBP import message_passing_iteration,normalize_messages,contract_opposing_messages,contract_tensors_messages
+from lib.BP import message_passing_iteration,normalize_messages,contract_opposing_messages,contract_tensors_messages
 from lib.graphs import short_loop_graph
 from lib.utils import network_intact_check,network_message_check
 from lib.networks import construct_network,contract_network

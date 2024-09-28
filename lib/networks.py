@@ -5,7 +5,7 @@ import numpy as np
 import networkx as nx
 import itertools
 
-from lib.utils import network_intact_check,crandn,delta_tensor
+from lib.utils import network_intact_check,network_message_check,crandn,delta_tensor
 
 # -------------------------------------------------------------------------------
 #                   Manipulating and contracting networks
@@ -265,6 +265,30 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
         # adding to the adjacent edges which index they correspond to
         for i,neighbor in enumerate(G.adj[node]):
             G[node][neighbor][0]["legs"][node] = i
+
+def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
+    """
+    Initializes messages one the edges of `G`. Random initialisation except for leaf nodes, where the initial value
+    is the tensor of the leaf node. `G` is modified in-place.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
+
+    for node1,node2 in G.edges():
+        G[node1][node2][0]["msg"] = {}
+
+        for receiving_node in (node1,node2):
+            sending_node = node2 if receiving_node == node1 else node1
+            if len(G.adj[sending_node]) == 1:
+                # message from leaf node
+                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"]
+            else:
+                iLeg = G[node1][node2][0]["legs"][receiving_node]
+                # bond dimension
+                chi = G.nodes[receiving_node]["T"].shape[iLeg]
+                # initialization with normalized vector
+                msg = np.ones(shape=(chi,))#np.random.normal(size=(chi,))
+                G[node1][node2][0]["msg"][receiving_node] = msg / np.sum(msg)
 
 def delta_network(G:nx.MultiGraph,chi:int,) -> None:
     """
