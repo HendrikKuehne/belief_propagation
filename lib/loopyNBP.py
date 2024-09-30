@@ -6,8 +6,10 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
 import copy
+import cotengra as ctr
 
 from lib.utils import network_intact_check,network_message_check
+from lib.networks import merge_edges
 
 def neighborhood(G:nx.MultiGraph,rootnode:int,r:int=0,sanity_check:bool=False) -> tuple[set,set]:
     """
@@ -98,6 +100,85 @@ def construct_neighborhoods(G:nx.MultiGraph,r:int=0,sanity_check:bool=False) -> 
         neighborhood_list += ((edges,nodes),)
 
     return neighborhood_list
+
+def contract_neighborhood(G:nx.MultiGraph,nodes:tuple,sanity_check:bool=False) -> None:
+    """
+    Contracts the neighborhood in `G`, that is contracting all the edges connecting nodes in
+    `nodes`, using `np.einsum` and `np.einsum_path`. `G` is manipulated in-place.
+    """
+    if sanity_check: assert network_intact_check(G)
+
+    if len(nodes) == 1:
+        # trivial case; we must not do anything
+        return
+
+    args = ()
+
+    out = ()
+    """`out`-argument to `np.einsum`."""
+
+    rootnode = G.nodes[nodes[0]]["neighborhood"]
+    """root node of the neighborhood."""
+
+    new_edges = ()
+    """These edges need to be re-added after we have contracted and removed the neighborhood."""
+
+    interior_edge_label = 0
+    exterior_edge_label = 0
+    # labeling the edges within the neighborhood
+    for node in nodes:
+        for _,neighbor in G.edges(nbunch=node):
+            if neighbor in nodes: G[node][neighbor][0]["label"] = interior_edge_label
+            interior_edge_label += 1
+    # labeling the edges adjacent to the neighborhood
+    for node in nodes:
+        for _,neighbor in G.edges(nbunch=node):
+            if neighbor not in nodes:
+                G[node][neighbor][0]["label"] = interior_edge_label + exterior_edge_label
+
+                # adding this exterior edge to the out-argument of np.einsum
+                out += (interior_edge_label + exterior_edge_label,)
+
+                # saving this exterior edge for re-insertion into the network later
+                new_edges += ((
+                    rootnode,
+                    neighbor,
+                    {
+                        "legs":{
+                            rootnode: exterior_edge_label,
+                            neighbor: G[node][neighbor][0]["legs"][neighbor]
+                        },
+                        "trace":False,
+                        "indices":None
+                    }
+                ),)
+
+                exterior_edge_label += 1
+
+    # extracting the einsum arguments
+    for node in nodes:
+        args += (G.nodes[node]["T"],)
+        legs = [None for i in range(G.nodes[node]["T"].ndim)]
+        for _,neighbor,edge_label in G.edges(nbunch=node,data="label"):
+            legs[G[node][neighbor][0]["legs"][node]] = edge_label
+        args += (tuple(legs),)
+    args += (out,)
+
+    T_res = ctr.einsum(*args,optimize="greedy")
+
+    # removing the neighborhood and adding the contraction
+    G.remove_nodes_from(nodes)
+    G.add_node(rootnode,T=T_res)
+    G.add_edges_from(new_edges)
+
+    # merging any double edges
+    edges_to_be_merged = ()
+    for node1,node2 in G.edges(nbunch=rootnode):
+        if len(G[node1][node2]) > 1: edges_to_be_merged += ((node1,node2),)
+    for edge in edges_to_be_merged:
+        merge_edges(*edge,G)
+
+    return
 
 def message_passing_step():
     # TODO: The edges in a neighborhood are contracted. Messages into a neighborhood are messages that are incident to a node in the neighborhood, from an edge that is not in the neighborhood.

@@ -113,6 +113,80 @@ def short_loop_graph(nNodes:int,D:int,p:float=0,verbose:bool=False) -> nx.MultiG
     return biG.subgraph(largest_cc).copy()
     # we need to copy because this removes the freeze of the subgraph
 
+def loop_capped_graph(nNodes:int,maxlength:int,p:float=.5,rng:np.random.Generator=None) -> nx.MultiGraph:
+    """
+    Generates a graph that is globally tree-like. This is achieved by constructing a tree composed of
+    clusters of nodes, where each cluster obeys the cycle maximum length.
+    """
+    # initialization
+    if rng is None: rng = np.random.default_rng()
+    iNode = 0
+    clusters = []
+
+    nodes = set()
+    # generating clusters
+    while len(nodes) < nNodes:
+        cluster = [(iNode + i,iNode + j) for i,j in itertools.combinations(range(maxlength),r=2) if rng.uniform() <= p]
+        if len(cluster) == 0: continue
+        nodes = nodes.union(*[set(edge) for edge in cluster])
+        iNode += maxlength
+        clusters += [cluster,]
+
+    # adding all clusters to a graph and connecting them tree-like
+    G = nx.MultiGraph()
+    G.add_edges_from(clusters.pop(0))
+
+    for cluster in clusters:
+        old_docking_node = rng.choice(np.array(G.nodes()))
+        new_docking_node = rng.choice(list(set().union(*[set(edge) for edge in cluster])))
+        G.add_edges_from(cluster + [(old_docking_node,new_docking_node,)])
+
+        # do we add a new edge or simply merge an existing node and a new one?
+        if rng.uniform() < .5: G = nx.contracted_edge(G,(old_docking_node,new_docking_node),self_loops=False)
+
+    # extracting the largest connected component
+    largest_cc = max(nx.connected_components(G), key=len)
+
+    return G.subgraph(largest_cc).copy()
+    # we need to copy because this removes the freeze of the subgraph
+
+def global_loop(nNodes:int,global_cycle_length:int,maxlength:int,p:float=.5,rng:np.random.Generator=None) -> nx.MultiGraph:
+    """
+    Generates a graph that is globally tree-like. This is achieved by constructing a tree composed of
+    clusters of nodes, where each cluster obeys the cycle maximum length.
+    """
+    # initialization
+    if rng is None: rng = np.random.default_rng()
+    clusters = [[(i,(i+1) % global_cycle_length) for i in range(global_cycle_length)],]
+    iNode = global_cycle_length
+
+    nodes = {i for i in range(global_cycle_length)}
+    # generating clusters
+    while len(nodes) < nNodes + global_cycle_length:
+        cluster = [(iNode + i,iNode + j) for i,j in itertools.combinations(range(maxlength),r=2) if rng.uniform() <= p]
+        if len(cluster) == 0: continue
+        nodes = nodes.union(*[set(edge) for edge in cluster])
+        iNode += maxlength
+        clusters += [cluster,]
+
+    # adding all clusters to a graph and connecting them tree-like
+    G = nx.MultiGraph()
+    G.add_edges_from(clusters.pop(0))
+
+    for cluster in clusters:
+        old_docking_node = rng.choice(np.array(G.nodes()))
+        new_docking_node = rng.choice(list(set().union(*[set(edge) for edge in cluster])))
+        G.add_edges_from(cluster + [(old_docking_node,new_docking_node,)])
+
+        # do we add a new edge or simply merge an existing node and a new one?
+        if rng.uniform() < .5: G = nx.contracted_edge(G,(old_docking_node,new_docking_node),self_loops=False)
+
+    # extracting the largest connected component
+    largest_cc = max(nx.connected_components(G), key=len)
+
+    return G.subgraph(largest_cc).copy()
+    # we need to copy because this removes the freeze of the subgraph
+
 def tree(nNodes:int) -> nx.MultiGraph:
     """
     Generates a tree by appending nodes at random to the tree.
@@ -131,15 +205,14 @@ def tree(nNodes:int) -> nx.MultiGraph:
 
     return G
 
-if __name__ == "__main__":
-    #G = tree(50)
-    G = short_loop_graph(70,3,0.6)
-    print("Network created")
+# -------------------------------------------------------------------------------
+#                   plotting
+# -------------------------------------------------------------------------------
 
-    # drawing the network
-    nx.draw(G,with_labels=True,font_weight="bold")
-    plt.show()
-
+def loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
+    """
+    Plots the histogram of the loop lengths of `G`.
+    """
     plt.figure("Loop length histogram")
     # investigating the cycles that occur in the network
     cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(G)]
@@ -147,4 +220,20 @@ if __name__ == "__main__":
     plt.suptitle(f"Graph with {G.number_of_nodes()} nodes.")
     plt.xlabel("cycle length")
     plt.ylabel("count")
+    if show_plot:
+        plt.show()
+        return None
+    return plt.gcf()
+
+if __name__ == "__main__":
+    #G = tree(50)
+    G = short_loop_graph(70,3,0.6)
+    G = global_loop(70,20,8)
+    #G = loop_capped_graph(70,10)
+    print("Network created")
+
+    # drawing the network
+    nx.draw(G,with_labels=True,font_weight="bold")
     plt.show()
+
+    # loop_hist(G)

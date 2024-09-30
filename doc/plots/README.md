@@ -40,3 +40,17 @@ Data generated using
 ```
 
 `np.einsum` combined with `np.einsum_path` yields the best results. I have not yet (as of 26.09.2024) compared the full suite of Cotengra tools against Numpy (because I can't get it to run), but for now I'll use Numpy.
+
+# `BP_vs_loopyNBP_vs_blockBP.pdf`
+
+<p align="center">
+  <img width="300" height="224" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/plots/BP_vs_loopyNBP_vs_blockBP.jpeg">
+</p>
+
+Data generated using
+
+```
+    tensors,G = networks.grid_net(chi=4,width=4,height=4,real=False,psd=True)
+```
+
+Blocking into a 3 by 3 block.

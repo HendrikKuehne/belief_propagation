@@ -24,9 +24,12 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 * Improve contraction accuracy by treating short loops using Kirkley and long loops using Feynman Contraction.[^1]
 * Optimize exact contraction of tensor networks.
     * Exact contraction using [cotengra](https://github.com/jcmgray/cotengra)? Somehow the [method](https://cotengra.readthedocs.io/en/latest/basics.html#hyperoptimizer) that creates a contraction tree using the `cotengra.HyperOptimizer` object didn't work for me, but [`cotengra.array_contract`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/index.html#cotengra.array_contract) does work.
-    * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.
+    * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.[^2]
+    * :white_check_mark: Contraction using `cotengra.einsum`.
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
+
+[^2]: `np.einsum_path` cannot contract large networks (i.e. many edges) because the alphabet with which it creates it's equations is limited to 52 characters (lower- and uppercase letters). This seems a severe limitation to me, I don't understand why that's in there; `cotengra.einsum` does not have that limitation, so I'm usnig that instead (dated 30.09.2024).
 
 ## Open questions
 

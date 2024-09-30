@@ -4,6 +4,7 @@ Functions for network creation and handling.
 import numpy as np
 import networkx as nx
 import itertools
+import cotengra as ctr
 
 from lib.utils import network_intact_check,network_message_check,crandn,delta_tensor
 
@@ -208,17 +209,7 @@ def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
             legs[G[node][neighbor][0]["legs"][node]] = edge_label
         args += (tuple(legs),)
 
-    path,path_info = np.einsum_path(*args,optimize=True)
-    return np.einsum(*args,optimize=path)
-
-    # Old, random contraction order
-    while G.number_of_edges() > 0:
-        iEdge = 0#np.random.randint(G.number_of_edges())
-        node1,node2,key = list(G.edges(keys=True))[iEdge]
-        contract_edge(node1,node2,key,G)
-        if sanity_check: assert network_intact_check(G)
-
-    return tuple(G.nodes(data=True))[0][1]["T"]
+    return ctr.einsum(*args,optimize="greedy")
 
 # -------------------------------------------------------------------------------
 #                   Network creation

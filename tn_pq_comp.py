@@ -16,9 +16,9 @@ from lib import BP as tn
 from lib import plaquette as pq
 from lib import networks
 
-def tn_routine(G:nx.MultiGraph,num_iter:int=30) -> float:
+def BP_routine(G:nx.MultiGraph,num_iter:int=30) -> float:
     """
-    Complete pipeline of the tensor network code.
+    Complete pipeline of the Belief Propagation code.
     """
     eps_list = tn.message_passing_iteration(G,num_iter,sanity_check=True)
     tn.normalize_messages(G)
@@ -32,9 +32,9 @@ def tn_routine(G:nx.MultiGraph,num_iter:int=30) -> float:
 
     return rel_err
 
-def tn_routine_blocking(G:nx.MultiGraph,width:int,height:int,blocksize:int,num_iter:int=30) -> float:
+def BP_routine_blocking(G:nx.MultiGraph,width:int,height:int,blocksize:int,num_iter:int=30) -> float:
     """
-    Complete pipeline of the tensor network code with block belief propagation.
+    Complete pipeline of the Belief Propagation code with blocking.
     """
     tn.block_bp(G,width,height,blocksize,sanity_check=True)
     eps_list = tn.message_passing_iteration(G,num_iter,sanity_check=True)
@@ -116,9 +116,9 @@ if __name__ == "__main__":
         except IndexError:
             pq_block_err = None
         t3 = time.time()
-        tn_err = tn_routine(copy.deepcopy(G))
+        tn_err = BP_routine(copy.deepcopy(G))
         t4 = time.time()
-        tn_block_err = tn_routine_blocking(G,width,height,blocksize)
+        tn_block_err = BP_routine_blocking(G,width,height,blocksize)
         t5 = time.time()
 
         # simulation parameters
@@ -148,8 +148,8 @@ if __name__ == "__main__":
     now = datetime.now()
     timestr = now.strftime("%m-%d_%H-%M-%S")
 
-    with open("doc/data/" + timestr + ".pickle","wb") as file:
-        pickle.dump(results,file)
+    #with open("doc/data/" + timestr + ".pickle","wb") as file:
+    #    pickle.dump(results,file)
 
 if __name__ == "dings":#"__main__":
     nTrials = 20
@@ -184,9 +184,9 @@ if __name__ == "dings":#"__main__":
         except IndexError:
             pq_block_err = None
         t3 = time.time()
-        tn_err = tn_routine(copy.deepcopy(G))
+        tn_err = BP_routine(copy.deepcopy(G))
         t4 = time.time()
-        tn_block_err = tn_routine_blocking(G,width,height)
+        tn_block_err = BP_routine_blocking(G,width,height)
         t5 = time.time()
 
         results += ((width*height,psd,pq_err,pq_block_err,tn_err,tn_block_err),)

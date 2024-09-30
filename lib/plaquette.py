@@ -340,7 +340,7 @@ def main():
 
     # message passing iteration
     numiter = 30
-    msg_in_l, msg_in_r, msg_in_u, msg_in_d, eps_iter = message_passing_iteration(tensors, numiter)
+    msg_in_l, msg_in_r, msg_in_u, msg_in_d, eps_iter = message_passing_iteration(s_tensors, numiter)
     plt.semilogy(range(1, numiter + 1), eps_iter)
     plt.xlabel("iteration")
     plt.ylabel("absolute change of message entries")
@@ -349,7 +349,7 @@ def main():
     msg_in_l, msg_in_r, msg_in_u, msg_in_d = normalize_messages(msg_in_l, msg_in_r, msg_in_u, msg_in_d)
 
     # contract incoming messages with tensors
-    cntr = contract_tensors_messages(tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d)
+    cntr = contract_tensors_messages(s_tensors, msg_in_l, msg_in_r, msg_in_u, msg_in_d)
     print("cntr:")
     print(cntr)
     print("np.prod(cntr):", np.prod(cntr))
