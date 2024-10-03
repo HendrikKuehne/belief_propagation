@@ -8,8 +8,8 @@ import networkx as nx
 import copy
 import cotengra as ctr
 
-from lib.utils import network_intact_check,network_message_check
-from lib.networks import merge_edges
+from belief_propagation.utils import network_intact_check,network_message_check
+from belief_propagation.networks import merge_edges
 
 def neighborhood(G:nx.MultiGraph,rootnode:int,r:int=0,sanity_check:bool=False) -> tuple[set,set]:
     """
@@ -164,7 +164,10 @@ def contract_neighborhood(G:nx.MultiGraph,nodes:tuple,sanity_check:bool=False) -
         args += (tuple(legs),)
     args += (out,)
 
-    T_res = ctr.einsum(*args,optimize="greedy")
+    T_res = ctr.einsum(
+        *args,
+        optimize="greedy",#ctr.HyperOptimizer(minimize=ctr.scoring.SizeObjective())
+    )
 
     # removing the neighborhood and adding the contraction
     G.remove_nodes_from(nodes)
@@ -179,18 +182,6 @@ def contract_neighborhood(G:nx.MultiGraph,nodes:tuple,sanity_check:bool=False) -
         merge_edges(*edge,G)
 
     return
-
-def message_passing_step():
-    # TODO: The edges in a neighborhood are contracted. Messages into a neighborhood are messages that are incident to a node in the neighborhood, from an edge that is not in the neighborhood.
-    pass
-
-def message_passing_iteration():
-    # TODO
-    pass
-
-def contract_tensors_messages():
-    #TODO
-    pass
 
 # -------------------------------------------------------------------------------
 #                   cosmetics

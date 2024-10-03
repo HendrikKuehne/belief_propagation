@@ -2,10 +2,10 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
-from lib.BP import message_passing_iteration,normalize_messages,contract_opposing_messages,contract_tensors_messages
-from lib.graphs import short_loop_graph
-from lib.utils import network_intact_check,network_message_check
-from lib.networks import construct_network,contract_network
+from belief_propagation.BP import message_passing_iteration,normalize_messages,contract_opposing_messages,contract_tensors_messages
+from belief_propagation.graphs import short_loop_graph
+from belief_propagation.utils import network_intact_check,network_message_check
+from belief_propagation.networks import construct_network,contract_network
 
 if __name__ == "__main__": # loopy Belief Propagation
     #G = tree(20)

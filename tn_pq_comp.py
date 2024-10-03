@@ -12,9 +12,9 @@ import plotly.express as px
 import pickle
 from datetime import datetime
 
-from lib import BP as tn
-from lib import plaquette as pq
-from lib import networks
+from belief_propagation import BP as tn
+from belief_propagation import plaquette as pq
+from belief_propagation import networks
 
 def BP_routine(G:nx.MultiGraph,num_iter:int=30) -> float:
     """

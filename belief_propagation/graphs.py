@@ -150,7 +150,7 @@ def loop_capped_graph(nNodes:int,maxlength:int,p:float=.5,rng:np.random.Generato
     return G.subgraph(largest_cc).copy()
     # we need to copy because this removes the freeze of the subgraph
 
-def global_loop(nNodes:int,global_cycle_length:int,maxlength:int,p:float=.5,rng:np.random.Generator=None) -> nx.MultiGraph:
+def global_loop(global_cycle_length:int,nNodes:int,maxlength:int,p:float=.5,rng:np.random.Generator=None) -> nx.MultiGraph:
     """
     Generates a graph that is globally tree-like. This is achieved by constructing a tree composed of
     clusters of nodes, where each cluster obeys the cycle maximum length.
@@ -227,9 +227,9 @@ def loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
 
 if __name__ == "__main__":
     #G = tree(50)
-    G = short_loop_graph(70,3,0.6)
-    G = global_loop(70,20,8)
-    #G = loop_capped_graph(70,10)
+    #G = short_loop_graph(30,3,0.6)
+    #G = global_loop(20,40,6)
+    G = loop_capped_graph(50,5)
     print("Network created")
 
     # drawing the network

@@ -4,9 +4,10 @@ Belief propagation on graphs. Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Rese
 import numpy as np
 import networkx as nx
 import copy
+import cotengra as ctg
 
-from lib.utils import network_intact_check,network_message_check
-from lib.networks import contract_edge,merge_edges,construct_initial_messages
+from belief_propagation.utils import network_intact_check,network_message_check
+from belief_propagation.networks import contract_edge,merge_edges,construct_initial_messages
 
 def block_bp(G:nx.MultiGraph,width:int,height:int,blocksize:int=3,sanity_check:bool=False) -> None:
     """
@@ -59,6 +60,10 @@ def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     # sanity check
     if sanity_check: assert network_message_check(G)
 
+    if all([len(G.adj[node]) == 1 for node in G.nodes]):
+        # there are only leaf nodes in the graph; we don't need to do anything
+        return None
+
     old_G = copy.deepcopy(G)
     """Copy of the graph used to store the old messages."""
 
@@ -79,7 +84,7 @@ def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
             for neighbor in G.adj[sending_node]:
                 if neighbor == receiving_node: continue
                 args += (old_G[sending_node][neighbor][0]["msg"][sending_node],(G[sending_node][neighbor][0]["legs"][sending_node],))
-            T_res = np.einsum(G.nodes[sending_node]["T"],list(range(nLegs)),*args)
+            T_res = np.einsum(G.nodes[sending_node]["T"],list(range(nLegs)),*args,optimize=True)
 
             # saving the normalized message
             G[node1][node2][0]["msg"][receiving_node] = T_res / np.sum(T_res)
@@ -156,7 +161,7 @@ def contract_tensors_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
         args = ()
         for neighbor in G.adj[node]:
             args += (G[node][neighbor][0]["msg"][node],(G[node][neighbor][0]["legs"][node],))
-        G.nodes[node]["cntr"] = np.einsum(G.nodes[node]["T"],list(range(nLegs)),*args)
+        G.nodes[node]["cntr"] = ctg.einsum(G.nodes[node]["T"],list(range(nLegs)),*args,optimize="greedy")
 
 def contract_opposing_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
     """

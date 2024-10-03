@@ -5,9 +5,9 @@ import cotengra as ctg
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from lib.utils import network_message_check
-from lib.graphs import short_loop_graph
-from lib.networks import construct_network,contract_network
+from belief_propagation.utils import network_message_check
+from belief_propagation.graphs import short_loop_graph
+from belief_propagation.networks import construct_network,contract_network
 
 def cotengra_contractiontree(G:nx.MultiGraph) -> float:
     tensors = ()

@@ -4,9 +4,9 @@ Functions for network creation and handling.
 import numpy as np
 import networkx as nx
 import itertools
-import cotengra as ctr
+import cotengra as ctg
 
-from lib.utils import network_intact_check,network_message_check,crandn,delta_tensor
+from belief_propagation.utils import network_intact_check,network_message_check,crandn,delta_tensor
 
 # -------------------------------------------------------------------------------
 #                   Manipulating and contracting networks
@@ -209,7 +209,7 @@ def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
             legs[G[node][neighbor][0]["legs"][node]] = edge_label
         args += (tuple(legs),)
 
-    return ctr.einsum(*args,optimize="greedy")
+    return ctg.einsum(*args,optimize="greedy")
 
 # -------------------------------------------------------------------------------
 #                   Network creation
@@ -272,7 +272,7 @@ def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
             sending_node = node2 if receiving_node == node1 else node1
             if len(G.adj[sending_node]) == 1:
                 # message from leaf node
-                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"]
+                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"] / np.sum(G.nodes[sending_node]["T"])
             else:
                 iLeg = G[node1][node2][0]["legs"][receiving_node]
                 # bond dimension

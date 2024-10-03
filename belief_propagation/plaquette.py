@@ -4,7 +4,7 @@ Code from Christian Mendl - the base on which I will build. Not to be modified i
 import numpy as np
 import matplotlib.pyplot as plt
 import warnings
-from lib.utils import crandn
+from belief_propagation.utils import crandn
 
 def construct_network(chi:int,width:int,height:int,rng:np.random.Generator,real:bool=True,psd:bool=False):
     r"""
