@@ -5,6 +5,7 @@ import numpy as np
 import networkx as nx
 import itertools
 import cotengra as ctg
+import copy
 
 from belief_propagation.utils import network_intact_check,network_message_check,crandn,delta_tensor
 
@@ -114,6 +115,33 @@ def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph,sanity_check:bool=
 
     return
 
+def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
+    """
+    Contracts the tensor network `G` using `np.einsum` and `np.einsum_path`.
+    """
+    if sanity_check: assert network_intact_check(G)
+
+    if G.number_of_nodes() == 1:
+        # the network is trivial
+        return np.sum(tuple(G.nodes(data="T"))[0][1])
+
+    args = ()
+
+    # enumerating the edges in the graph
+    for i,nodes in enumerate(G.edges()):
+        node1,node2 = nodes
+        G[node1][node2][0]["label"] = i
+
+    # extracting the einsum arguments
+    for node,T in G.nodes(data="T"):
+        args += (T,)
+        legs = [None for i in range(T.ndim)]
+        for _,neighbor,edge_label in G.edges(nbunch=node,data="label"):
+            legs[G[node][neighbor][0]["legs"][node]] = edge_label
+        args += (tuple(legs),)
+
+    return ctg.einsum(*args,optimize="greedy")
+
 def merge_edges(node1:int,node2:int,G:nx.multigraph,sanity_check:bool=False) -> None:
     """
     Merges all parallel edges between `node1` and `node2`. `G` is modified in-place.
@@ -126,13 +154,13 @@ def merge_edges(node1:int,node2:int,G:nx.multigraph,sanity_check:bool=False) -> 
     if sanity_check: assert network_intact_check(G)
 
     axes1 = []
-    """Makes up the `axes` argument for `np.transpose` with `legs1`."""
+    """Makes up the `axes` argument for `np.transpose` together with `legs1`."""
     axes2 = []
-    """Makes up the `axes` argument for `np.transpose` with `legs2`."""
+    """Makes up the `axes` argument for `np.transpose` together with `legs2`."""
     legs1 = list(range(G.nodes[node1]["T"].ndim))
-    """Makes up the `axes` argument for `np.transpose` with `axes1`."""
+    """Makes up the `axes` argument for `np.transpose` together with `axes1`."""
     legs2 = list(range(G.nodes[node2]["T"].ndim))
-    """Makes up the `axes` argument for `np.transpose` with `axes2`."""
+    """Makes up the `axes` argument for `np.transpose` together with `axes2`."""
     newshape1 = list(G.nodes[node1]["T"].shape)
     """Part of the `shape` arhument for `np.reshape`."""
     newshape2 = list(G.nodes[node2]["T"].shape)
@@ -188,28 +216,69 @@ def merge_edges(node1:int,node2:int,G:nx.multigraph,sanity_check:bool=False) -> 
 
     return
 
-def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
+def expose_edge(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> tuple[nx.MultiGraph]:
     """
-    Contracts the tensor network `G` using `np.einsum` and `np.einsum_path`.
+    Transposes the tensors in `node1` and `node2` such that the edge
+    connecting them sums over their trailing dimensions. `G` is modified in-place.
     """
-    if sanity_check: assert network_intact_check(G)
+    if sanity_check:
+        assert network_intact_check(G)
+        assert network_message_check(G)
+        assert node1 in G.adj[node2]
 
-    args = ()
+    axes1 = [None for _ in range(G.nodes[node1]["T"].ndim)]
+    """Makes up the `axes` argument for `np.transpose` at `node1`."""
+    axes2 = [None for _ in range(G.nodes[node2]["T"].ndim)]
+    """Makes up the `axes` argument for `np.transpose` at `node2`."""
 
-    # enumerating the edges in the graph
-    for i,nodes in enumerate(G.edges()):
-        node1,node2 = nodes
-        G[node1][node2][0]["label"] = i
+    axes1[-1] = G[node1][node2][0]["legs"][node1]
+    axes2[-1] = G[node2][node1][0]["legs"][node2]
 
-    # extracting the einsum arguments
-    for node,T in G.nodes(data="T"):
-        args += (T,)
-        legs = [None for i in range(T.ndim)]
-        for _,neighbor,edge_label in G.edges(nbunch=node,data="label"):
-            legs[G[node][neighbor][0]["legs"][node]] = edge_label
-        args += (tuple(legs),)
+    legshift1 = lambda i: i > G[node1][node2][0]["legs"][node1]
+    legshift2 = lambda i: i > G[node2][node1][0]["legs"][node2]
 
-    return ctg.einsum(*args,optimize="greedy")
+    for neighbor in G.adj[node1]:
+        if neighbor == node2: continue
+
+        old_leg = G[node1][neighbor][0]["legs"][node1]
+        # assembling the axes-argument
+        axes1[old_leg - legshift1(old_leg)] = old_leg
+        # overwriting the leg of this edge
+        G[node1][neighbor][0]["legs"][node1] = old_leg - legshift1(old_leg)
+    for neighbor in G.adj[node2]:
+        if neighbor == node1: continue
+
+        old_leg = G[node2][neighbor][0]["legs"][node2]
+        # assembling the axes-argument
+        axes2[old_leg - legshift2(old_leg)] = old_leg
+        # overwriting the leg of this edge
+        G[node2][neighbor][0]["legs"][node2] = old_leg - legshift2(old_leg)
+
+    # overwriting the legs of the edge (node1,node2)
+    G[node1][node2][0]["legs"][node1] = G.nodes[node1]["T"].ndim - 1
+    G[node2][node1][0]["legs"][node2] = G.nodes[node2]["T"].ndim - 1
+
+    # permuting the legs of u and v such that edge (u,v) corresponds to the trailing index in nodes u and v
+    G.nodes[node1]["T"] = np.transpose(G.nodes[node1]["T"],axes1)
+    G.nodes[node2]["T"] = np.transpose(G.nodes[node2]["T"],axes2)
+
+def feynman_cut(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> tuple[nx.MultiGraph]:
+    """
+    Executes a Feynman-cut on the network `G`, and returns a list that contains the respective networks.
+    Assumes that the network is intact and message-ready.
+    """
+    expose_edge(G,node1,node2,sanity_check)
+
+    nCuts = G.nodes[node1]["T"].shape[-1]
+    cut_graphs = ()
+    for i in range(nCuts):
+        Gcut = copy.deepcopy(G)
+        Gcut.nodes[node1]["T"] = Gcut.nodes[node1]["T"][...,i]
+        Gcut.nodes[node2]["T"] = Gcut.nodes[node2]["T"][...,i]
+        Gcut.remove_edge(node1,node2)
+        cut_graphs += (Gcut,)
+
+    return cut_graphs
 
 # -------------------------------------------------------------------------------
 #                   Network creation

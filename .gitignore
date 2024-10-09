@@ -3,6 +3,10 @@
 __pycache__
 *.pyc
 
+# ignoring python package files and dirs
+*.pth
+belief_propagation.egg-info/
+
 # inore generated Jupyter files
 *.ipynb_checkpoints/
 

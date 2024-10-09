@@ -1,5 +1,5 @@
 """
-Belief propagation on graphs. Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073)).
+Belief propagation on graphs. Taken from Kirkley et Al, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
 """
 import numpy as np
 import networkx as nx
@@ -52,7 +52,7 @@ def block_bp(G:nx.MultiGraph,width:int,height:int,blocksize:int=3,sanity_check:b
 
     return
 
-def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
+def message_passing_step(G:nx.MultiGraph,normalize:bool=True,sanity_check:bool=False) -> float:
     """
     Performs a message passing iteration. Algorithm taken from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
     'G' is modified in-place. Returns the maximum change `eps` of message norm over the entire graph.
@@ -60,7 +60,7 @@ def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     # sanity check
     if sanity_check: assert network_message_check(G)
 
-    if all([len(G.adj[node]) == 1 for node in G.nodes]):
+    if all([len(G.adj[node]) <= 1 for node in G.nodes]):
         # there are only leaf nodes in the graph; we don't need to do anything
         return None
 
@@ -86,15 +86,17 @@ def message_passing_step(G:nx.MultiGraph,sanity_check:bool=False) -> float:
                 args += (old_G[sending_node][neighbor][0]["msg"][sending_node],(G[sending_node][neighbor][0]["legs"][sending_node],))
             T_res = np.einsum(G.nodes[sending_node]["T"],list(range(nLegs)),*args,optimize=True)
 
+            if normalize: T_res /= np.sum(T_res)
+
             # saving the normalized message
-            G[node1][node2][0]["msg"][receiving_node] = T_res / np.sum(T_res)
+            G[node1][node2][0]["msg"][receiving_node] = T_res
 
             # saving the change in message norm
             eps += (np.linalg.norm(G[node1][node2][0]["msg"][receiving_node] - old_G[node1][node2][0]["msg"][receiving_node]),)
 
     return max(eps)
 
-def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,verbose:bool=False,sanity_check:bool=False) -> tuple:
+def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,normalize:bool=True,verbose:bool=False,sanity_check:bool=False) -> tuple:
     """
     Performs a message passing iteration. `G` is modified in-place. Returns the change `eps` in maximum
     message norm for every iteration.
@@ -109,7 +111,7 @@ def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,verbose:bool=False,
 
     eps_list = ()
     for i in range(numiter):
-        eps = message_passing_step(G,sanity_check)
+        eps = message_passing_step(G,normalize=normalize,sanity_check=sanity_check)
         if verbose: print("    iteration {:3}: eps = {:.3e}".format(i,eps))
         eps_list += (eps,)
 

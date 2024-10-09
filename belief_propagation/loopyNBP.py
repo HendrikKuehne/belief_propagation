@@ -1,11 +1,9 @@
 """
 Belief propagation on graphs using neighbor regions. Inspired by Kirkley et Al, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
 """
-import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
-import copy
 import cotengra as ctr
 
 from belief_propagation.utils import network_intact_check,network_message_check
@@ -201,8 +199,8 @@ def plot_neighborhoods(G:nx.MultiGraph,neighborhood_list:tuple) -> None:
     nColors = sum([1 if len(neighborhood_double[1]) > 1 else 0 for neighborhood_double in neighborhood_list])
 
     iColor = 0
-    for neighborhood_double in neighborhood_list:
-        edges,nodes = neighborhood_double
+    for neighborhood_doublet in neighborhood_list:
+        edges,nodes = neighborhood_doublet
         # drawing edges within the neighborhood
         nx.draw_networkx_edges(
             G,

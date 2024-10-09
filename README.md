@@ -4,29 +4,31 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 
 ## Contents
 
-* `lib`
+* `belief_propagation/`
     * `graphs.py` Creation of various graphs.
     * `BP.py` Belief propagation on graphs, i.e. on various geometries.  Taken from Alkabatz & Arad, 2021 ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073))
     * `loopyNBP` Belief propagation on graphs using neighbor regions. Inspired by Kirkley et Al, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
     * `plaquette.py` Code from Christian Mendl. Not to be modified in any substantial way, for reference.
     * `networks.py` Functions for network creation and handling.
     * `utils.py` Stuff that is useful here or there. `contract_edge` function for contracting an edge in a tensor network, sanity checks and test cases for `network_contraction.contract_network`.
-* `doc`
-    * `plots` Discussion of various plots that illustrate the behavior of the contents of this repo.
+    * `routines.py` All the different algorithms that are implemented herein, contained in single functions that accept a network and give back a contraction value.
+* `doc/`
+    * `plots/` Discussion of various plots that illustrate the behavior of the contents of this repo.
 
 ## ToDo
 
-* :white_check_mark: Expand the algorithm to work on arbitary graphs.
+* Implement Belief Propagation algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211))
+    * :white_check_mark: Expand the algorithm to work on arbitary graphs.
     * :white_check_mark: Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
 * Check if Bethe Free Energy is real if `psd=False` (eq. A12 in [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073) ([arXiv:2008.04433](https://arxiv.org/abs/2008.04433))).
     * This seems to be necessary for the Belief Propagation algorithm to work, but I would not be surprised if it doesn't hold if `psd=False`.
-* Implement Belief Propagation algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211))
 * Improve contraction accuracy by treating short loops using Kirkley and long loops using Feynman Contraction.[^1]
-    * Maybe contract small neighborhoods directly and use Feynman contraction to treat edges with large bond dimensions?
+    * :white_check_mark: Maybe contract small neighborhoods directly and use Feynman contraction to treat edges with large bond dimensions?
 * Optimize exact contraction of tensor networks.
     * Exact contraction using [cotengra](https://github.com/jcmgray/cotengra)? Somehow the [method](https://cotengra.readthedocs.io/en/latest/basics.html#hyperoptimizer) that creates a contraction tree using the `cotengra.HyperOptimizer` object didn't work for me, but [`cotengra.array_contract`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/index.html#cotengra.array_contract) does work.
     * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.[^2]
     * :white_check_mark: Contraction using `cotengra.einsum` with objectives from [`cotengra.socring`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/scoring/index.html).
+* Come up with a better way to construct neighborhoods; it seems like graphs created using `belief_propagation.graphs.short_loop_graph` still contain many short loops after `bekief_propagation.loopyNBP.construct_neighborhoods` is used to contract neighborhoods.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
@@ -45,15 +47,17 @@ This will be updated continuously, as questions come to mind.
     * Messages must not have positive entries; if `psd=True`, the algorithm works with messages that have negative entries (tested with messages generated from a normal distribution, and then normalized).
     * I suspected `psd=False` might simply introduce numerical inaccuracies (see [here](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc#user-content-fn-2-8812249509624473e552f17db0b8f455)), but that is not what it does; see [here](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc#the-effect-of-the-psd-option).
     * Does `psd=True` mimic the non-negativity of the factors of factor graphs, which seems to be required for the BP algorithm?
-* How and why does the normalization of Kirkley et Al in `message_passing_step` work? Why is theit BP algorithm exact on trees, although normalizations are incorporated?
+* How and why does the normalization of Kirkley et Al in `message_passing_step` work? Why is their BP algorithm exact on trees, although normalizations are incorporated?
     * :arrow_right: The function `message_passing_iteration` implements Kirkley's belief propagation for networks with loops (Kirkley, 2021: [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). It's messages correspond to marginal probabilities and, as such, need to be normalized; the normalization above is the one that this paper uses (see the discussion after Eq. 12).
         * This algorithm is significantly different from Message Passing on trees, which is exact. See [here](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/README.md#belief-propagation-and-loopy-belief-propagation) for details.
     * :arrow_right: This normalization has the effect that one can associate with every node the value $Z$ and with every edge the inverse contraction value $1/Z$.[^4] Consider now that a tree with $N$ nodes has $N-1$ edges; this means that $\prod_i \text{cntr}_i = Z^NZ^{1-N}=Z$, i.e. the algorithm is exact.
     * Which part of the algorithm breaks down when moving from trees to loopy graphs? Kirkley et Al claim that the effect of long loops is negligible, how can this be understood in terms of messages and their normalization?
+* Why are long loops negligible?
+    * Many runs of the BP algorithm give exact results when only lonf loops are present, which is what Kirkley et Al claim in their paper; they do not give a source though.
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
-    * The relative error improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#tn_vs_pq_3x3_baselinepdf)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly?
+    * :arrow_right: The relative error improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#tn_vs_pq_3x3_baselinepdf)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly? That is the physical argument - in terms of graphs, we are treating many small loops exactly which could otherwise have introduced inaccuracies.
 * What happens when we try Christian's idea of Orthogonal Belief Propagation?
     * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of PEPS networks that Arad (2021) introduces?
 

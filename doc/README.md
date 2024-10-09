@@ -8,11 +8,11 @@ $$
 
 on every node, where $\text{tr}$ denotes contraction and $N(a)$ is the neighborhood of $a$, i.e. it's adjacent nodes.
 
-The MP algorithm simply iterates this equation on every node of a tree. At convergence, the value of the complete contraction can be extracted form any node, since any node is a valid root. Contracting any node with the inflowing messages gives the network value, and contracting two messages on the same node gives the network value. This gives exact results on tree-shaped networks.
+The MP algorithm simply iterates this equation on every node of a tree. At convergence, the value of the complete contraction can be extracted from any node, since any node is a valid root. Contracting any node with it's incident messages gives the network value, and contracting two messages on the same edge gives the network value. This algorithm is exact on tree-shaped networks.
 
 BP adds a normalization step at two points in the algorithm:
 
-* After one iteration step (i.e. applying the BP equation), each message is divided by the sum of it's elements.
+* After every iteration step (i.e. applying the BP equation), each message is divided by the sum of it's elements.
 * After convergence, on each edge, the messages are normalized s.t. their contraction is normalized to unity;[^1] on the edge $(a,b)$, we do
 
 $$
@@ -27,7 +27,7 @@ $$
     Z = \text{cntr}_x = \left(\prod_a\text{cntr}_a\right)^{1/L}
 $$
 
-for all nodes $x$, where $L$ is the number of nodes. This works whether `psd=True` or `psd=False`.[^2] In BP, the contraction value is the product of all node values:
+for every node $x$, where $L$ is the number of nodes. This works whether `psd=True` or `psd=False`.[^2] In BP, the contraction value is the product of all node values:
 
 [^2]: The value of `psd` has an influence on numerical accuracy, however. Whether `psd=True` or `psd=False`, the code in `belief_propagation/BP` yields messages s.t. $\text{cntr}_a=Z$ for every node $a$. Numerically verifying $Z = \left(\prod_x\text{cntr}_x\right)^{1/L}$ only succeeds when `psd=True` (using Numpy standard accuracy). If `psd=False`, the relative error is in $\mathcal{O}(10^{-1})$. Based on this, one could assume that the `psd` option in BP only introduces numerical inaccuracies, too. This does not seem to be the case; BP misses $Z$ by one order of magnitude in real and imaginary part when `psd=False`, while relative errors in $\mathcal{O}(10^{-3})$ are achieved when `psd=True`.
 
@@ -41,7 +41,7 @@ $$
     \prod_x\text{cntr}_x = Z^NZ^{1-N} = Z,
 $$
 
-i.e. BP is exact on trees. Note that the association of values to edges is not explicit in the algorithm. In actuality, each value $1/Z$ is broken up into factors that are contained in the nodes.
+i.e. BP is exact on trees. Note that the association of values to edges is not explicit in the algorithm. In actuality, each value $1/Z$ is broken up into factors that are contained in the nodes adjacent to the resoective edge.
 
 Since BP works differently, it also gives decent results on graphs with loops. MP cannot handle loops:
 
@@ -53,7 +53,7 @@ Since BP works differently, it also gives decent results on graphs with loops. M
 The presence of loops in the graph causes feedback loops in the passage of messages through the graph, s.t. their magnitudes diverge, as shown above for an example graph. The BP algorithm is able to handle loops, because the messages are normalized in each step, and the normalization is then accounted for by multiplying all nodes.[^3]
 
 <p align="center">
-  <img width="630" height="200" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/imgs/BP_approximation.jpeg">
+  <img width="630" height="200" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/imgs/loopyBP_approximation.jpeg">
 </p>
 
 [^3]: Note that, where MP tries to exactly contract the network, BP approximates the marginals of each "stump" of a tensor and contracts the tensors with these, effectively neglecting all interaction between nodes. I like to phrase this as an "inverse HOSVD", because every node becomes a core tensor that is surrounded by vectors. As opposed to the HOSVD, not the interior dimensions (i.e. singular values) are truncated but the outer dimensions. This truncation is extreme: All bonds between nodes become one-dimensional.

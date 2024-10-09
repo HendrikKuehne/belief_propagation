@@ -209,14 +209,30 @@ def tree(nNodes:int) -> nx.MultiGraph:
 #                   plotting
 # -------------------------------------------------------------------------------
 
-def loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
+def loop_hist(G:nx.MultiGraph,bin_edges:np.ndarray=()) -> tuple[np.ndarray,np.ndarray]:
+    """
+    Creates a histogram of the loop lengths of `G`.
+    """
+    # are we trying to find loops in a tree?
+    if nx.is_tree(G): return [0,],[0,np.inf]
+
+    # investigating the cycles that occur in the network
+    cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(G)]
+    if len(bin_edges) == 0:
+        hist,edges = np.histogram(cycle_lengths,bins=np.arange(min(cycle_lengths),max(cycle_lengths)+2))
+    else:
+        hist,edges = np.histogram(cycle_lengths,bins=bin_edges)
+    return hist,edges
+
+def plot_loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
     """
     Plots the histogram of the loop lengths of `G`.
     """
+    hist,edges = loop_hist(G)
+
     plt.figure("Loop length histogram")
     # investigating the cycles that occur in the network
-    cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(G)]
-    plt.hist(cycle_lengths,bins=max(cycle_lengths)-min(cycle_lengths))
+    plt.bar(edges[:-1],hist,align="edge")
     plt.suptitle(f"Graph with {G.number_of_nodes()} nodes.")
     plt.xlabel("cycle length")
     plt.ylabel("count")
@@ -228,12 +244,12 @@ def loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
 if __name__ == "__main__":
     #G = tree(50)
     #G = short_loop_graph(30,3,0.6)
-    #G = global_loop(20,40,6)
-    G = loop_capped_graph(50,5)
+    G = global_loop(20,30,6)
+    #G = loop_capped_graph(50,5)
     print("Network created")
 
     # drawing the network
     nx.draw(G,with_labels=True,font_weight="bold")
     plt.show()
 
-    # loop_hist(G)
+    plot_loop_hist(G)
