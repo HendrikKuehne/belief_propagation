@@ -68,10 +68,20 @@ def neighborhood(G:nx.MultiGraph,rootnode:int,r:int=0,sanity_check:bool=False) -
 
     return edges_found,nodes_found
 
-def construct_neighborhoods(G:nx.MultiGraph,r:int=0,sanity_check:bool=False) -> tuple:
+def construct_neighborhoods(G:nx.MultiGraph,r:int=0,method:int=None,sanity_check:bool=False) -> tuple:
     """
     Constructs neighborhoods in the graph `G` with connectivity `r`. `G` is modified in-place.
+
+    The argument `method` denotes the method that is used to contruct the neighborhoods. These methods only
+    differ in the order in which the neighborhoods are created, i.e. the order in which nodes from the graph
+    are chosen as root nodes. The default case (`method=None`) is a heuristic; the nodes are sorted based on the
+    number of adjacent nodes. In case a single node of the graph is given as argument, neighborhoods are created
+    starting at this node and moving outwards.
     """
+    if method in G.nodes():
+        # TODO: construct neighborhoods by moving outwards from this node
+        pass
+
     # The choice of neighborhoods should ensure that as many loops as possible are contained within the neighborhoods. This version of the code achieves this using a (possibly crude) heuristic: We begin neighborhood construction with the nodes that have the largest number of neighbors
 
     # sanity check

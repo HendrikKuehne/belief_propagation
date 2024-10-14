@@ -6,11 +6,10 @@ import networkx as nx
 import warnings
 import matplotlib.pyplot as plt
 
-def crandn(size=None,rng:np.random.Generator=None):
+def crandn(size=None,rng:np.random.Generator=np.random.default_rng()) -> np.ndarray:
     """
     Draw random samples from the standard complex normal (Gaussian) distribution.
     """
-    if rng is None: rng = np.random.default_rng()
     # 1/sqrt(2) is a normalization factor
     return (rng.normal(size=size) + 1j*rng.normal(size=size)) / np.sqrt(2)
 
@@ -78,12 +77,6 @@ def network_message_check(G:nx.MultiGraph) -> bool:
             if len(data["msg"].values()) != 2:
                 warnings.warn(f"Wrong number of messages on edge ({node1},{node2}).")
                 return False
-            #if not np.isclose(np.sum(data["msg"][node1]),1):
-            #    warnings.warn(f"Message to f{node1} on edge ({node1},{node2}) is not normalized.")
-            #    return False
-            #if not np.isclose(np.sum(data["msg"][node2]),1):
-            #    warnings.warn(f"Message to {node2} on edge ({node1},{node2}) is not normalized.")
-            #    return False
 
     return True
 

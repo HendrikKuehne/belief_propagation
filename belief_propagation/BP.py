@@ -105,7 +105,7 @@ def message_passing_iteration(G:nx.MultiGraph,numiter:int=30,normalize:bool=True
     if sanity_check: assert network_message_check(G)
 
     # initialization
-    construct_initial_messages(G,sanity_check)
+    construct_initial_messages(G,normalize=normalize,sanity_check=sanity_check)
 
     if verbose: print(f"Message passing: {numiter} iterations.")
 

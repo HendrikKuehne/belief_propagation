@@ -214,7 +214,11 @@ def loop_hist(G:nx.MultiGraph,bin_edges:np.ndarray=()) -> tuple[np.ndarray,np.nd
     Creates a histogram of the loop lengths of `G`.
     """
     # are we trying to find loops in a tree?
-    if nx.is_tree(G): return [0,],[0,np.inf]
+    if nx.is_tree(G):
+        if len(bin_edges) == 0:
+            return [0,],[0,np.inf]
+        else:
+            return [0 for i in range(len(bin_edges)-1)],bin_edges
 
     # investigating the cycles that occur in the network
     cycle_lengths = [len(cycle) for cycle in nx.simple_cycles(G)]

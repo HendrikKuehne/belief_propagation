@@ -216,7 +216,7 @@ def merge_edges(node1:int,node2:int,G:nx.multigraph,sanity_check:bool=False) -> 
 
     return
 
-def expose_edge(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> tuple[nx.MultiGraph]:
+def expose_edge(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> None:
     """
     Transposes the tensors in `node1` and `node2` such that the edge
     connecting them sums over their trailing dimensions. `G` is modified in-place.
@@ -262,6 +262,8 @@ def expose_edge(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> 
     G.nodes[node1]["T"] = np.transpose(G.nodes[node1]["T"],axes1)
     G.nodes[node2]["T"] = np.transpose(G.nodes[node2]["T"],axes2)
 
+    return
+
 def feynman_cut(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> tuple[nx.MultiGraph]:
     """
     Executes a Feynman-cut on the network `G`, and returns a list that contains the respective networks.
@@ -284,7 +286,7 @@ def feynman_cut(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> 
 #                   Network creation
 # -------------------------------------------------------------------------------
 
-def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False) -> None:
+def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False):
     """
     Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
     The graph `G` is manipulated in-place.
@@ -303,6 +305,8 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
         # each edge has an "indices" key, which holds the legs that the adjacent tensors are summed over as a set (only used for edges that represent a trace)
         G[edge[0]][edge[1]][0]["indices"] = None
 
+    tensors = {}
+
     for node in G.nodes:
         nLegs = len(G.adj[node])
         dim = nLegs * [chi]
@@ -310,14 +314,21 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
         if psd:
             h = int(np.sqrt(chi))
             assert h**2 == chi, "if psd=True, chi must have an integer root."
-            s = randn(size = nLegs * [h,] + [chi,])
+            s = randn(size = nLegs * [h,] + [chi,]) # last dimension is physical leg
             T = np.einsum(
                 s, [2*i for i in range(nLegs)] + [2*nLegs,],
                 s.conj(), [2*i+1 for i in range(nLegs)] + [2*nLegs,],
                 np.arange(2*nLegs)
             ).reshape(dim) / chi**(3/4)
+
+            # saving the physical tensor
+            tensors[node] = s
+
         else:
             T = randn(size = dim) / chi**(3/4)
+
+            # saving the physical tensor
+            tensors[node] = T
 
         # adding the tensor to this node
         G.nodes[node]["T"] = T
@@ -326,7 +337,9 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
         for i,neighbor in enumerate(G.adj[node]):
             G[node][neighbor][0]["legs"][node] = i
 
-def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
+    return tensors
+
+def construct_initial_messages(G:nx.MultiGraph,normalize:bool=True,sanity_check:bool=False) -> None:
     """
     Initializes messages one the edges of `G`. Random initialisation except for leaf nodes, where the initial value
     is the tensor of the leaf node. `G` is modified in-place.
@@ -335,20 +348,24 @@ def construct_initial_messages(G:nx.MultiGraph,sanity_check:bool=False) -> None:
     if sanity_check: assert network_message_check(G)
 
     for node1,node2 in G.edges():
+        # add messages to every edge, in both directions
         G[node1][node2][0]["msg"] = {}
 
         for receiving_node in (node1,node2):
             sending_node = node2 if receiving_node == node1 else node1
             if len(G.adj[sending_node]) == 1:
                 # message from leaf node
-                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"] / np.sum(G.nodes[sending_node]["T"])
+                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"] / np.sum(G.nodes[sending_node]["T"]) if normalize else G.nodes[sending_node]["T"]
             else:
                 iLeg = G[node1][node2][0]["legs"][receiving_node]
                 # bond dimension
                 chi = G.nodes[receiving_node]["T"].shape[iLeg]
                 # initialization with normalized vector
-                msg = np.ones(shape=(chi,))#np.random.normal(size=(chi,))
-                G[node1][node2][0]["msg"][receiving_node] = msg / np.sum(msg)
+                #msg = np.ones(shape=(chi,))
+                msg = np.random.normal(size=(chi,))
+                G[node1][node2][0]["msg"][receiving_node] = msg / np.sum(msg) if normalize else msg
+
+    return
 
 def delta_network(G:nx.MultiGraph,chi:int,) -> None:
     """
@@ -374,6 +391,8 @@ def delta_network(G:nx.MultiGraph,chi:int,) -> None:
         # adding to the adjacent edges which index they correspond to
         for i,neighbor in enumerate(G.adj[node]):
             G[node][neighbor][0]["legs"][node] = i
+
+    return
 
 def dummynet1(real:bool=False,chi:int=3) -> tuple[nx.MultiGraph,float]:
     """
