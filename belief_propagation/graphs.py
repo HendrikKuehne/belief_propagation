@@ -247,13 +247,29 @@ def plot_loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
 
 if __name__ == "__main__":
     #G = tree(50)
-    #G = short_loop_graph(30,3,0.6)
-    G = global_loop(20,30,6)
+    G = short_loop_graph(30,3,0.6)
+    root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
+    dfs_tree = nx.dfs_tree(G,root)
+    for edge in nx.edge_dfs(G,root):
+        node,successor,key = edge
+        if node != root:
+            print(dfs_tree.pred[node].values)
+        else:
+            print("Root")
+        #if dfs_tree.has_edge(node,successor):
+        #    print(f"Edge ({node},{successor}):")
+        #    print(f"    {successor} contained in the children of {node}?",successor in dfs_tree.succ[node].keys())
+    #for predeccessor, node in nx.dfs_edges(dfs_tree,root):
+    #    print(f"{predeccessor} -> {node}")
+    #    assert predeccessor in dfs_tree.pred[node]
+    #G = global_loop(20,30,6)
     #G = loop_capped_graph(50,5)
     print("Network created")
 
     # drawing the network
+    plt.figure("G")
     nx.draw(G,with_labels=True,font_weight="bold")
-    plt.show()
-
-    plot_loop_hist(G)
+    plt.figure("spanning tree")
+    nx.draw(dfs_tree,with_labels=True,font_weight="bold")
+    #plt.show()
+    plt.close()
