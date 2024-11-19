@@ -117,7 +117,7 @@ def contract_edge(node1:int,node2:int,key:int,G:nx.MultiGraph,sanity_check:bool=
 
 def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
     """
-    Contracts the tensor network `G` using `np.einsum` and `np.einsum_path`.
+    Contracts the tensor network `G` using `ctg.einsum`.
     """
     if sanity_check: assert network_intact_check(G)
 

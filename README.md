@@ -21,7 +21,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
     * :white_check_mark: Expand the algorithm to work on arbitary graphs.
     * :white_check_mark: Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
 * :white_check_mark: Check if Bethe Free Energy is real if `psd=False` (eq. A12 in [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073) ([arXiv:2008.04433](https://arxiv.org/abs/2008.04433))).
-    * All data points with `psd=True` have negative Bethe Free Energy!
+    * All data points with `psd=True` have (approximately) negative Bethe Free Energy!
 * Improve contraction accuracy by treating short loops using Kirkley and long loops using Feynman Contraction.[^1]
     * :white_check_mark: Maybe contract small neighborhoods directly and use Feynman contraction to treat edges with large bond dimensions?
 * Optimize exact contraction of tensor networks.

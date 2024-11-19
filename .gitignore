@@ -10,11 +10,13 @@ belief_propagation.egg-info/
 # inore generated Jupyter files
 *.ipynb_checkpoints/
 
-# ignore compressed files and pickles
+# ignore compressed files, pickles and datasets
 *.zip
 *.tar.gz
 *.pickle
 data/
+*.xyz
+datasets/
 
 # Mac
 .DS_Store

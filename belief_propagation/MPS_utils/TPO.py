@@ -1,0 +1,451 @@
+"""
+Tensor-product operators on arbitrary graphs.
+"""
+
+import numpy as np
+import networkx as nx
+import cotengra as ctg
+import warnings
+import itertools
+
+from belief_propagation.utils import network_message_check,multi_kron,proportional
+
+class TPO:
+    """
+    Base class for tensor product operators, composed of Pauli matrices. Subclasses must provide `__init__`.
+    Therein, the following attributes must be defined:
+    * `self.G`: Graph on which the Hamiltonian is defined.
+    * `self.chi`: Virtual bond dimension.
+    * `self.D`: Physical dimension.
+    * `self.tree`: Tree that determines the traversal of `G`, along which the TPO is oriented.
+    * `self.root`: The root node of the tree.
+
+    Writing down a TPO on an arbitrary graph `G` can be achieved by
+    finding a spanning tree of `G`. The flow of finite state automaton
+    information is then defined by the tree: The origin is at the root,
+    and it terminates at the leaves.
+
+    During initialisation, the root and each leaf are equipped with an
+    additional leg. These legs connect to the initial and final states of
+    the finite state automaton, respectively. At the end of initialisation,
+    these additional legs should be contracted such that the TPO has the
+    same structure as the underlying graph.
+    """
+    X=np.array([[0,1],[1,0]])
+    Y=np.array([[0,-1j],[1j,0]])
+    Z=np.array([[1,0],[0,-1]])
+    I=np.eye(2)
+
+    def permute_TPO(self,T:np.ndarray,node:int) -> np.ndarray:
+        """
+        Re-shapes the TPO-tensor `T` at node `node` such that it fits into
+        the graph `self.G`.
+
+        It is assumed that the dimensions of `T` are in the canonical
+        order: First the virtual dimensions, followed by two physical legs.
+        The leading virtual dimension is the incoming leg, which is
+        followed by the passive legs and, finally, the outgoing legs.
+
+        For a node in `G` with N neighbors, `T` must have at least N+2 legs.
+        The last two legs are assumed to be the physical legs, and the first N
+        legs are the virtual bonds. Legs that are neither among the first N or
+        the last 2 remain untouched; these are boundary legs that connect to
+        the initial and final states of the finite state automaton. This
+        function thus permutes only the first N dimensions.
+        """
+        # sanity check
+        assert node in self.G
+        assert node in self.tree
+
+        N_in = len(self.tree.pred[node])
+        N_out = len(self.tree.succ[node])
+        N_pas = len(self.G.adj[node]) - N_out - N_in
+
+        # sanity check
+        assert T.ndim - N_in - N_pas - N_out - 2 in (0,1), "Tensor may have up to one boundary leg."
+
+        newshape = [np.nan for _ in self.G.adj[node]]
+        out_counter = 0
+        pas_counter = 0
+        for neighbor in self.G.adj[node]:
+            if neighbor in self.tree.pred[node]:
+                # the incoming edge
+                newshape[self.G[node][neighbor][0]["legs"][node]] = 0
+                continue
+            if neighbor in self.tree.succ[node]:
+                # outgoing edge
+                newshape[self.G[node][neighbor][0]["legs"][node]] = N_in + N_pas + out_counter
+                out_counter += 1
+                continue
+
+            # passive edge
+            newshape[self.G[node][neighbor][0]["legs"][node]] = N_in + pas_counter
+            pas_counter += 1
+
+        return np.transpose(T,newshape + [_ for _ in range(len(newshape),T.ndim)])
+
+    def contract_boundaries(self):
+        """
+        Contracts boundary legs.
+
+        This means contraction of the root node with the initial state,
+        and each leaf with the final state. It is assumed that the initial
+        state is the 0th component of the bond dimension, and that the
+        final state is the last component.
+        """
+        for node in self.G.nodes():
+            if node == self.root: # root node
+                self.G.nodes[node]["T"] = self.G.nodes[node]["T"][...,0,:,:]
+                continue
+
+            if len(self.tree.succ[node]) == 0: # leaf node
+                self.G.nodes[node]["T"] = self.G.nodes[node]["T"][...,-1,:,:]
+                continue
+
+        return
+
+    def to_dense(self,sanity_check:bool=False) -> np.ndarray:
+        """
+        Contracts the TPO using `ctg.einsum`.
+        """
+        if sanity_check: assert self.intact_check()
+
+        if self.G.number_of_nodes() == 1:
+            # the network is trivial
+            return tuple(self.G.nodes(data="T"))[0][1]
+
+        N = self.G.number_of_edges()
+        args = ()
+
+        # enumerating the edges in the graph
+        for i,nodes in enumerate(self.G.edges()):
+            node1,node2 = nodes
+            self.G[node1][node2][0]["label"] = i
+
+        # extracting the einsum arguments
+        for node,T in self.G.nodes(data="T"):
+            args += (T,)
+            legs = [None for i in range(T.ndim-2)] + [N,N+1] # last two indices are the physical legs
+            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+            args += (tuple(legs),)
+            N += 2
+
+        H = ctg.einsum(*args,optimize="greedy")
+        # reshaping
+        H = np.transpose(H,[2*i for i in range(self.G.number_of_nodes())] + [2*i+1 for i in range(self.G.number_of_nodes())])
+
+        return np.reshape(H,newshape=(2**self.G.number_of_nodes(),2**self.G.number_of_nodes()))
+
+    def intact_check(self) -> bool:
+        """
+        Checks if the TPO is intact:
+        * Are the legs in the graph labeled correctly?
+        * Is the hamiltonian composed of the correct operators?
+        * is the information flow in the tree intact?
+        """
+        # are all the necessary attributes defined?
+        assert hasattr(self,"D")
+        assert hasattr(self,"chi")
+        assert hasattr(self,"G")
+        assert hasattr(self,"tree")
+        assert hasattr(self,"root")
+
+        # two legs in every edge's legs attribute?
+        for node1,node2,key in self.G.edges(keys=True):
+            if self.G[node1][node2][key]["trace"]:
+                # trace edge
+                if len(self.G[node1][node2][key]["indices"]) != 2:
+                    warnings.warn(f"Wrong number of legs in trace edge ({node1},{node2},{key}).")
+                    return False
+            else:
+                # default edge
+                if len(self.G[node1][node2][key]["legs"].keys()) != 2:
+                    warnings.warn(f"Wrong number of legs in edge ({node1},{node2},{key}).")
+                    return False
+
+        # correct leg indices around each node?
+        for node in self.G.nodes:
+            legs = [leg for leg in range(self.G.nodes[node]["T"].ndim)]
+            for node1,node2,key in self.G.edges(node,keys=True):
+                try:
+                    if not self.G[node1][node2][key]["trace"]:
+                        legs.remove(self.G[node1][node2][key]["legs"][node])
+                    else:
+                        # trace edge
+                        i1,i2 = self.G[node1][node2][key]["indices"]
+                        legs.remove(i1)
+                        legs.remove(i2)
+                except ValueError:
+                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                    return False
+
+            if not legs == [self.G.nodes[node]["T"].ndim - 2,self.G.nodes[node]["T"].ndim - 1]:
+                warnings.warn(f"Physical legs are not the last two dimensions in node {node}.")
+                return False
+
+        # Hamiltonian composed of pauli operators?
+        for node,T in self.G.nodes(data="T"):
+            for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
+                index = virtual_index + (slice(0,self.D),slice(0,self.D))
+
+                if np.allclose(T[index],0): continue
+
+                closeness = [proportional(T[index],op,10) for op in (self.X,self.Y,self.Z,self.I)]
+
+                if not any(closeness):
+                    warnings.warn(f"Unknown operator in index {virtual_index} at node {node}.")
+                    return False
+
+        # tree traversal correct?
+        for node in self.tree.nodes():
+            if (len(self.tree.succ[node]) > 0) and (node != self.root):
+                # node is an intermediate node in the tree
+
+                # checking if the particle state is pased along
+                for parent,child in itertools.product(self.tree.pred[node],self.tree.succ[node]):
+                    index = tuple(
+                        0 if _ in (self.G[node][parent][key]["legs"][node],self.G[node][child][key]["legs"][node])
+                        else 2
+                        for _ in range(self.G.nodes[node]["T"].ndim - 2)
+                    ) + (slice(0,2),slice(0,2))
+                    if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                        warnings.warn(f"Wrong indices for particle state throughput in node {node}.")
+                        return False
+
+                # checking if the vacuum state is passed along
+                index = tuple(2 for _ in range(self.G.nodes[node]["T"].ndim - 2)) + (slice(0,2),slice(0,2))
+                if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                    warnings.warn(f"Wrong indices for vacuum state throughput in node {node}.")
+                    return False
+
+        return True
+
+    def view_site(self,node:int):
+        """
+        Prints all components of the tensor at node `node`.
+        """
+        # sanity check
+        assert node in self.G
+
+        legs_in = tuple(self.G[node][neighbor][0]["legs"][node] for neighbor in self.tree.pred[node].keys())
+        legs_out = tuple(self.G[node][neighbor][0]["legs"][node] for neighbor in self.tree.succ[node].keys())
+
+        print(
+            f"Displaying node {node}:" + "\n    " +
+            f"legs {legs_in} incoming" + "\n    " +
+            f"legs {legs_out} outgoing" + "\n"
+        )
+        for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
+            index = virtual_index + (slice(0,2),slice(0,2))
+
+            if not np.allclose(self.G.nodes[node]["T"][index],0):
+                print(index[:-2],":\n",self.G.nodes[node]["T"][index],"\n")
+
+        return
+
+    @staticmethod
+    def prepare_graph(G:nx.MultiGraph) -> nx.MultiGraph:
+        """
+        Creates a shallow copy of G, and adds the `legs` key to the labels.
+        To be used in `__init__` of subclasses of `TPO`: `G` is the graph from which
+        the operator inherits it's underlying graph.
+        """
+        # shallow copy of G
+        newG = nx.MultiGraph(G.edges())
+        # adding legs attribute to each edge
+        for node1,node2,legs in G.edges(data="legs",keys=False):
+            newG[node1][node2][0]["legs"] = legs
+            newG[node1][node2][0]["trace"] = False
+            newG[node1][node2][0]["indices"] = None
+
+        return newG
+
+    @staticmethod
+    def view_tensor(T:np.ndarray):
+        """
+        Prints all extractable information from tensor `T`
+        """
+        chi = T.shape[0]
+        D = T.shape[-1]
+        # sanity check
+        for i in range(T.ndim):
+            if i < T.ndim - 2:
+                assert T.shape[i] == chi
+            else:
+                assert T.shape[i] == D
+
+        print(f"Bond dimension {chi}.\n")
+
+        # printing cellular automaton components
+        for virtual_index in itertools.product(range(chi),repeat=T.ndim-2):
+            index = virtual_index + (slice(0,D),slice(0,D))
+
+            if not np.allclose(T[index],0):
+                print(index[:-2],":\n",T[index],"\n")
+
+    def __init__(self):
+        self.D = 2
+        """
+        Physical dimension; so far, only spin-1/2 is supported.
+        """
+
+class transverse_ising(TPO):
+    """
+    Travsverse Field Ising model.
+    """
+
+    def __init__(self,G:nx.MultiGraph,J:float=1,h:float=0,sanity_check:bool=False) -> nx.MultiGraph:
+        """
+        Travsverse Field Ising model TPO on graph `G`, with coupling `J` and external field `h`.
+
+        Ordering of legs in the TPO virtual dimensions is inherited from `G`. The last two dimensions of every TPO tensor are the physical dimensions.
+        """
+        # sanity check
+        assert network_message_check(G)
+
+        super().__init__()
+
+        self.chi = 3
+        """
+        Virtual bond dimension.
+        0 is the moving particle state, 1 the decay state, and 2 is the vacuum state.
+        """
+
+        def ising_TPO_tensor_without_coupling(N_pas:int,N_out:int,h:float) -> np.ndarray:
+            """
+            Returns a Transverse Field Ising TPO tensor, that is missing the incoming and outgoing coupling.
+
+            `T` has the canonical leg ordering: The first leg is the incoming leg, afterwards follow the
+            passive legs, and finally the outgoing legs.
+            """
+            # sanity check
+            assert N_pas >= 0
+            assert N_out >= 0
+
+            T = np.zeros(shape=[3 for _ in range(1 + N_pas + N_out)] + [2,2])
+
+            # particle index
+            for i_out in range(N_out):
+                index = (0,) + tuple(2 for _ in range(N_pas)) + tuple(0 if _ == i_out else 2 for _ in range(N_out)) + (slice(0,2),slice(0,2))
+                T[index] = self.I
+
+            # vacuum index
+            index = tuple(2 for _ in range(1 + N_pas + N_out)) + (slice(0,2),slice(0,2))
+            T[index] = self.I
+
+            # transverse field
+            index = (0,) + tuple(2 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
+            T[index] = h * self.X
+
+            return T
+
+        self.G = super().prepare_graph(G)
+
+        # root node is node with smallest degree
+        self.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
+
+        # depth-first search tree
+        self.tree = nx.dfs_tree(G,self.root)
+
+        # adding TPO tensors (without coupling)
+        for node in self.G.nodes():
+            N_in = len(self.tree.pred[node])
+            N_out = len(self.tree.succ[node])
+            N_pas = len(G.adj[node]) - N_out - N_in
+
+            if N_out == 0:
+                # node is a leaf
+                N_out = 1
+
+            # TPO tensor, where the first dimension is the incoming leg, the passive legs
+            # and the outgoing legs follow, and the last two dimensions are the physical legs
+            T = ising_TPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,h=h)
+
+            if node == self.root:
+                # root node; we need to put the (incoming) boundary leg at the last place within the virtual dimensions
+                T = np.moveaxis(T,0,-3)
+
+            # re-shaping TPO tensor to match the graph leg ordering
+            T = self.permute_TPO(T,node)
+
+            self.G.nodes[node]["T"] = T
+
+        # adding incoming and outgoing coupling to every node but the root
+        for node1,node2 in self.G.edges():
+            if node1 in self.tree.succ[node2]:
+                # node1 is downstream from node2
+                child = node1
+                parent = node2
+            else:
+                # node2 is downstream from node1, or the edge is not contained in the tree (in which case the order does not matter)
+                child = node2
+                parent = node1
+
+            # first particle decay stage at this edge; at parent node
+            if parent != self.root:
+                grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
+                index = tuple(
+                    0 if i == G[grandparent][parent][0]["legs"][parent]
+                    else 1 if i == G[parent][child][0]["legs"][parent]
+                    else 2
+                    for i in range(self.G.nodes[parent]["T"].ndim - 2)
+                ) + (slice(0,2),slice(0,2))
+            else:
+                index = tuple(
+                    1 if i == G[parent][child][0]["legs"][parent]
+                    else 2
+                    for i in range(self.G.nodes[parent]["T"].ndim - 3)
+                ) + (0,slice(0,2),slice(0,2))
+            self.G.nodes[parent]["T"][index] = J * self.Z
+
+            # second particle decay stage at this edge; at child node
+            index = tuple(
+                1 if i == G[parent][child][0]["legs"][child]
+                else 2
+                for i in range(self.G.nodes[child]["T"].ndim - 2)
+            ) + (slice(0,2),slice(0,2))
+            self.G.nodes[child]["T"][index] = self.Z
+
+        # contracting boundary legs
+        self.contract_boundaries()
+
+        if sanity_check: assert self.intact_check()
+
+        return
+
+    # --------------------------------------------------------------------------------------------------------------------------------------------------------------
+    #                   dummy test cases, each belonging to dummynet<i> from belief_propagation.networks
+    # --------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def H1(J:float=1,h:float=0) -> np.ndarray:
+        """
+        Graph:
+
+             4    5
+             |    |
+             |    |
+        0 -- 1 -- 2 -- 3
+        """
+        N = 6
+        H = np.zeros(shape=(2**N,2**N))
+
+        # transverse field
+        for i in range(N):
+            ops = tuple(TPO.X if _ == i else TPO.I for _ in range(N))
+            H += h * multi_kron(*ops)
+
+        # two-body terms
+        for ops in (
+            (TPO.I,TPO.I,TPO.I,TPO.I,TPO.Z,TPO.Z),
+            (TPO.I,TPO.I,TPO.I,TPO.Z,TPO.Z,TPO.I),
+            (TPO.I,TPO.I,TPO.Z,TPO.Z,TPO.I,TPO.I),
+            (TPO.I,TPO.Z,TPO.I,TPO.I,TPO.Z,TPO.I),
+            (TPO.Z,TPO.I,TPO.I,TPO.Z,TPO.I,TPO.I),
+        ): H += J * multi_kron(*ops)
+
+        return H
+
+if __name__ == "__main__":
+    pass

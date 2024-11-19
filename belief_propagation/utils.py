@@ -19,6 +19,52 @@ def delta_tensor(nLegs:int,chi:int) -> np.ndarray:
     T[idx] = 1
     return T
 
+def multi_kron(*ops):
+    """
+    Tensor product of all the given operators.
+    """
+    res_op = 1
+    for op in ops: res_op = np.kron(op,res_op)
+    return res_op
+
+def proportional(A:np.ndarray,B:np.ndarray,decimals:int=None,verbose:bool=False) -> bool:
+    """
+    Returns `True` if `A` and `B` are proportional to each other.
+    Zero is defined to be proportional to zero.
+
+    This is accurate up to `decimals` decimal places.
+
+    raises `ValueError` if `A` and `B` have different shapes.
+    """
+    if np.isnan(A).any() or np.isnan(B).any():
+        warnings.warn("A or B contain NaN, and I don't know what happes then.")
+
+    if not A.shape == B.shape:
+        raise ValueError("A and B must have the same shapes.")
+
+    if np.allclose(A,0) and np.allclose(B,0):
+        warnings.warn("Assuming zero to be proportional to zero.")
+        return True
+
+    A0 = A.flatten()[np.logical_not(np.isclose(A.flatten(),0))]
+    B0 = B.flatten()[np.logical_not(np.isclose(B.flatten(),0))]
+
+    if not A0.shape == B0.shape:
+        if verbose: print("A and B have different amounts of zeros.")
+        return False
+
+    div = (A0 / B0)
+
+    if decimals != None:
+        div = np.unique(np.round(div,decimals=decimals))
+    else:
+        div = np.unique(div)
+    if len(div) != 1:
+        if verbose: print("There is no unique proportionality factor.")
+        return False
+
+    return np.allclose(div[0] * B,A)
+
 # -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis
 # -------------------------------------------------------------------------------
