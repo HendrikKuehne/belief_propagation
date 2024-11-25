@@ -65,6 +65,8 @@ def proportional(A:np.ndarray,B:np.ndarray,decimals:int=None,verbose:bool=False)
 
     return np.allclose(div[0] * B,A)
 
+def is_hermitian(A): return np.allclose(A,A.T.conj())
+
 # -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis
 # -------------------------------------------------------------------------------
@@ -106,9 +108,12 @@ def network_intact_check(G:nx.MultiGraph) -> bool:
 
 def network_message_check(G:nx.MultiGraph) -> bool:
     """
-    Verifies that there are no double edges and no trace edges in `G`. If messages are present,
+    Checks if the network is intact, and verifies that there are
+    no double edges and no trace edges. If messages are present,
     checks if there is one message in each direction on each edge.
     """
+    if not network_intact_check(G): return False
+
     for node1,node2,key,data in G.edges(keys=True,data=True):
         if node1 == node2:
             warnings.warn(f"Trace edge from {node1} to {node2}.")

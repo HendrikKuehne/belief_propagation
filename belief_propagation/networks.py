@@ -372,7 +372,6 @@ def delta_network(G:nx.MultiGraph,chi:int,) -> None:
     Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
     Each tensor is a delta-tensor, or a unit vector with only one non-zero entry. The graph `G` is manipulated in-place.
     """
-    # random number generation
     for edge in G.edges:
         # each edge has a "legs" key, whose value is itself a dictionary. The keys are the labels of the adjacent nodes, and their values are the indices of the tensor legs this edge connects
         G[edge[0]][edge[1]][0]["legs"] = {}
