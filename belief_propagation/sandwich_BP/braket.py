@@ -11,7 +11,6 @@ algorithm on their graphs.
 import numpy as np
 import networkx as nx
 import cotengra as ctg
-import copy
 import warnings
 import itertools
 
@@ -365,9 +364,14 @@ class Braket:
     @classmethod
     def Overlap(cls,psi1:MPS,psi2:MPS,sanity_check:bool=False):
         """
-        Overlap between <`psi1`,`psi2`> of two MPS. Returns the corresponding `Braket` object.
+        Overlap <`psi1`,`psi2`> of two MPS. Returns the corresponding `Braket` object.
         """
-        return cls(psi1.conj(sanity_check=sanity_check),PEPO.Identity(psi1.G),psi2,sanity_check=sanity_check)
+        return cls(
+            bra = psi1.conj(sanity_check=sanity_check),
+            op = PEPO.Identity(G=psi1.G,D=psi1.D,sanity_check=sanity_check),
+            ket = psi2,
+            sanity_check = sanity_check
+        )
 
     @classmethod
     def Expval(cls,psi:MPS,op:PEPO,sanity_check:bool=False):

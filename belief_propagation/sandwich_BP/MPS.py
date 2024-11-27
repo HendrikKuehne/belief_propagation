@@ -12,12 +12,7 @@ from belief_propagation.utils import network_message_check,crandn
 
 class MPS:
     """
-    Base class for matrix-product states on spin systems with arbitrary geometry.
-    """
-
-    D = 2
-    """
-    Physical dimension; so far, only spin-1/2 is implemented.
+    Base class for matrix-product states with arbitrary geometry.
     """
 
     def intact_check(self) -> bool:
@@ -25,6 +20,7 @@ class MPS:
         Checks if the MPS is intact:
         * Is the underlying network message-ready?
         * Are the physical legs the last dimension in each tensor?
+        * * Do the physical legs have the correct sizes?
         """
         # are all the necessary attributes defined?
         assert hasattr(self,"D")
@@ -35,9 +31,9 @@ class MPS:
             warnings.warn("Network not intact.")
             return False
 
-        # are the physical legs the last dimension in each tensor?
-        for node in self.G.nodes:
-            legs = [leg for leg in range(self.G.nodes[node]["T"].ndim)]
+        # are the physical legs the last dimension in each tensor? Do the tensors have the correct physical dimensions?
+        for node,T in self.G.nodes(data="T"):
+            legs = [leg for leg in range(T.ndim)]
             for node1,node2,key in self.G.edges(node,keys=True):
                 try:
                     if not self.G[node1][node2][key]["trace"]:
@@ -51,8 +47,12 @@ class MPS:
                     warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
                     return False
 
-            if not legs == [self.G.nodes[node]["T"].ndim - 1,]:
+            if not legs == [T.ndim - 1,]:
                 warnings.warn(f"Physical leg is not the last dimension in node {node}.")
+                return False
+
+            if not T.shape[-1] == self.D:
+                warnings.warn(f"Hilbert space at node {node} has wrong size.")
                 return False
 
         return True
@@ -89,7 +89,7 @@ class MPS:
 
     def conj(self,sanity_check:bool=False):
         """
-        Complex conjugate of the MPS: All site tensors are conjugated.
+        bra to this states ket: All site tensors are conjugated.
         """
         if sanity_check: assert self.intact_check()
 
@@ -100,11 +100,11 @@ class MPS:
         return type(self)(G=newG,sanity_check=sanity_check)
 
     @classmethod
-    def init_random(cls,G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,sanity_check:bool=False):
+    def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,sanity_check:bool=False):
         """
-        Initializes a MPS randomly. The virtual bond dimension is `chi`.
-        Any leg ordering in `G` is not incorporated in the MPS that
-        is returned.
+        Initializes a MPS randomly. The virtual bond dimension is `chi`,
+        the physical dimension is `D`. Any leg ordering in `G` is not
+        incorporated in the MPS that is returned.
         """
         # random number generation
         if real:
@@ -118,7 +118,7 @@ class MPS:
 
         for node in G.nodes:
             nLegs = len(G.adj[node])
-            dim = nLegs * [chi] + [cls.D,]
+            dim = nLegs * [chi] + [D,]
             # constructing a new tensor
             T = randn(size = dim) / chi**(3/4)
 
@@ -163,6 +163,9 @@ class MPS:
         """
         # sanity check
         if sanity_check: assert network_message_check(G)
+
+        # inferring physical dimension
+        self.D = tuple(T.shape[-1] for _,T in G.nodes(data="T"))[0]
 
         self.G = G
 

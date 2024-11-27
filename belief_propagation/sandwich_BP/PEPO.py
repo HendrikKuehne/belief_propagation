@@ -36,22 +36,12 @@ class PEPO:
     component.
     """
 
-    X=np.array([[0,1],[1,0]])
-    Y=np.array([[0,-1j],[1j,0]])
-    Z=np.array([[1,0],[0,-1]])
-    I=np.eye(2)
-
-    D = 2
-    """
-    Physical dimension; so far, only spin-1/2 is implemented.
-    """
-
     def intact_check(self) -> bool:
         """
         Checks if the PEPO is intact:
         * Is the underlying network message-ready?
         * Are the physical legs the last two dimensions in each tensor?
-        * Is the hamiltonian composed of the correct operators?
+        * Do the physical legs have the correct sizes?
         * is the information flow in the tree intact?
         """
         # are all the necessary attributes defined?
@@ -67,8 +57,8 @@ class PEPO:
             return False
 
         # are the physical legs the last dimension in each tensor?
-        for node in self.G.nodes:
-            legs = [leg for leg in range(self.G.nodes[node]["T"].ndim)]
+        for node,T in self.G.nodes(data="T"):
+            legs = [leg for leg in range(T.ndim)]
             for node1,node2,key in self.G.edges(node,keys=True):
                 try:
                     if not self.G[node1][node2][key]["trace"]:
@@ -82,22 +72,13 @@ class PEPO:
                     warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
                     return False
 
-            if not legs == [self.G.nodes[node]["T"].ndim - 2,self.G.nodes[node]["T"].ndim - 1]:
+            if not legs == [T.ndim - 2,T.ndim - 1]:
                 warnings.warn(f"Physical legs are not the last two dimensions in node {node}.")
                 return False
 
-        # Hamiltonian composed of pauli operators?
-        for node,T in self.G.nodes(data="T"):
-            for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
-                index = virtual_index + (slice(0,self.D),slice(0,self.D))
-
-                if np.allclose(T[index],0): continue
-
-                closeness = [proportional(T[index],op,10) for op in (self.X,self.Y,self.Z,self.I)]
-
-                if not any(closeness):
-                    warnings.warn(f"Unknown operator in index {virtual_index} at node {node}.")
-                    return False
+            if not (T.shape[-2] == self.D and T.shape[-1] == self.D):
+                warnings.warn(f"Hilbert space at node {node} has wrong size.")
+                return False
 
         # tree traversal correct?
         for node in self.tree.nodes():
@@ -222,7 +203,7 @@ class PEPO:
         # reshaping
         H = np.transpose(H,[2*i for i in range(self.G.number_of_nodes())] + [2*i+1 for i in range(self.G.number_of_nodes())])
 
-        return np.reshape(H,newshape=(2**self.G.number_of_nodes(),2**self.G.number_of_nodes()))
+        return np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
 
     def view_site(self,node:int):
         """
@@ -240,7 +221,7 @@ class PEPO:
             f"legs {legs_out} outgoing" + "\n"
         )
         for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
-            index = virtual_index + (slice(0,2),slice(0,2))
+            index = virtual_index + (slice(0,self.D),slice(0,self.D))
 
             if not np.allclose(self.G.nodes[node]["T"][index],0):
                 print(index[:-2],":\n",self.G.nodes[node]["T"][index],"\n")
@@ -269,6 +250,9 @@ class PEPO:
 
         return newG
 
+    @property
+    def I(self) -> np.ndarray: return np.eye(self.D)
+
     @staticmethod
     def view_tensor(T:np.ndarray):
         """
@@ -293,11 +277,12 @@ class PEPO:
                 print(index[:-2],":\n",T[index],"\n")
 
     @classmethod
-    def Identity(cls,G:nx.MultiGraph,sanity_check:bool=False):
+    def Identity(cls,G:nx.MultiGraph,D:int,sanity_check:bool=False):
         """
         Returns the identity PEPO on graph `G`.
+        Physical dimension `D`.
         """
-        Id = cls()
+        Id = cls(D)
         Id.chi = 1
         Id.G = Id.prepare_graph(G)
 
@@ -309,18 +294,56 @@ class PEPO:
 
         # adding physical dimensions, putting identities in the physical dimensions
         for node in Id.G.nodes():
-            T = np.zeros(shape = tuple(Id.chi for _ in range(len(G.adj[node]))) + (2,2))
-            T[...,:,:] = cls.I
+            T = np.zeros(shape = tuple(Id.chi for _ in range(len(G.adj[node]))) + (Id.D,Id.D))
+            T[...,:,:] = Id.I
             Id.G.nodes[node]["T"] = T
 
         if sanity_check: assert Id.intact_check()
 
         return Id
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self,D:int) -> None:
+        self.D = D
+        return
 
-class TFI(PEPO):
+class PauliPEPO(PEPO):
+    """
+    Tensor product operators on spin systems,
+    composed of Pauli operators.
+    """
+    X=np.array([[0,1],[1,0]])
+    Y=np.array([[0,-1j],[1j,0]])
+    Z=np.array([[1,0],[0,-1]])
+
+    def intact_check(self) -> bool:
+        """
+        Checks if the PEPO is intact:
+        * Calls `super().intact_check()`.
+        * Checks if the hamiltonian is composed of Pauli operators.
+        """
+        if not super().intact_check(): return False
+
+        # Hamiltonian composed of pauli operators?
+        for node,T in self.G.nodes(data="T"):
+            for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
+                index = virtual_index + (slice(0,self.D),slice(0,self.D))
+
+                if np.allclose(T[index],0): continue
+
+                closeness = [proportional(T[index],op,10) for op in (self.X,self.Y,self.Z,self.I)]
+
+                if not any(closeness):
+                    warnings.warn(f"Unknown operator in index {virtual_index} at node {node}.")
+                    return False
+
+        return True
+
+    def __init__(self) -> None:
+        super().__init__(2)
+
+        return
+
+class TFI(PauliPEPO):
     """
     Travsverse Field Ising model.
     """
@@ -477,7 +500,7 @@ class TFI(PEPO):
 
         return H
 
-class Heisenberg(PEPO):
+class Heisenberg(PauliPEPO):
     """
     Heisenberg model with transverse field in x.
     """

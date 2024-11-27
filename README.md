@@ -27,8 +27,8 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 * Optimize exact contraction of tensor networks.
     * Exact contraction using [cotengra](https://github.com/jcmgray/cotengra)? Somehow the [method](https://cotengra.readthedocs.io/en/latest/basics.html#hyperoptimizer) that creates a contraction tree using the `cotengra.HyperOptimizer` object didn't work for me, but [`cotengra.array_contract`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/index.html#cotengra.array_contract) does work.
     * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.[^2]
-    * :white_check_mark: Contraction using `cotengra.einsum` with objectives from [`cotengra.socring`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/scoring/index.html).
-* Come up with a better way to construct neighborhoods; it seems like graphs created using `belief_propagation.graphs.short_loop_graph` still contain many short loops after `bekief_propagation.loopyNBP.construct_neighborhoods` is used to contract neighborhoods.
+    * :white_check_mark: Contraction using `cotengra.einsum` with objectives from [`cotengra.scoring`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/scoring/index.html).
+* Come up with a better way to construct neighborhoods; it seems like graphs created using `belief_propagation.graphs.short_loop_graph` still contain many short loops after `belief_propagation.loopyNBP.construct_neighborhoods` is used to contract neighborhoods.
     * Assume that we construct neighborhoods $N_a^{(r)}$, i.e. neighborhoods that contain loops up to length $r+2$. If the network contains loops that are only a little bit longer than $r+2$, say $r+2+\epsilon$, the neighborhood decomposition transforms these neighborhoods into loops of length $\epsilon$. The neighborhood decomposition (using the heuristic I have implemented) is only to be used if there is a gap in the loop length spectrum.
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
@@ -63,7 +63,7 @@ This will be updated continuously, as questions come to mind.
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
     * :arrow_right: The relative error improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#tn_vs_pq_3x3_baselinepdf)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly? That is the physical argument - in terms of graphs, we are treating many small loops exactly which could otherwise have introduced inaccuracies.
-* Some iterations of the Belief Propagation algorithm take many orders of magnitude longer tha others; do these still converge?
+* Some iterations of the Belief Propagation algorithm take many orders of magnitude longer than others; do these still converge?
 * What happens when we try Christian's idea of Orthogonal Belief Propagation?
     * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of PEPS networks that Arad (2021) introduces?
 
