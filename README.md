@@ -29,7 +29,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
     * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.[^2]
     * :white_check_mark: Contraction using `cotengra.einsum` with objectives from [`cotengra.socring`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/scoring/index.html).
 * Come up with a better way to construct neighborhoods; it seems like graphs created using `belief_propagation.graphs.short_loop_graph` still contain many short loops after `bekief_propagation.loopyNBP.construct_neighborhoods` is used to contract neighborhoods.
-    * Assume that we construct neighborhoods $N_a^{(r)}$, i.e. neighborhoods that contain loops up to length $r+2$. If the network contains loops that are only a little bit longer than $r+2$, say $r+2+\epsilon$, the neighborhood decomposition transforms these neighborhoods into loops of length $\epsilon$. The neighborhhod decomposition (using the heuristic I have implemented) is only to be used if there is a gap in the loop length spectrum.
+    * Assume that we construct neighborhoods $N_a^{(r)}$, i.e. neighborhoods that contain loops up to length $r+2$. If the network contains loops that are only a little bit longer than $r+2$, say $r+2+\epsilon$, the neighborhood decomposition transforms these neighborhoods into loops of length $\epsilon$. The neighborhood decomposition (using the heuristic I have implemented) is only to be used if there is a gap in the loop length spectrum.
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
 
@@ -58,6 +58,7 @@ This will be updated continuously, as questions come to mind.
     * Which part of the algorithm breaks down when moving from trees to loopy graphs? Kirkley et Al claim that the effect of long loops is negligible, how can this be understood in terms of messages and their normalization?
 * Why are long loops negligible?
     * Many runs of the BP algorithm give exact results when only long loops are present, which is what Kirkley et Al claim in their paper; they do not give a source though.
+    * :arrow_right: Loops behave like vector iterations, which is not how Kirkleys algorithm works; it is in fact detrimental to the accuracy. Vector iterations require many iterations, however, and the longer the loop the more iterations one needs to reach vector iteration territory. Long loops will (probably - this is what I expect) introduce larger errors, when one does more iterations in the BP algorithm.
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.

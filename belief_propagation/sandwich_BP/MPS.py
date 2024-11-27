@@ -6,6 +6,7 @@ import numpy as np
 import networkx as nx
 import cotengra as ctg
 import warnings
+import copy
 
 from belief_propagation.utils import network_message_check,crandn
 
@@ -18,6 +19,43 @@ class MPS:
     """
     Physical dimension; so far, only spin-1/2 is implemented.
     """
+
+    def intact_check(self) -> bool:
+        """
+        Checks if the MPS is intact:
+        * Is the underlying network message-ready?
+        * Are the physical legs the last dimension in each tensor?
+        """
+        # are all the necessary attributes defined?
+        assert hasattr(self,"D")
+        assert hasattr(self,"G")
+
+        # is the underlying network message-ready?
+        if not network_message_check(self.G):
+            warnings.warn("Network not intact.")
+            return False
+
+        # are the physical legs the last dimension in each tensor?
+        for node in self.G.nodes:
+            legs = [leg for leg in range(self.G.nodes[node]["T"].ndim)]
+            for node1,node2,key in self.G.edges(node,keys=True):
+                try:
+                    if not self.G[node1][node2][key]["trace"]:
+                        legs.remove(self.G[node1][node2][key]["legs"][node])
+                    else:
+                        # trace edge
+                        i1,i2 = self.G[node1][node2][key]["indices"]
+                        legs.remove(i1)
+                        legs.remove(i2)
+                except ValueError:
+                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                    return False
+
+            if not legs == [self.G.nodes[node]["T"].ndim - 1,]:
+                warnings.warn(f"Physical leg is not the last dimension in node {node}.")
+                return False
+
+        return True
 
     def to_dense(self,sanity_check:bool=False) -> np.ndarray:
         """
@@ -49,49 +87,17 @@ class MPS:
         psi = ctg.einsum(*args,optimize="greedy")
         return psi.flatten()
 
-    def intact_check(self) -> bool:
+    def conj(self,sanity_check:bool=False):
         """
-        Checks if the MPS is intact:
-        * Are the legs in the graph labeled correctly?
+        Complex conjugate of the MPS: All site tensors are conjugated.
         """
-        # are all the necessary attributes defined?
-        assert hasattr(self,"D")
-        assert hasattr(self,"G")
+        if sanity_check: assert self.intact_check()
 
-        # two legs in every edge's legs attribute?
-        for node1,node2,key in self.G.edges(keys=True):
-            if self.G[node1][node2][key]["trace"]:
-                # trace edge
-                if len(self.G[node1][node2][key]["indices"]) != 2:
-                    warnings.warn(f"Wrong number of legs in trace edge ({node1},{node2},{key}).")
-                    return False
-            else:
-                # default edge
-                if len(self.G[node1][node2][key]["legs"].keys()) != 2:
-                    warnings.warn(f"Wrong number of legs in edge ({node1},{node2},{key}).")
-                    return False
+        newG = copy.deepcopy(self.G)
 
-        # correct leg indices around each node?
-        for node in self.G.nodes:
-            legs = [leg for leg in range(self.G.nodes[node]["T"].ndim)]
-            for node1,node2,key in self.G.edges(node,keys=True):
-                try:
-                    if not self.G[node1][node2][key]["trace"]:
-                        legs.remove(self.G[node1][node2][key]["legs"][node])
-                    else:
-                        # trace edge
-                        i1,i2 = self.G[node1][node2][key]["indices"]
-                        legs.remove(i1)
-                        legs.remove(i2)
-                except ValueError:
-                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
-                    return False
+        for node,T in newG.nodes(data="T"): newG.nodes[node]["T"] = T.conj()
 
-            if not legs == [self.G.nodes[node]["T"].ndim - 1,]:
-                warnings.warn(f"Physical leg is not the last dimension in node {node}.")
-                return False
-
-        return True
+        return type(self)(G=newG,sanity_check=sanity_check)
 
     @classmethod
     def init_random(cls,G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,sanity_check:bool=False):

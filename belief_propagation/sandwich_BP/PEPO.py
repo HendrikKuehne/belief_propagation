@@ -35,6 +35,7 @@ class PEPO:
     initial state is the 0th component, and the final state is the last
     component.
     """
+
     X=np.array([[0,1],[1,0]])
     Y=np.array([[0,-1j],[1j,0]])
     Z=np.array([[1,0],[0,-1]])
@@ -44,6 +45,83 @@ class PEPO:
     """
     Physical dimension; so far, only spin-1/2 is implemented.
     """
+
+    def intact_check(self) -> bool:
+        """
+        Checks if the PEPO is intact:
+        * Is the underlying network message-ready?
+        * Are the physical legs the last two dimensions in each tensor?
+        * Is the hamiltonian composed of the correct operators?
+        * is the information flow in the tree intact?
+        """
+        # are all the necessary attributes defined?
+        assert hasattr(self,"D")
+        assert hasattr(self,"chi")
+        assert hasattr(self,"G")
+        assert hasattr(self,"tree")
+        assert hasattr(self,"root")
+
+        # is the underlying network message-ready?
+        if not network_message_check(self.G):
+            warnings.warn("Network not intact.")
+            return False
+
+        # are the physical legs the last dimension in each tensor?
+        for node in self.G.nodes:
+            legs = [leg for leg in range(self.G.nodes[node]["T"].ndim)]
+            for node1,node2,key in self.G.edges(node,keys=True):
+                try:
+                    if not self.G[node1][node2][key]["trace"]:
+                        legs.remove(self.G[node1][node2][key]["legs"][node])
+                    else:
+                        # trace edge
+                        i1,i2 = self.G[node1][node2][key]["indices"]
+                        legs.remove(i1)
+                        legs.remove(i2)
+                except ValueError:
+                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                    return False
+
+            if not legs == [self.G.nodes[node]["T"].ndim - 2,self.G.nodes[node]["T"].ndim - 1]:
+                warnings.warn(f"Physical legs are not the last two dimensions in node {node}.")
+                return False
+
+        # Hamiltonian composed of pauli operators?
+        for node,T in self.G.nodes(data="T"):
+            for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
+                index = virtual_index + (slice(0,self.D),slice(0,self.D))
+
+                if np.allclose(T[index],0): continue
+
+                closeness = [proportional(T[index],op,10) for op in (self.X,self.Y,self.Z,self.I)]
+
+                if not any(closeness):
+                    warnings.warn(f"Unknown operator in index {virtual_index} at node {node}.")
+                    return False
+
+        # tree traversal correct?
+        for node in self.tree.nodes():
+            if (len(self.tree.succ[node]) > 0) and (node != self.root):
+                # node is an intermediate node in the tree
+
+                # checking if the particle state is pased along
+                for parent,child in itertools.product(self.tree.pred[node],self.tree.succ[node]):
+                    index = tuple(
+                        0 if _ in (self.G[node][parent][key]["legs"][node],self.G[node][child][key]["legs"][node])
+                        else -1
+                        for _ in range(self.G.nodes[node]["T"].ndim - 2)
+                    ) + (slice(0,2),slice(0,2))
+                    if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                        warnings.warn(f"Wrong indices for particle state passthrough in node {node}.")
+                        return False
+
+                # checking if the vacuum state is passed along
+                index = tuple(-1 for _ in range(self.G.nodes[node]["T"].ndim - 2)) + (slice(0,2),slice(0,2))
+                if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                    warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.")
+                    return False
+
+        return True
 
     def permute_PEPO(self,T:np.ndarray,node:int) -> np.ndarray:
         """
@@ -145,90 +223,6 @@ class PEPO:
         H = np.transpose(H,[2*i for i in range(self.G.number_of_nodes())] + [2*i+1 for i in range(self.G.number_of_nodes())])
 
         return np.reshape(H,newshape=(2**self.G.number_of_nodes(),2**self.G.number_of_nodes()))
-
-    def intact_check(self) -> bool:
-        """
-        Checks if the PEPO is intact:
-        * Are the legs in the graph labeled correctly?
-        * Is the hamiltonian composed of the correct operators?
-        * is the information flow in the tree intact?
-        """
-        # are all the necessary attributes defined?
-        assert hasattr(self,"D")
-        assert hasattr(self,"chi")
-        assert hasattr(self,"G")
-        assert hasattr(self,"tree")
-        assert hasattr(self,"root")
-
-        # two legs in every edge's legs attribute?
-        for node1,node2,key in self.G.edges(keys=True):
-            if self.G[node1][node2][key]["trace"]:
-                # trace edge
-                if len(self.G[node1][node2][key]["indices"]) != 2:
-                    warnings.warn(f"Wrong number of legs in trace edge ({node1},{node2},{key}).")
-                    return False
-            else:
-                # default edge
-                if len(self.G[node1][node2][key]["legs"].keys()) != 2:
-                    warnings.warn(f"Wrong number of legs in edge ({node1},{node2},{key}).")
-                    return False
-
-        # correct leg indices around each node?
-        for node in self.G.nodes:
-            legs = [leg for leg in range(self.G.nodes[node]["T"].ndim)]
-            for node1,node2,key in self.G.edges(node,keys=True):
-                try:
-                    if not self.G[node1][node2][key]["trace"]:
-                        legs.remove(self.G[node1][node2][key]["legs"][node])
-                    else:
-                        # trace edge
-                        i1,i2 = self.G[node1][node2][key]["indices"]
-                        legs.remove(i1)
-                        legs.remove(i2)
-                except ValueError:
-                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
-                    return False
-
-            if not legs == [self.G.nodes[node]["T"].ndim - 2,self.G.nodes[node]["T"].ndim - 1]:
-                warnings.warn(f"Physical legs are not the last two dimensions in node {node}.")
-                return False
-
-        # Hamiltonian composed of pauli operators?
-        for node,T in self.G.nodes(data="T"):
-            for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
-                index = virtual_index + (slice(0,self.D),slice(0,self.D))
-
-                if np.allclose(T[index],0): continue
-
-                closeness = [proportional(T[index],op,10) for op in (self.X,self.Y,self.Z,self.I)]
-
-                if not any(closeness):
-                    warnings.warn(f"Unknown operator in index {virtual_index} at node {node}.")
-                    return False
-
-        # tree traversal correct?
-        for node in self.tree.nodes():
-            if (len(self.tree.succ[node]) > 0) and (node != self.root):
-                # node is an intermediate node in the tree
-
-                # checking if the particle state is pased along
-                for parent,child in itertools.product(self.tree.pred[node],self.tree.succ[node]):
-                    index = tuple(
-                        0 if _ in (self.G[node][parent][key]["legs"][node],self.G[node][child][key]["legs"][node])
-                        else -1
-                        for _ in range(self.G.nodes[node]["T"].ndim - 2)
-                    ) + (slice(0,2),slice(0,2))
-                    if not np.allclose(self.G.nodes[node]["T"][index],self.I):
-                        warnings.warn(f"Wrong indices for particle state passthrough in node {node}.")
-                        return False
-
-                # checking if the vacuum state is passed along
-                index = tuple(-1 for _ in range(self.G.nodes[node]["T"].ndim - 2)) + (slice(0,2),slice(0,2))
-                if not np.allclose(self.G.nodes[node]["T"][index],self.I):
-                    warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.")
-                    return False
-
-        return True
 
     def view_site(self,node:int):
         """

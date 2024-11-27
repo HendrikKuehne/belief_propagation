@@ -36,5 +36,6 @@ Let's see where this takes me
     - Marek M. Rams, Gabriela Wójtowicz, Aritra Sinha, Juraj Hasik  
       YASTN: Yet another symmetric tensor networks; A Python library for abelian symmetric tensor network calculations  
       [arXiv:2405.12196](https://arxiv.org/abs/2405.12196) / [GitHub](https://github.com/yastn/yastn?tab=readme-ov-file)
+    - [`su2tn`](https://github.com/cmendl/su2tn_playground/tree/main)
 
 [^1]: According to ChatGPT, but I can't verify that so take this with a grain of salt

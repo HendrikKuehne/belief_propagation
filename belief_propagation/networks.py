@@ -142,7 +142,7 @@ def contract_network(G:nx.MultiGraph,sanity_check:bool=False) -> float:
 
     return ctg.einsum(*args,optimize="greedy")
 
-def merge_edges(node1:int,node2:int,G:nx.multigraph,sanity_check:bool=False) -> None:
+def merge_edges(node1:int,node2:int,G:nx.MultiGraph,sanity_check:bool=False) -> None:
     """
     Merges all parallel edges between `node1` and `node2`. `G` is modified in-place.
     """

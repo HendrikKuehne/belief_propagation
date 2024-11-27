@@ -88,9 +88,9 @@ def network_intact_check(G:nx.MultiGraph) -> bool:
                 warnings.warn(f"Wrong number of legs in edge ({node1},{node2},{key}).")
                 return False
 
-    # correct leg indices around each node?
+    # all edges in the graph accounted for?
     for node in G.nodes:
-        legs = [leg for leg in range(len(G.nodes[node]["T"].shape))]
+        legs = [leg for leg in range(len(G.adj[node]))]
         for node1,node2,key in G.edges(node,keys=True):
             try:
                 if not G[node1][node2][key]["trace"]:
@@ -122,12 +122,13 @@ def network_message_check(G:nx.MultiGraph) -> bool:
             warnings.warn(f"Multiple edges connecting {node1} and {node2}.")
             return False
         if "msg" in data.keys():
-            if not node1 in data["msg"].keys() or not node2 in data["msg"].keys():
-                warnings.warn(f"Wrong nodes in msg-value of edge ({node1},{node2}).")
-                return False
-            if len(data["msg"].values()) != 2:
-                warnings.warn(f"Wrong number of messages on edge ({node1},{node2}).")
-                return False
+            if data["msg"] != {}:
+                if not node1 in data["msg"].keys() or not node2 in data["msg"].keys():
+                    warnings.warn(f"Wrong nodes in msg-value of edge ({node1},{node2}).")
+                    return False
+                if len(data["msg"].values()) != 2:
+                    warnings.warn(f"Wrong number of messages on edge ({node1},{node2}).")
+                    return False
 
     return True
 
