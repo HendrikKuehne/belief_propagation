@@ -250,6 +250,21 @@ class PEPO:
 
         return newG
 
+    def legs_dict(self,node,sanity_check:bool=False) -> dict:
+        """
+        Returns the `legs` attributes of the adjacent edges of `node`
+        in a dictionary structure: `legs_dict[neighbor]` is the
+        same as `self.G[node][neighbor][0]["legs"]`.
+        """
+        if sanity_check: assert self.intact_check()
+
+        val = dict()
+
+        for neighbor in self.G.adj[node]:
+            val[neighbor] = self.G[node][neighbor][0]["legs"]
+
+        return val
+
     @property
     def I(self) -> np.ndarray: return np.eye(self.D)
 

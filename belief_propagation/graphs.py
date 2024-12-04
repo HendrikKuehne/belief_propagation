@@ -116,8 +116,12 @@ def short_loop_graph(nNodes:int,D:int,p:float=0,verbose:bool=False) -> nx.MultiG
 def loop_capped_graph(nNodes:int,maxlength:int,p:float=.5,rng:np.random.Generator=None) -> nx.MultiGraph:
     """
     Generates a graph that is globally tree-like. This is achieved by constructing a tree composed of
-    clusters of nodes, where each cluster obeys the cycle maximum length.
+    clusters of nodes, where each cluster obeys the cycle maximum length. The parameter `p`
+    determines cluster connectivity. For `p=1`, clusters are fully connected; for `p=0`, a tree is
+    returned.
     """
+    if p == 0: return tree(nNodes)
+
     # initialization
     if rng is None: rng = np.random.default_rng()
     iNode = 0
@@ -248,28 +252,10 @@ def plot_loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
 if __name__ == "__main__":
     #G = tree(50)
     G = short_loop_graph(30,3,0.6)
-    root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
-    dfs_tree = nx.dfs_tree(G,root)
-    for edge in nx.edge_dfs(G,root):
-        node,successor,key = edge
-        if node != root:
-            print(dfs_tree.pred[node].values)
-        else:
-            print("Root")
-        #if dfs_tree.has_edge(node,successor):
-        #    print(f"Edge ({node},{successor}):")
-        #    print(f"    {successor} contained in the children of {node}?",successor in dfs_tree.succ[node].keys())
-    #for predeccessor, node in nx.dfs_edges(dfs_tree,root):
-    #    print(f"{predeccessor} -> {node}")
-    #    assert predeccessor in dfs_tree.pred[node]
-    #G = global_loop(20,30,6)
-    #G = loop_capped_graph(50,5)
     print("Network created")
 
     # drawing the network
     plt.figure("G")
     nx.draw(G,with_labels=True,font_weight="bold")
-    plt.figure("spanning tree")
-    nx.draw(dfs_tree,with_labels=True,font_weight="bold")
     #plt.show()
     plt.close()

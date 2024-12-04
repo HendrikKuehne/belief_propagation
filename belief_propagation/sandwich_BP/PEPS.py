@@ -10,7 +10,7 @@ import copy
 
 from belief_propagation.utils import network_message_check,crandn
 
-class MPS:
+class PEPS:
     """
     Base class for matrix-product states with arbitrary geometry.
     """
@@ -20,7 +20,7 @@ class MPS:
         Checks if the MPS is intact:
         * Is the underlying network message-ready?
         * Are the physical legs the last dimension in each tensor?
-        * * Do the physical legs have the correct sizes?
+        * Do the physical legs have the correct sizes?
         """
         # are all the necessary attributes defined?
         assert hasattr(self,"D")
@@ -99,6 +99,21 @@ class MPS:
 
         return type(self)(G=newG,sanity_check=sanity_check)
 
+    def legs_dict(self,node,sanity_check:bool=False) -> dict:
+        """
+        Returns the `legs` attributes of the adjacent edges of `node`
+        in a dictionary structure: `legs_dict[neighbor]` is the
+        same as `self.G[node][neighbor][0]["legs"]`.
+        """
+        if sanity_check: assert self.intact_check()
+
+        val = dict()
+
+        for neighbor in self.G.adj[node]:
+            val[neighbor] = self.G[node][neighbor][0]["legs"]
+
+        return val
+
     @classmethod
     def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,sanity_check:bool=False):
         """
@@ -135,11 +150,35 @@ class MPS:
 
         return cls(G,sanity_check=sanity_check)
 
+    @classmethod
+    def Dummy(cls,G:nx.MultiGraph,sanity_check:bool=False):
+        """
+        Returns a dummy PEPS on graph `G` with physical dimension one.
+        """
+        G = cls.prepare_graph(G=G,keep_legs=True)
+        for node in G.nodes:
+            G.nodes[node]["T"] = np.ones(shape = [1 for _ in range(len(G.adj[node])+1)])
+
+        return cls(G=G,sanity_check=sanity_check)
+
+    @classmethod
+    def init_from_TN(cls,G:nx.MultiGraph,sanity_check:bool=False):
+        """
+        Initialises a PEPS from a TN by appending dummy physical dimensions
+        to the site tensors.
+        """
+        if sanity_check: assert network_message_check(G)
+
+        # appending a dummy physical dimension with size one to the tensors in G
+        for node in G.nodes:
+            G.nodes[node]["T"] = np.expand_dims(G.nodes[node]["T"],-1)
+
+        return cls(G=G,sanity_check=sanity_check)
+
     @staticmethod
     def prepare_graph(G:nx.MultiGraph,keep_legs:bool=False,keep_size:bool=False) -> nx.MultiGraph:
         """
         Creates a shallow copy of G, and adds the keys `legs`, `trace` and `indices` to the edges.
-        The `size` key is retained, if present.
 
         To be used in `__init__` of subclasses of `PEPO`: `G` is the graph from which
         the operator inherits it's underlying graph.
