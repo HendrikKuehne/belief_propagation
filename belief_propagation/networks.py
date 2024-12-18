@@ -286,10 +286,11 @@ def feynman_cut(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> 
 #                   Network creation
 # -------------------------------------------------------------------------------
 
-def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False):
+def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False,tensors:bool=True) -> dict:
     """
     Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
-    The graph `G` is manipulated in-place.
+    The graph `G` is manipulated in-place. Tensors are only added if `tensors=True` (default: `True`).
+    Returns the tensors in a dictionary where the nodes are keys, and the tensors are tbe values.
     """
     # random number generation
     if real:
@@ -305,9 +306,15 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
         # each edge has an "indices" key, which holds the legs that the adjacent tensors are summed over as a set (only used for edges that represent a trace)
         G[edge[0]][edge[1]][0]["indices"] = None
 
-    tensors = {}
+    tensor_list = {}
 
     for node in G.nodes:
+        # adding to the adjacent edges which index they correspond to
+        for i,neighbor in enumerate(G.adj[node]):
+            G[node][neighbor][0]["legs"][node] = i
+
+        if not tensors: continue
+
         nLegs = len(G.adj[node])
         dim = nLegs * [chi]
         # constructing a new tensor
@@ -322,22 +329,18 @@ def construct_network(G:nx.MultiGraph,chi:int,rng:np.random.Generator=np.random.
             ).reshape(dim) / chi**(3/4)
 
             # saving the physical tensor
-            tensors[node] = s
+            tensor_list[node] = s
 
         else:
             T = randn(size = dim) / chi**(3/4)
 
             # saving the physical tensor
-            tensors[node] = T
+            tensor_list[node] = T
 
         # adding the tensor to this node
         G.nodes[node]["T"] = T
 
-        # adding to the adjacent edges which index they correspond to
-        for i,neighbor in enumerate(G.adj[node]):
-            G[node][neighbor][0]["legs"][node] = i
-
-    return tensors
+    return tensor_list
 
 def construct_initial_messages(G:nx.MultiGraph,normalize:bool=True,sanity_check:bool=False) -> None:
     """

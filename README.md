@@ -25,9 +25,10 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 * Improve contraction accuracy by treating short loops using Kirkley and long loops using Feynman Contraction.[^1]
     * :white_check_mark: Maybe contract small neighborhoods directly and use Feynman contraction to treat edges with large bond dimensions?
 * Optimize exact contraction of tensor networks.
-    * Exact contraction using [cotengra](https://github.com/jcmgray/cotengra)? Somehow the [method](https://cotengra.readthedocs.io/en/latest/basics.html#hyperoptimizer) that creates a contraction tree using the `cotengra.HyperOptimizer` object didn't work for me, but [`cotengra.array_contract`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/index.html#cotengra.array_contract) does work.
+    * :white_check_mark: Exact contraction using a  `cotengra.HyperOptimizer` object
+      * Implemented in `belief_proagation.sandwich_BP.braket.Braket.__contract_ctg_hyperopt()`, but the overhead is really big; I only use this when intermediate tensors might become too big.
     * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.[^2]
-    * :white_check_mark: Contraction using `cotengra.einsum` with objectives from [`cotengra.scoring`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/scoring/index.html).
+    * :white_check_mark: Contraction using `cotengra.einsum` with objectives from [`cotengra.scoring`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/scoring/index.html), or [`cotengra.array_contract`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/index.html#cotengra.array_contract).
 * Come up with a better way to construct neighborhoods; it seems like graphs created using `belief_propagation.graphs.short_loop_graph` still contain many short loops after `belief_propagation.loopyNBP.construct_neighborhoods` is used to contract neighborhoods.
     * Assume that we construct neighborhoods $N_a^{(r)}$, i.e. neighborhoods that contain loops up to length $r+2$. If the network contains loops that are only a little bit longer than $r+2$, say $r+2+\epsilon$, the neighborhood decomposition transforms these neighborhoods into loops of length $\epsilon$. The neighborhood decomposition (using the heuristic I have implemented) is only to be used if there is a gap in the loop length spectrum.
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.

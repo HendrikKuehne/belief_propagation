@@ -191,22 +191,58 @@ def global_loop(global_cycle_length:int,nNodes:int,maxlength:int,p:float=.5,rng:
     return G.subgraph(largest_cc).copy()
     # we need to copy because this removes the freeze of the subgraph
 
-def tree(nNodes:int) -> nx.MultiGraph:
+def tree(nNodes:int,rng:np.random.Generator=None) -> nx.MultiGraph:
     """
     Generates a tree by appending nodes at random to the tree.
     """
+    if rng is None: rng = np.random.default_rng()
+
     not_connected = [i for i in range(1,nNodes)]
     connected = [0]
     G = nx.MultiGraph()
     G.add_node(0)
 
     while len(not_connected) > 0:
-        node = np.random.choice(not_connected)
-        neighbor = np.random.choice(connected)
+        node = rng.choice(not_connected)
+        neighbor = rng.choice(connected)
         G.add_edge(node,neighbor)
         connected += [node,]
         not_connected.remove(node)
 
+    return G
+
+def heavyhex(m:int,n:int) -> nx.MultiGraph:
+    """
+    Heavy-hex configuration, as defined in [Phys. Rev. X 10, 011022 (2020)](https://doi.org/10.1103/PhysRevX.10.011022).
+    """
+    G = nx.hexagonal_lattice_graph(m=m,n=n,create_using=nx.MultiGraph)
+    N = G.number_of_nodes()
+
+    # re-labeling nodes
+    mapping = {label:i for i,label in enumerate(G.nodes())}
+    G = nx.relabel_nodes(G,mapping)
+
+    edges_to_add = ()
+    edges_to_remove = ()
+    # adding qubits to the edges
+    for node1,node2 in G.edges():
+        edges_to_add += ((node1,N),(N,node2))
+        edges_to_remove += ((node1,node2),)
+        N += 1
+    G.add_edges_from(edges_to_add)
+    G.remove_edges_from(edges_to_remove)
+
+    return G
+
+def line(N:int) -> nx.MultiGraph:
+    """Exactly what you think it is."""
+    G = nx.MultiGraph()
+    if N == 0: return G
+    if N == 1:
+        G.add_node(0)
+        return G
+
+    G.add_edges_from(tuple((i,i+1) for i in range(N-1)))
     return G
 
 # -------------------------------------------------------------------------------
@@ -250,12 +286,14 @@ def plot_loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
     return plt.gcf()
 
 if __name__ == "__main__":
-    #G = tree(50)
-    G = short_loop_graph(30,3,0.6)
+    G = tree(10)
+    G = line(10)
+    #G = short_loop_graph(30,3,0.6)
+    #G = heavyhex(m=3,n=2)
     print("Network created")
 
     # drawing the network
     plt.figure("G")
     nx.draw(G,with_labels=True,font_weight="bold")
-    #plt.show()
+    plt.show()
     plt.close()

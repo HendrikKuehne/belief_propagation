@@ -65,7 +65,22 @@ def proportional(A:np.ndarray,B:np.ndarray,decimals:int=None,verbose:bool=False)
 
     return np.allclose(div[0] * B,A)
 
-def is_hermitian(A): return np.allclose(A,A.T.conj())
+def is_hermitian(A,threshold:float=1e-8,verbose:bool=False):
+    if np.allclose(A,A.T.conj(),atol=threshold):
+        return True
+    else:
+        if verbose:
+            diff = np.linalg.norm(A - A.T.conj())
+            warnings.warn(f"Difference from hermiticity: {diff:.5e}.")
+        return False
+
+def rel_err(ref:float,approx:float) -> float:
+    """
+    Relative error `||ref - approx|| / ||ref||`. For vectors,
+    euclidean distance is used. For matrices, the Frobenius
+    norm is used.
+    """
+    return np.linalg.norm(ref - approx) / np.linalg.norm(ref)
 
 # -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis

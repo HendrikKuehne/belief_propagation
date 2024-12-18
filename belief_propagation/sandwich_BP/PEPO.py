@@ -8,7 +8,7 @@ import cotengra as ctg
 import warnings
 import itertools
 
-from belief_propagation.utils import network_message_check,multi_kron,proportional
+from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian
 
 class PEPO:
     """
@@ -40,6 +40,7 @@ class PEPO:
         """
         Checks if the PEPO is intact:
         * Is the underlying network message-ready?
+        * Is the size of every edge saved?
         * Are the physical legs the last two dimensions in each tensor?
         * Do the physical legs have the correct sizes?
         * is the information flow in the tree intact?
@@ -55,6 +56,15 @@ class PEPO:
         if not network_message_check(self.G):
             warnings.warn("Network not intact.")
             return False
+
+        # size attribute given on every edge?
+        for node1,node2,data in self.G.edges(data=True):
+            if not "size" in data.keys():
+                warnings.warn(f"No size saved in edge ({node1},{node2}).")
+                return False
+            if data["size"] != self.chi:
+                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
+                return False
 
         # are the physical legs the last dimension in each tensor?
         for node,T in self.G.nodes(data="T"):
@@ -193,7 +203,7 @@ class PEPO:
         # extracting the einsum arguments
         for node,T in self.G.nodes(data="T"):
             args += (T,)
-            legs = [None for i in range(T.ndim-2)] + [N,N+1] # last two indices are the physical legs
+            legs = [None for _ in range(T.ndim-2)] + [N,N+1] # last two indices are the physical legs
             for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
                 legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
             args += (tuple(legs),)
@@ -202,8 +212,11 @@ class PEPO:
         H = ctg.einsum(*args,optimize="greedy")
         # reshaping
         H = np.transpose(H,[2*i for i in range(self.G.number_of_nodes())] + [2*i+1 for i in range(self.G.number_of_nodes())])
+        H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
 
-        return np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+        if sanity_check: assert is_hermitian(H)
+
+        return H
 
     def view_site(self,node:int):
         """
@@ -258,15 +271,17 @@ class PEPO:
         """
         if sanity_check: assert self.intact_check()
 
-        val = dict()
+        out = dict()
 
         for neighbor in self.G.adj[node]:
-            val[neighbor] = self.G[node][neighbor][0]["legs"]
+            out[neighbor] = self.G[node][neighbor][0]["legs"]
 
-        return val
+        return out
 
     @property
-    def I(self) -> np.ndarray: return np.eye(self.D)
+    def I(self) -> np.ndarray:
+        """Identity matrix with the respective dimensions."""
+        return np.eye(self.D)
 
     @staticmethod
     def view_tensor(T:np.ndarray):
@@ -319,6 +334,15 @@ class PEPO:
 
     def __init__(self,D:int) -> None:
         self.D = D
+        """Physical dimension."""
+        self.G:nx.MultiGraph
+        self.tree:nx.DiGraph
+        """Spanning tree of the graph."""
+        self.root:int
+        """Root node of the spanning tree."""
+        self.chi:int
+        """Virtual bond dimension."""
+
         return
 
 class PauliPEPO(PEPO):
@@ -327,8 +351,11 @@ class PauliPEPO(PEPO):
     composed of Pauli operators.
     """
     X=np.array([[0,1],[1,0]])
+    """Pauli $X$-matrix."""
     Y=np.array([[0,-1j],[1j,0]])
+    """Pauli $Y$-matrix."""
     Z=np.array([[1,0],[0,-1]])
+    """Pauli $Z$-matrix."""
 
     def intact_check(self) -> bool:
         """
@@ -403,7 +430,7 @@ class TFI(PauliPEPO):
             T[index] = self.I
 
             # transverse field
-            index = (0,) + tuple(self.chi - 1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
+            index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
             T[index] = h * self.X
 
             return T
@@ -431,7 +458,7 @@ class TFI(PauliPEPO):
             T = ising_PEPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,h=h)
 
             if node == self.root:
-                # root node; we need to put the (incoming) boundary leg at the last place within the virtual dimensions
+                # root node; we need to put the (incoming) boundary leg between the virtual dimensions and the physical dimensions
                 T = np.moveaxis(T,0,-3)
 
             # re-shaping PEPO tensor to match the graph leg ordering
@@ -483,7 +510,7 @@ class TFI(PauliPEPO):
         return
 
     # --------------------------------------------------------------------------------------------------------------------------------------------------------------
-    #                   dummy test cases, each belonging to dummynet<i> from belief_propagation.networks
+    #                   dummy test cases
     # --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     @staticmethod
@@ -495,23 +522,45 @@ class TFI(PauliPEPO):
              |    |
              |    |
         0 -- 1 -- 2 -- 3
+
+        Notice that this is the geometry of `belief_propagation.networks.dummynet1`.
         """
         N = 6
         H = np.zeros(shape=(2**N,2**N))
+        I = np.eye(2)
 
         # transverse field
         for i in range(N):
-            ops = tuple(PEPO.X if _ == i else PEPO.I for _ in range(N))
+            ops = tuple(PauliPEPO.X if _ == i else I for _ in range(N))
             H += h * multi_kron(*ops)
 
         # two-body terms
         for ops in (
-            (PEPO.I,PEPO.I,PEPO.I,PEPO.I,PEPO.Z,PEPO.Z),
-            (PEPO.I,PEPO.I,PEPO.I,PEPO.Z,PEPO.Z,PEPO.I),
-            (PEPO.I,PEPO.I,PEPO.Z,PEPO.Z,PEPO.I,PEPO.I),
-            (PEPO.I,PEPO.Z,PEPO.I,PEPO.I,PEPO.Z,PEPO.I),
-            (PEPO.Z,PEPO.I,PEPO.I,PEPO.Z,PEPO.I,PEPO.I),
+            (I,I,I,I,PauliPEPO.Z,PauliPEPO.Z),
+            (I,I,I,PauliPEPO.Z,PauliPEPO.Z,I),
+            (I,I,PauliPEPO.Z,PauliPEPO.Z,I,I),
+            (I,PauliPEPO.Z,I,I,PauliPEPO.Z,I),
+            (PauliPEPO.Z,I,I,PauliPEPO.Z,I,I),
         ): H += J * multi_kron(*ops)
+
+        return H
+
+    @staticmethod
+    def line(N:int,J:float=1,h:float=0) -> np.ndarray:
+        """TFI mddel in one dimension, on `N` spins."""
+        if N == 1: return h * PauliPEPO.X
+
+        H = np.zeros(shape=(2**N,2**N))
+        I = np.eye(2)
+
+        # coupling terms
+        for i in range(N-1):
+            ops = tuple(PauliPEPO.Z if _ in (i,i+1) else I for _ in range(N))
+            H += J * multi_kron(*ops)
+        # transverse field
+        for i in range(N):
+            ops = tuple(PauliPEPO.X if _ == i else I for _ in range(N))
+            H += h * multi_kron(*ops)
 
         return H
 

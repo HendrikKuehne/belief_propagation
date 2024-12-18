@@ -19,6 +19,7 @@ class PEPS:
         """
         Checks if the MPS is intact:
         * Is the underlying network message-ready?
+        * Is the size of every edge saved?
         * Are the physical legs the last dimension in each tensor?
         * Do the physical legs have the correct sizes?
         """
@@ -30,6 +31,15 @@ class PEPS:
         if not network_message_check(self.G):
             warnings.warn("Network not intact.")
             return False
+
+        # size attribute given on every edge?
+        for node1,node2,data in self.G.edges(data=True):
+            if not "size" in data.keys():
+                warnings.warn(f"No size saved in edge ({node1},{node2}).")
+                return False
+            if data["size"] != self.G.nodes[node1]["T"].shape[data["legs"][node1]] or data["size"] != self.G.nodes[node2]["T"].shape[data["legs"][node2]]:
+                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
+                return False
 
         # are the physical legs the last dimension in each tensor? Do the tensors have the correct physical dimensions?
         for node,T in self.G.nodes(data="T"):
@@ -51,6 +61,7 @@ class PEPS:
                 warnings.warn(f"Physical leg is not the last dimension in node {node}.")
                 return False
 
+            # correct size of physical leg?
             if not T.shape[-1] == self.D:
                 warnings.warn(f"Hilbert space at node {node} has wrong size.")
                 return False
@@ -89,7 +100,7 @@ class PEPS:
 
     def conj(self,sanity_check:bool=False):
         """
-        bra to this states ket: All site tensors are conjugated.
+        bra to this state's ket: All site tensors are conjugated.
         """
         if sanity_check: assert self.intact_check()
 
@@ -114,8 +125,18 @@ class PEPS:
 
         return val
 
+    def multiply(self,x:float,sanity_check:bool=False) -> None:
+        """
+        Multiplies all tensors in the PEPS by `x`.
+        """
+        if sanity_check: assert self.intact_check()
+
+        for node in self.G.nodes(): self.G.nodes[node]["T"] *= x
+
+        return
+
     @classmethod
-    def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=True,sanity_check:bool=False):
+    def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=False,sanity_check:bool=False):
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
         the physical dimension is `D`. Any leg ordering in `G` is not
@@ -151,27 +172,34 @@ class PEPS:
         return cls(G,sanity_check=sanity_check)
 
     @classmethod
+    def init_from_TN(cls,G:nx.MultiGraph,sanity_check:bool=False):
+        """
+        Initialises a PEPS from a TN by appending dummy physical dimensions
+        of size one to the site tensors.
+        """
+        if sanity_check: assert network_message_check(G)
+
+        newG = cls.prepare_graph(G,keep_legs=True)
+        # appending a dummy physical dimension with size one to the tensors in G
+        for node in G.nodes:
+            newG.nodes[node]["T"] = np.expand_dims(G.nodes[node]["T"],-1)
+
+        for node1,node2 in G.edges(): newG[node1][node2][0]["size"] = newG.nodes[node1]["T"].shape[G[node1][node2][0]["legs"][node1]]
+
+        return cls(G=newG,sanity_check=sanity_check)
+
+    @classmethod
     def Dummy(cls,G:nx.MultiGraph,sanity_check:bool=False):
         """
         Returns a dummy PEPS on graph `G` with physical dimension one.
         """
         G = cls.prepare_graph(G=G,keep_legs=True)
+        # adding tensors
         for node in G.nodes:
             G.nodes[node]["T"] = np.ones(shape = [1 for _ in range(len(G.adj[node])+1)])
 
-        return cls(G=G,sanity_check=sanity_check)
-
-    @classmethod
-    def init_from_TN(cls,G:nx.MultiGraph,sanity_check:bool=False):
-        """
-        Initialises a PEPS from a TN by appending dummy physical dimensions
-        to the site tensors.
-        """
-        if sanity_check: assert network_message_check(G)
-
-        # appending a dummy physical dimension with size one to the tensors in G
-        for node in G.nodes:
-            G.nodes[node]["T"] = np.expand_dims(G.nodes[node]["T"],-1)
+        # adding sizes to edges
+        for node1,node2 in G.edges(): G[node1][node2][0]["size"] = 1
 
         return cls(G=G,sanity_check=sanity_check)
 
@@ -205,6 +233,7 @@ class PEPS:
 
         # inferring physical dimension
         self.D = tuple(T.shape[-1] for _,T in G.nodes(data="T"))[0]
+        """Physical dimension."""
 
         self.G = G
 
