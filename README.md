@@ -76,26 +76,49 @@ This will be updated continuously, as questions come to mind.
 
 ## References
 
-- Tensor networks & Belief Propagation
-    - P. Hack, C. Mendl, A. Paler  
+* Tensor networks, many-body physics and variational methods, Belief Propagation
+    * P. Hack, C. Mendl, A. Paler  
       Belief Propagation for general graphical models with loops  
-      [lrz Sync+Share](https://syncandshare.lrz.de/getlink/fiS4icbVJ6EcuBmzesA7DU/tn_bp_draft.pdf) (Work in Progress)
-    - R. Alkabetz, I. Arad  
+      [arXiv:2411.04957](http://arxiv.org/abs/2411.04957) (Work in Progress)
+    * R. Alkabetz, I. Arad  
       Tensor networks contraction and the belief propagation algorithm  
       [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073) ([arXiv:2008.04433](https://arxiv.org/abs/2008.04433))
-    - Alec Kirkley, George T. Cantwell, M. E. J. Newman  
+    * Alec Kirkley, George T. Cantwell, M. E. J. Newman  
       Belief propagation for networks with loops  
       [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211) ([arXiv:2009.12246](https://arxiv.org/abs/2009.12246))
-    - Chu Guo, Dario Poletti, Itai Arad  
+    * Chu Guo, Dario Poletti, Itai Arad  
       Block belief propagation algorithm for two-dimensional tensor networks  
       [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111) ([arXiv:2301.05844](https://arxiv.org/abs/2301.05844))
-    - Yijia Wang, Yuwen Ebony Zhang, Feng Pan, Pan Zhang  
+    * Yijia Wang, Yuwen Ebony Zhang, Feng Pan, Pan Zhang  
       Tensor network message passing  
       [Phys. Rev. Lett. 132, 117401 (2024)](https://doi.org/10.1103/PhysRevLett.132.117401) ([arXiv:2305.01874](https://arxiv.org/abs/2305.01874))
-- Contraction of large tensor networks
-    - Johnnie J., G. Kin-Lic Chan  
+    * Subhayan Sahu, Brian Swingle  
+      Efficient tensor network simulation of quantum many-body physics on sparse graphs  
+      [arXiv:2206.04701](https://arxiv.org/abs/2206.04701)
+    * Joseph Tindall, Matthew T. Fishman  
+      Gauging tensor networks with belief propagation  
+      [arXiv:2306.17837](https://arxiv.org/abs/2306.17837)
+    * Nicola Pancotti, Johnnie Gray  
+      One-step replica symmetry breaking in the language of tensor networks  
+      [arxiv:2306.15004](https://arxiv.org/abs/2306.15004)
+    * David Tellenbach  
+      Canonicalization of Loop-free Tensor Networks  
+      [MediaTUM](https://mediatum.ub.tum.de/1654468?style=full_text)
+* Contraction of large tensor networks
+    * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  
       [Phys. Rev. X 14, 011009 (24)](https://doi.org/10.1103/PhysRevX.14.011009) ([arXiv:2206.07044](https://arxiv.org/abs/2206.07044))
-    - J. Gray, S. Kourtis  
+    * J. Gray, S. Kourtis  
       Hyper-optimized tensor network contraction  
-      [Quantum 5, 410 (2021)](https://doi.org/10.22331/q-2021-03-15-410) ([arXiv:2002.01935v4](https://arxiv.org/abs/2002.01935v4))
+      [Quantum 5, 410 (2021)](https://doi.org/10.22331/q-2021-03-15-410) ([arXiv:2002.01935](https://arxiv.org/abs/2002.01935))
+* IBM kicked Ising experiment
+  * Youngseok Kim, Andrew Eddins, Sajant Anand, Ken Xuan Wei, Ewout van den Berg, Sami Rosenblatt, Hasan Nayfeh, Yantao Wu, Michael Zaletel, Kristan Temme1, Abhinav Kandala 
+    Evidence for the utility of quantum computing before fault tolerance  
+    [Nature 618, 500 - 505 (2023)](https://doi.org/10.1038/s41586-023-06096-3)
+  * Joseph Tindall, Matthew Fishman, E. Miles Stoudenmire, Dries Sels  
+    Efficient Tensor Network Simulation of IBM’s Eagle Kicked Ising Experiment  
+    [PRX Quantum 5, 010308 (2024)](https://doi.org/10.1103/PRXQuantum.5.010308) ([arXiv:2306.14887](https://arxiv.org/abs/2306.14887))
+  * Tomislav Begusic, Johnnie Gray, Garnet Kin-Lic Chan  
+    Fast and converged classical simulations of evidence for the utility of quantum
+computing before fault tolerance  
+    [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321) ([arXiv:2308.05077](https://arxiv.org/abs/2308.05077))

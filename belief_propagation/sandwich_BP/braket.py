@@ -16,6 +16,7 @@ import itertools
 import ray
 import tqdm
 import scipy.linalg as scialg
+import scipy.stats as scistats
 
 from belief_propagation.utils import network_message_check,crandn,is_hermitian,rel_err
 from belief_propagation.sandwich_BP.PEPO import PEPO
@@ -140,17 +141,35 @@ class Braket:
         else:
             randn = lambda size: crandn(size,rng)
 
+        def get_new_message(bra_size:int,op_size:int,ket_size:int) -> np.ndarray:
+            """
+            Generates a new message with shape `[bra_size,op_size,ket_size]`.
+
+            If `bra_size=ket_size`, then `msg[:,i,:]` is, for all `i`,
+            positive-semidefinite and hermitian (when interpreted as a matrix).
+            """
+            if bra_size == ket_size:
+                msg = np.zeros(shape=(bra_size,op_size,ket_size)) if real else np.zeros(shape=(bra_size,op_size,ket_size)) + 0j
+                for i in range(op_size):
+                    A = randn(size=(bra_size,bra_size))
+                    msg[:,i,:] = A.T.conj() @ A
+                
+                return msg
+            else:
+                # TODO psd-analogous matrices using scipy.stats.ortho_group / scipy.stats.unitary_group?
+                return randn(size=(bra_size,op_size,ket_size))
+
         for node1,node2 in self.G.edges():
             for sending_node,receiving_node in itertools.permutations((node1,node2)):
                 # messages in both directions
                 if len(self.G.adj[sending_node]) > 1:
-                    # ket and bra leg indices
+                    # ket and bra leg indices, and sizes
                     iBra = self.bra.G[sending_node][receiving_node][0]["legs"][receiving_node]
                     iKet = self.ket.G[sending_node][receiving_node][0]["legs"][receiving_node]
                     bra_size = self.bra.G.nodes[receiving_node]["T"].shape[iBra]
                     ket_size = self.ket.G.nodes[receiving_node]["T"].shape[iKet]
                     # calculating the message
-                    msg = randn((bra_size,self.op.chi,ket_size))
+                    msg = get_new_message(bra_size,self.op.chi,ket_size)
                 else:
                     # sending node is leaf node
                     msg = ctg.einsum(
@@ -309,24 +328,42 @@ class Braket:
 
     def __normalize_messages(self,sanity_check:bool=False) -> None:
         """
-        Normalize messages, such that the inner product between messages
-        traveling along the same edge, but in opposite directions, is one.
-        Saves the inner product on the edge under the key `cntr`.
+        Normalize messages, such that at each site, contraction
+        of a tensor with it's inbound messages yields the
+        complete network value.
+
+        When `self.BP` is executed with `normalize=False`, this
+        is already the case. This function is thus only necessary
+        when messages were obtained with `normalize=True`.
         """
         # sanity check
         if sanity_check: assert self.intact_check()
 
-        for node1,node2 in self.G.edges():
-            norm = ctg.einsum("ijk,ijk->",self.G[node1][node2][0]["msg"][node1],self.G[node1][node2][0]["msg"][node2])
-            self.G[node1][node2][0]["msg"][node1] /= np.sqrt(np.abs(norm))
-            self.G[node1][node2][0]["msg"][node2] /= np.sqrt(np.abs(norm))
-            self.G[node1][node2][0]["cntr"] = norm
+        # contract messages into tensors first to obtain tensor values, if necessary
+        if not "cntr" in self.G.nodes[self.op.root].keys(): self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
+
+        for node in self.G.nodes():
+            norm = np.real_if_close((self.cntr / self.G.nodes[node]["cntr"]) ** (1 / len(self.G.adj[node])))
+
+            for neighbor in self.G.adj[node]: self.G[node][neighbor][0]["msg"][node] *= norm
+
+        return
+    
+    def __contract_edge_opposite_messages(self,sanity_check:bool=False) -> None:
+        """
+        Contracts the messages travelling in each direction of an
+        edge, on every edge. Value is saved under the key `cntr`.
+        """
+        # sanity check
+        if sanity_check: assert self.intact_check()
+
+        for node1,node2 in self.G.edges(): self.G[node1][node2][0]["cntr"] = ctg.einsum("ijk,ijk->",self.G[node1][node2][0]["msg"][node1],self.G[node1][node2][0]["msg"][node2])
 
         return
 
-    def __contract_tensors_messages(self,sanity_check:bool=False) -> None:
+    def __contract_tensors_inbound_messages(self,sanity_check:bool=False) -> None:
         """
-        Contracts all messages into the respective nodes, and adds the value to each node.
+        Contracts all messages into the respective nodes, and saves the value in each node.
         """
         # sanity check
         if sanity_check: assert self.intact_check()
@@ -373,7 +410,11 @@ class Braket:
         this function becomes Belief Propagation on trees.
         * `threshold`: When to abort the BP iteration.
 
-        Writes the network contraction value to `self.cntr`.
+        Writes the network contraction value to `self.cntr`. Converged messages are normalized
+        such that the contraction of a tensor with it's inbound messages gives the complete network
+        value, at every site.
+
+        If the algorithm converges, the flag `self.converged` is set to `True`.
         """
         # sanity check
         if sanity_check: assert self.intact_check()
@@ -412,17 +453,18 @@ class Braket:
                 self.converged = True
                 break
 
-        # contract tensors and messages
-        self.__contract_tensors_messages(sanity_check=sanity_check)
-
-        # opposing message normalization
-        if normalize: self.__normalize_messages(sanity_check=sanity_check)
+        # contract tensors and messages, opposite messages
+        self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
+        self.__contract_edge_opposite_messages(sanity_check=sanity_check)
 
         if normalize:
             # the network value is the product of all node values, divided by all edge values
             self.cntr = 1
             for node,node_cntr in self.G.nodes(data="cntr"): self.cntr *= node_cntr
             for node1,node2,edge_cntr in self.G.edges(data="cntr"): self.cntr /= edge_cntr
+
+            # normalizing messages
+            self.__normalize_messages(sanity_check=sanity_check)
         else:
             # each node carries the network value
             self.cntr = self.G.nodes[self.op.root]["cntr"]
@@ -726,7 +768,7 @@ class DMRG:
 
     def local_H(self,node:int,threshold:float=1e-6,sanity_check:bool=False) -> np.ndarray:
         """
-        Hamiltonian at `node`, by taking messages to be environments.
+        Hamiltonian at `node`, by taking inbound messages to be environments.
         `threshold` is the absolute allowed error in the hermiticity of the
         hamiltonian obtained (checked if `sanity_check=True`).
         """
@@ -763,17 +805,17 @@ class DMRG:
             tuple(nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs,3*nLegs+1),
         )
 
-        Hloc = np.einsum(*args,out_legs,optimize=True)
-        Hloc = np.reshape(Hloc,(vir_dim * self.expval.D,vir_dim * self.expval.D))
+        H = np.einsum(*args,out_legs,optimize=True)
+        H = np.reshape(H,(vir_dim * self.expval.D,vir_dim * self.expval.D))
 
-        if sanity_check: assert is_hermitian(Hloc,threshold=threshold)
+        if sanity_check: assert is_hermitian(H,threshold=threshold)
 
-        return Hloc
+        return H
 
     def local_env(self,node:int,threshold:float=1e-6,sanity_check:bool=False) -> np.ndarray:
         """
         Environment at node. Calculated from `self.overlap`. This amounts to
-        stacking and re-shaping messages, that are inflowing to `node`.
+        stacking and re-shaping messages, that are inbound to `node`.
         `threshold` is the absolute allowed error in the hermiticity of the
         resulting matrix (checked if `sanity_check=True`).
         """
@@ -790,12 +832,14 @@ class DMRG:
         vir_dim = 1
 
         for neighbor in self.overlap.G.adj[node]:
+            if not self.overlap.G[node][neighbor][0]["msg"][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
+
             # collecting einsum arguments
             args += (
-                self.overlap.G[node][neighbor][0]["msg"][node],
+                self.overlap.G[node][neighbor][0]["msg"][node][:,0,:],
                 (
                     self.overlap.bra.G[node][neighbor][0]["legs"][node], # bra leg
-                    nLegs + self.overlap.op.G[node][neighbor][0]["legs"][node], # operator leg (overlap inserts an identity); is traced out
+                    #nLegs + self.overlap.op.G[node][neighbor][0]["legs"][node], # operator leg (overlap inserts an identity); is traced out in np.einsum
                     2 * nLegs + self.overlap.ket.G[node][neighbor][0]["legs"][node], # ket leg
                 )
             )
@@ -813,7 +857,7 @@ class DMRG:
 
         return N
 
-    def sweep(self,sanity_check:bool=False,**kwargs) -> float:
+    def sweep(self,sanity_check:bool=False,normalize:bool=True,**kwargs) -> float:
         """
         Local update at all sites. `kwargs` are passed to `Braket.BP`.
         Returns the change in energy after the sweep.
@@ -825,8 +869,8 @@ class DMRG:
         if sanity_check: assert self.intact_check()
 
         # calculating environments and previous energy
-        if not self.overlap.converged: self.overlap.BP(sanity_check=sanity_check,**kwargs)
-        if not self.expval.converged: self.expval.BP(sanity_check=sanity_check,**kwargs)
+        if not self.overlap.converged: self.overlap.BP(normalize=normalize,sanity_check=sanity_check,**kwargs)
+        if not self.expval.converged: self.expval.BP(normalize=normalize,sanity_check=sanity_check,**kwargs)
         Eprev = self.E0
 
         # we'll update tensors and matrices, so as a precaution, we'll set the converged attributes to False
@@ -841,7 +885,7 @@ class DMRG:
             # generalized eigenvalue problem
             eigvals,eigvecs = scialg.eig(
                 a=H,
-                #b=N,
+                b=N,
                 overwrite_a=True,
                 overwrite_b=True,
             )
@@ -861,10 +905,10 @@ class DMRG:
             # updating messages that node sends
             for neighbor in self.overlap.G.adj[node]:
                 msg = self.overlap.contract_tensor_msg(sending_node=node,receiving_node=neighbor,sanity_check=sanity_check)
-                self.overlap.G[node][neighbor][0]["msg"][neighbor] = msg
+                self.overlap.G[node][neighbor][0]["msg"][neighbor] = msg / np.sum(msg) if normalize else msg
             for neighbor in self.expval.G.adj[node]:
                 msg = self.expval.contract_tensor_msg(sending_node=node,receiving_node=neighbor,sanity_check=sanity_check)
-                self.expval.G[node][neighbor][0]["msg"][neighbor] = msg
+                self.expval.G[node][neighbor][0]["msg"][neighbor] = msg / np.sum(msg) if normalize else msg
 
         # calculatig new environments
         self.overlap.BP(sanity_check=sanity_check,**kwargs)

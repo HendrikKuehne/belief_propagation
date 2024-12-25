@@ -11,10 +11,10 @@
 
 * **`PEPO.py`** Projector-entangled Pair Operators on arbitary graphs, where the Tensor Network structure is inherited from the main module (see [this file](https://github.com/HendrikKuehne/belief_propagation/blob/main/belief_propagation/README.md) for an introduction).
   * **ToDo**: Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
-  * **ToDo**: `MPS` instances do not require a leg ordering on the underlying graph, but `PEPO` instances do; there is no reason why PEPOs should require a leg ordering. (except if a typical workflow is to generate a MPS first and use it's graph to generate a PEPO; the leg ordering in PEPO intialisation should be optional)
+  * **ToDo**: `PEPS` instances do not require a leg ordering on the underlying graph, but `PEPO` instances do; there is no reason why PEPOs should require a leg ordering. (except if a typical workflow is to generate a PEPS first and use it's graph to generate a PEPO; the leg ordering in PEPO intialisation should be optional)
   * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues.
-* **`MPS.py`** MPS on arbitrary graphs.
-* **`braket.py`** Stacks of combinations of MPS and PEPO on arbitrary graphs.
+* **`PEPS.py`** PEPS on arbitrary graphs.
+* **`braket.py`** Stacks of combinations of PEPS and PEPO on arbitrary graphs.
   * **ToDo** Accelerate the mesage uodate somehow
     * Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
     * Pancotti & Gray stack all the tensors and the messages s.t. the BP algorithm becomes a vector iteration ([arxiv:2306.15004](https://arxiv.org/abs/2306.15004))
@@ -23,27 +23,3 @@
   * **ToDo** Smarter discrimination between cases in `Braket.contract`.
   * **ToDo** Optimize local updates; Lanczos algorithm? (In python implemented, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/))
   * **ToDo** The implementation of the DMRG class is wildly inefficient (at least in terms of memory) because the overlap $\braket{\psi|\psi}$ and the expectation value $\braket{\psi|H|\psi}$ are both stored as full `Braket` objects, although they contain essentially the same data
-
-# Literature
-
-* IBM kicked Ising experiment
-  * Youngseok Kim, Andrew Eddins, Sajant Anand, Ken Xuan Wei, Ewout van den Berg, Sami Rosenblatt, Hasan Nayfeh, Yantao Wu, Michael Zaletel, Kristan Temme1, Abhinav Kandala 
-    Evidence for the utility of quantum computing before fault tolerance  
-    [Nature 618, 500 - 505 (2023)](https://doi.org/10.1038/s41586-023-06096-3)
-  * Joseph Tindall, Matthew Fishman, E. Miles Stoudenmire, Dries Sels  
-    Efficient Tensor Network Simulation of IBM’s Eagle Kicked Ising Experiment  
-    [PRX Quantum 5, 010308 (2024)](https://doi.org/10.1103/PRXQuantum.5.010308) ([arXiv:2306.14887](https://arxiv.org/abs/2306.14887))
-  * Tomislav Begusic, Johnnie Gray, Garnet Kin-Lic Chan  
-    Fast and converged classical simulations of evidence for the utility of quantum
-computing before fault tolerance  
-    [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321) ([arXiv:2308.05077](https://arxiv.org/abs/2308.05077))
-* Tensor networks, many-body physics and variational methods
-  * Subhayan Sahu, Brian Swingle  
-    Efficient tensor network simulation of quantum many-body physics on sparse graphs  
-    [arXiv:2206.04701](https://arxiv.org/abs/2206.04701)
-  * Joseph Tindall, Matthew T. Fishman  
-    Gauging tensor networks with belief propagation  
-    [arXiv:2306.17837](https://arxiv.org/abs/2306.17837)
-  * Nicola Pancotti, Johnnie Gray  
-    One-step replica symmetry breaking in the language of tensor networks  
-    [arxiv:2306.15004](https://arxiv.org/abs/2306.15004)
