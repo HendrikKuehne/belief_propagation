@@ -153,11 +153,13 @@ class Braket:
                 for i in range(op_size):
                     A = randn(size=(bra_size,bra_size))
                     msg[:,i,:] = A.T.conj() @ A
-                
+
                 return msg
             else:
                 # TODO psd-analogous matrices using scipy.stats.ortho_group / scipy.stats.unitary_group?
-                return randn(size=(bra_size,op_size,ket_size))
+                pass
+
+            return randn(size=(bra_size,op_size,ket_size))
 
         for node1,node2 in self.G.edges():
             for sending_node,receiving_node in itertools.permutations((node1,node2)):
@@ -385,7 +387,7 @@ class Braket:
             args += (
                 # bra tensor
                 self.bra.G.nodes[node]["T"],
-                tuple(iLeg for iLeg in range(nLegs)) + (3 * nLegs,),
+                tuple(range(nLegs)) + (3 * nLegs,),
                 # operator tensor
                 self.op.G.nodes[node]["T"],
                 tuple(nLegs + iLeg for iLeg in range(nLegs)) + (3 * nLegs,3 * nLegs + 1),
@@ -717,6 +719,8 @@ class DMRG:
 
     nSweeps:int=5
     """Default number of sweeps."""
+    hermiticity_threshold:float=1e-6
+    """Allowed deviation from exact hermiticity."""
 
     def intact_check(self) -> bool:
         """
@@ -766,7 +770,7 @@ class DMRG:
 
         return True
 
-    def local_H(self,node:int,threshold:float=1e-6,sanity_check:bool=False) -> np.ndarray:
+    def local_H(self,node:int,threshold:float=hermiticity_threshold,sanity_check:bool=False) -> np.ndarray:
         """
         Hamiltonian at `node`, by taking inbound messages to be environments.
         `threshold` is the absolute allowed error in the hermiticity of the
@@ -808,11 +812,11 @@ class DMRG:
         H = np.einsum(*args,out_legs,optimize=True)
         H = np.reshape(H,(vir_dim * self.expval.D,vir_dim * self.expval.D))
 
-        if sanity_check: assert is_hermitian(H,threshold=threshold)
+        if sanity_check: assert is_hermitian(H,threshold=threshold,verbose=False)
 
         return H
 
-    def local_env(self,node:int,threshold:float=1e-6,sanity_check:bool=False) -> np.ndarray:
+    def local_env(self,node:int,threshold:float=hermiticity_threshold,sanity_check:bool=False) -> np.ndarray:
         """
         Environment at node. Calculated from `self.overlap`. This amounts to
         stacking and re-shaping messages, that are inbound to `node`.
@@ -839,7 +843,6 @@ class DMRG:
                 self.overlap.G[node][neighbor][0]["msg"][node][:,0,:],
                 (
                     self.overlap.bra.G[node][neighbor][0]["legs"][node], # bra leg
-                    #nLegs + self.overlap.op.G[node][neighbor][0]["legs"][node], # operator leg (overlap inserts an identity); is traced out in np.einsum
                     2 * nLegs + self.overlap.ket.G[node][neighbor][0]["legs"][node], # ket leg
                 )
             )
@@ -873,19 +876,31 @@ class DMRG:
         if not self.expval.converged: self.expval.BP(normalize=normalize,sanity_check=sanity_check,**kwargs)
         Eprev = self.E0
 
-        # we'll update tensors and matrices, so as a precaution, we'll set the converged attributes to False
+        # we'll update tensors and matrices, so as a precaution, we'll set the convergence markers to False
         self.overlap.converged = False
         self.expval.converged = False
 
         for node in nx.dfs_postorder_nodes(self.expval.G,source=self.expval.op.root):
             H = self.local_H(node,sanity_check=sanity_check)
             N = self.local_env(node,sanity_check=sanity_check)
-            # Hloc and env are hermitian, if the BP iteration converged - which it must have if this line is executed
+            cond = np.linalg.cond(N)
+            #print(f"Node {node}: cond = {cond:.3e}. {len(self.overlap.G.adj[node])} neighbors.")
+
+            if sanity_check: # are local hamiltonian and environment correctly defined?
+                T = self.overlap.ket.G.nodes[node]["T"]
+                local_psi = T.flatten()
+                expval_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),H,local_psi)
+                overlap_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),N,local_psi)
+
+                if not np.isclose(expval_local_cntr,self.expval.cntr):
+                    warnings.warn(f"Local hamiltonian at node {node} does not reproduce expectation value.")
+                if not np.isclose(overlap_local_cntr,self.overlap.cntr):
+                    warnings.warn(f"Local environment at node {node} does not reproduce overlap.")
 
             # generalized eigenvalue problem
             eigvals,eigvecs = scialg.eig(
                 a=H,
-                b=N,
+                b=N if cond < 1e6 else None,
                 overwrite_a=True,
                 overwrite_b=True,
             )
@@ -902,17 +917,9 @@ class DMRG:
             self.expval.ket.G.nodes[node]["T"] = T
             self.expval.bra.G.nodes[node]["T"] = T.conj()
 
-            # updating messages that node sends
-            for neighbor in self.overlap.G.adj[node]:
-                msg = self.overlap.contract_tensor_msg(sending_node=node,receiving_node=neighbor,sanity_check=sanity_check)
-                self.overlap.G[node][neighbor][0]["msg"][neighbor] = msg / np.sum(msg) if normalize else msg
-            for neighbor in self.expval.G.adj[node]:
-                msg = self.expval.contract_tensor_msg(sending_node=node,receiving_node=neighbor,sanity_check=sanity_check)
-                self.expval.G[node][neighbor][0]["msg"][neighbor] = msg / np.sum(msg) if normalize else msg
-
-        # calculatig new environments
-        self.overlap.BP(sanity_check=sanity_check,**kwargs)
-        self.expval.BP(sanity_check=sanity_check,**kwargs)
+            # calculatig new environments
+            self.overlap.BP(sanity_check=sanity_check,**kwargs)
+            self.expval.BP(sanity_check=sanity_check,**kwargs)
         Enext = self.E0
 
         return np.abs(Eprev - Enext)
@@ -920,13 +927,13 @@ class DMRG:
     def run(self,nSweeps:int=None,verbose:bool=False,sanity_check:bool=False,**kwargs):
         """
         Runs single-site DMRG on the underlying braket.
-        `kwargs` are passed to `self.BP`.
+        `kwargs` are passed to BP iterations.
         """
         if sanity_check: assert self.intact_check()
 
         # preparing kwargs
         kwargs["numretries"] = np.inf
-        kwargs["verbose"] = False
+        kwargs["verbose"] = True
 
         nSweeps = nSweeps if nSweeps != None else self.nSweeps
         iterator = tqdm.tqdm(range(nSweeps),desc=f"DMRG sweeps",disable=not verbose)
@@ -949,12 +956,12 @@ class DMRG:
         return expval_cntr / overlap_cntr
 
     @property
-    def converged(self):
+    def converged(self) -> bool:
         """Indicates whether the messages in `self.overlap.G` and `self.expval.G` are converged."""
         return self.overlap.converged and self.expval.converged
 
     @property
-    def E0(self):
+    def E0(self) -> float:
         """Current best guess of the ground state energy."""
         return self.expval.cntr / self.overlap.cntr
 

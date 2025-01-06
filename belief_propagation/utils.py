@@ -82,7 +82,7 @@ def rel_err(ref:float,approx:float) -> float:
     """
     return np.linalg.norm(ref - approx) / np.linalg.norm(ref)
 
-def check_msg_psd(G:nx.MultiGraph) -> bool:
+def check_msg_psd(G:nx.MultiGraph,threshold:float=1e-8,verbose:bool=False) -> bool:
     """
     Checks whether all the messages in `G` are positive semi-definite.
     """

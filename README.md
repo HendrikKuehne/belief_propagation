@@ -112,7 +112,7 @@ This will be updated continuously, as questions come to mind.
       Hyper-optimized tensor network contraction  
       [Quantum 5, 410 (2021)](https://doi.org/10.22331/q-2021-03-15-410) ([arXiv:2002.01935](https://arxiv.org/abs/2002.01935))
 * IBM kicked Ising experiment
-  * Youngseok Kim, Andrew Eddins, Sajant Anand, Ken Xuan Wei, Ewout van den Berg, Sami Rosenblatt, Hasan Nayfeh, Yantao Wu, Michael Zaletel, Kristan Temme1, Abhinav Kandala 
+  * Youngseok Kim, Andrew Eddins, Sajant Anand, Ken Xuan Wei, Ewout van den Berg, Sami Rosenblatt, Hasan Nayfeh, Yantao Wu, Michael Zaletel, Kristan Temme, Abhinav Kandala  
     Evidence for the utility of quantum computing before fault tolerance  
     [Nature 618, 500 - 505 (2023)](https://doi.org/10.1038/s41586-023-06096-3)
   * Joseph Tindall, Matthew Fishman, E. Miles Stoudenmire, Dries Sels  
