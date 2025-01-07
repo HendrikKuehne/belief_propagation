@@ -4,7 +4,7 @@ Random stuff that is useful here or there.
 import numpy as np
 import networkx as nx
 import warnings
-import matplotlib.pyplot as plt
+import scipy.linalg as scialg
 
 def crandn(size=None,rng:np.random.Generator=np.random.default_rng()) -> np.ndarray:
     """
@@ -87,6 +87,45 @@ def check_msg_psd(G:nx.MultiGraph,threshold:float=1e-8,verbose:bool=False) -> bo
     Checks whether all the messages in `G` are positive semi-definite.
     """
     # TODO: implement
+
+def gen_eigval_problem(A:np.ndarray,B:np.ndarray,eps:float=1e-5) -> tuple[np.ndarray,np.ndarray]:
+    """
+    Solves the generalized eigenvalue problem, using the
+    workaround introduced [here](https://arxiv.org/abs/1903.11240v3).
+    The parameter `eps` is used for Tikhonov regularization,
+    if `B` is singular. `A` is written over during computation.
+
+    Returns `eigvals,eigvecs` as a tuple, where `eigvecs[:,i]` is
+    the eigenvector to `eigvals[i]`.
+    """
+    cond = np.linalg.cond(B)
+
+    if cond > 1e6: # B is singular, let's employ Tikhonov-regularization
+        B_inverse = np.linalg.inv(B + eps * np.eye(B.shape[0]))
+        return scialg.eig(B_inverse @ A,overwrite_a=True)
+    else:
+        return scialg.eig(
+            a=A,
+            b=B,
+            overwrite_a=True,
+            overwrite_b=True,
+        )
+
+    if is_hermitian(A) and is_hermitian(B):
+        eig_solver = np.linalg.eigh
+    else:
+        eig_solver = np.linalg.eig
+
+    lambda_B,U_B = eig_solver(B)
+
+    if np.any(np.isclose(lambda_B,0)): lambda_B += eps
+    U_B_tilde = U_B / np.diag(np.sqrt(lambda_B))
+
+    A_tilde = U_B_tilde.conj().T @ A @ U_B_tilde
+
+    lambda_A,U_A = eig_solver(A_tilde)
+
+    return lambda_A,U_B_tilde @ U_A
 
 # -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis

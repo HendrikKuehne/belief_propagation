@@ -78,4 +78,4 @@ $$
 
 [^4]: It is, of course, fairly self-explanatory that (I) does not necessarily hold if the network does not originate from a PEPS.
 
-[^5]: Tested using initialization of the messages using a normal distribution centered aroind zero.
+[^5]: Tested using initialization of the messages using a normal distribution centered around zero.

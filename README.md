@@ -122,3 +122,10 @@ This will be updated continuously, as questions come to mind.
     Fast and converged classical simulations of evidence for the utility of quantum
 computing before fault tolerance  
     [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321) ([arXiv:2308.05077](https://arxiv.org/abs/2308.05077))
+* Mathematics / Numerics
+  * A. N. Tikhonov , A. V. Goncharsky , V. V. Stepanov , A. G. Yagola  
+    Numerical Methods for the Solution of Ill-Posed Problems  
+    Springer Dordrecht, 2013
+  * Benyamin Ghojogh, Fakhri Karray, Mark Crowley  
+    Eigenvalue and Generalized Eigenvalue Problems: Tutorial  
+    [arXiv:1903.11240](https://arxiv.org/abs/1903.11240v3)

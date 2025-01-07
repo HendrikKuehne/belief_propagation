@@ -15,10 +15,8 @@ import warnings
 import itertools
 import ray
 import tqdm
-import scipy.linalg as scialg
-import scipy.stats as scistats
 
-from belief_propagation.utils import network_message_check,crandn,is_hermitian,rel_err
+from belief_propagation.utils import network_message_check,crandn,is_hermitian,rel_err,gen_eigval_problem
 from belief_propagation.sandwich_BP.PEPO import PEPO
 from belief_propagation.sandwich_BP.PEPS import PEPS
 
@@ -721,6 +719,8 @@ class DMRG:
     """Default number of sweeps."""
     hermiticity_threshold:float=1e-6
     """Allowed deviation from exact hermiticity."""
+    tikhonov_regularization_eps:float=1e-6
+    """Epsilon for Tikhonov-regularization of singular messages."""
 
     def intact_check(self) -> bool:
         """
@@ -816,12 +816,15 @@ class DMRG:
 
         return H
 
-    def local_env(self,node:int,threshold:float=hermiticity_threshold,sanity_check:bool=False) -> np.ndarray:
+    def local_env(self,node:int,threshold:float=hermiticity_threshold,regularize:bool=True,sanity_check:bool=False) -> np.ndarray:
         """
         Environment at node. Calculated from `self.overlap`. This amounts to
         stacking and re-shaping messages, that are inbound to `node`.
         `threshold` is the absolute allowed error in the hermiticity of the
         resulting matrix (checked if `sanity_check=True`).
+
+        Messages from leafs are singular, in which case Tikhonov-regularization
+        is performed (if `regularize=True`).
         """
         # sanity check
         if sanity_check: assert self.intact_check()
@@ -837,10 +840,11 @@ class DMRG:
 
         for neighbor in self.overlap.G.adj[node]:
             if not self.overlap.G[node][neighbor][0]["msg"][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
+            msg = self.overlap.G[node][neighbor][0]["msg"][node][:,0,:]
 
             # collecting einsum arguments
             args += (
-                self.overlap.G[node][neighbor][0]["msg"][node][:,0,:],
+                msg,
                 (
                     self.overlap.bra.G[node][neighbor][0]["legs"][node], # bra leg
                     2 * nLegs + self.overlap.ket.G[node][neighbor][0]["legs"][node], # ket leg
@@ -883,8 +887,6 @@ class DMRG:
         for node in nx.dfs_postorder_nodes(self.expval.G,source=self.expval.op.root):
             H = self.local_H(node,sanity_check=sanity_check)
             N = self.local_env(node,sanity_check=sanity_check)
-            cond = np.linalg.cond(N)
-            #print(f"Node {node}: cond = {cond:.3e}. {len(self.overlap.G.adj[node])} neighbors.")
 
             if sanity_check: # are local hamiltonian and environment correctly defined?
                 T = self.overlap.ket.G.nodes[node]["T"]
@@ -893,17 +895,11 @@ class DMRG:
                 overlap_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),N,local_psi)
 
                 if not np.isclose(expval_local_cntr,self.expval.cntr):
-                    warnings.warn(f"Local hamiltonian at node {node} does not reproduce expectation value.")
+                    warnings.warn(f"Local hamiltonian at node {node} does not reproduce expectation value. Relative error {rel_err(self.expval.cntr,expval_local_cntr):.3e}.")
                 if not np.isclose(overlap_local_cntr,self.overlap.cntr):
-                    warnings.warn(f"Local environment at node {node} does not reproduce overlap.")
+                    warnings.warn(f"Local environment at node {node} does not reproduce overlap. Relative error {rel_err(self.overlap.cntr,overlap_local_cntr):.3e}.")
 
-            # generalized eigenvalue problem
-            eigvals,eigvecs = scialg.eig(
-                a=H,
-                b=N if cond < 1e6 else None,
-                overwrite_a=True,
-                overwrite_b=True,
-            )
+            eigvals,eigvecs = gen_eigval_problem(H,N)
 
             # re-shaping new statevector
             newshape = [np.nan for neighbor in self.overlap.G.adj[node]]
@@ -917,7 +913,7 @@ class DMRG:
             self.expval.ket.G.nodes[node]["T"] = T
             self.expval.bra.G.nodes[node]["T"] = T.conj()
 
-            # calculatig new environments
+            # calculating new environments
             self.overlap.BP(sanity_check=sanity_check,**kwargs)
             self.expval.BP(sanity_check=sanity_check,**kwargs)
         Enext = self.E0
@@ -933,7 +929,7 @@ class DMRG:
 
         # preparing kwargs
         kwargs["numretries"] = np.inf
-        kwargs["verbose"] = True
+        kwargs["verbose"] = False
 
         nSweeps = nSweeps if nSweeps != None else self.nSweeps
         iterator = tqdm.tqdm(range(nSweeps),desc=f"DMRG sweeps",disable=not verbose)
