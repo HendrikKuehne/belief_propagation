@@ -144,7 +144,7 @@ class Braket:
             Generates a new message with shape `[bra_size,op_size,ket_size]`.
 
             If `bra_size=ket_size`, then `msg[:,i,:]` is, for all `i`,
-            positive-semidefinite and hermitian (when interpreted as a matrix).
+            positive-semidefinite and hermitian.
             """
             if bra_size == ket_size:
                 msg = np.zeros(shape=(bra_size,op_size,ket_size)) if real else np.zeros(shape=(bra_size,op_size,ket_size)) + 0j
@@ -164,10 +164,8 @@ class Braket:
                 # messages in both directions
                 if len(self.G.adj[sending_node]) > 1:
                     # ket and bra leg indices, and sizes
-                    iBra = self.bra.G[sending_node][receiving_node][0]["legs"][receiving_node]
-                    iKet = self.ket.G[sending_node][receiving_node][0]["legs"][receiving_node]
-                    bra_size = self.bra.G.nodes[receiving_node]["T"].shape[iBra]
-                    ket_size = self.ket.G.nodes[receiving_node]["T"].shape[iKet]
+                    bra_size = self.bra.G[sending_node][receiving_node][0]["size"]
+                    ket_size = self.ket.G[sending_node][receiving_node][0]["size"]
                     # calculating the message
                     msg = get_new_message(bra_size,self.op.chi,ket_size)
                 else:
@@ -231,7 +229,7 @@ class Braket:
 
     def __message_passing_step(self,normalize:bool,parallel:bool,sanity_check:bool) -> float:
         """
-        Performs a message passing iteration. Algorithm taken from Kirkley, 2021
+        Performs a message passing step. Algorithm taken from Kirkley, 2021
         ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)).
         Returns the maximum change of message norm over the entire graph.
 
@@ -272,6 +270,7 @@ class Braket:
 
             return np.max(eps)
 
+        # parallel version
         if not ray.is_initialized(): ray.init()
 
         ray_refs = []
@@ -801,7 +800,7 @@ class DMRG:
             )
 
             # compiling virtual dimensions for later reshape
-            vir_dim *= self.expval.ket.G.nodes[node]["T"].shape[self.expval.ket.G[node][neighbor][0]["legs"][node]]
+            vir_dim *= self.expval.ket.G[node][neighbor][0]["size"]
 
         args += (
             # operator tensor
@@ -852,7 +851,7 @@ class DMRG:
             )
 
             # compiling virtual dimensions for later reshape
-            vir_dim *= self.overlap.ket.G.nodes[node]["T"].shape[self.overlap.ket.G[node][neighbor][0]["legs"][node]]
+            vir_dim *= self.overlap.ket.G[node][neighbor][0]["size"]
 
         # identity for the physical dimension
         args += (self.overlap.op.I,(3*nLegs,3*nLegs+1))
@@ -961,10 +960,14 @@ class DMRG:
         """Current best guess of the ground state energy."""
         return self.expval.cntr / self.overlap.cntr
 
-    def __init__(self,op:PEPO,psi_init:PEPS=None,chi:int=None,sanity_check:bool=False):
+    def __init__(self,op:PEPO,psi_init:PEPS=None,chi:int=None,sanity_check:bool=False,**kwargs):
+        """
+        Initialisation of a `DMRG` object. The initial is chosen randomly,
+        if it is not given. `kwargs` are passed to `PEPS.init_random`.
+        """
         # if not given, initial state is chosen randomly
         if psi_init == None:
-            psi_init = PEPS.init_random(G=op.G,D=op.D,chi=chi)
+            psi_init = PEPS.init_random(G=op.G,D=op.D,chi=chi,**kwargs)
 
         self.expval = Braket.Expval(psi=psi_init,op=op,sanity_check=sanity_check)
         self.overlap = Braket.Overlap(psi1=psi_init,psi2=psi_init)

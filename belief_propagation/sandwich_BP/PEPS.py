@@ -8,7 +8,7 @@ import cotengra as ctg
 import warnings
 import copy
 
-from belief_propagation.utils import network_message_check,crandn
+from belief_propagation.utils import network_message_check,crandn,write_exp_size_to_graph
 
 class PEPS:
     """
@@ -136,7 +136,7 @@ class PEPS:
         return
 
     @classmethod
-    def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=False,sanity_check:bool=False):
+    def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=False,bond_dim_strategy:str="uniform",sanity_check:bool=False,**kwargs):
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
         the physical dimension is `D`. Any leg ordering in `G` is not
@@ -150,24 +150,20 @@ class PEPS:
 
         G = cls.prepare_graph(G)
 
-        tensors = {}
+        # determining bond dimensions
+        cls.set_bond_dimensions(G=G,bond_dim_strategy=bond_dim_strategy,D=D,max_chi=chi)
 
         for node in G.nodes:
-            nLegs = len(G.adj[node])
-            dim = nLegs * [chi] + [D,]
-            # constructing a new tensor
-            T = randn(size = dim) / chi**(3/4)
-
-            # saving the physical tensor
-            tensors[node] = T
-
-            # adding the tensor to this node
-            G.nodes[node]["T"] = T
-
-            # adding to the adjacent edges which index they correspond to, and the size of this edge
+            # telling the adjacent edges which index they correspond to
             for i,neighbor in enumerate(G.adj[node]):
                 G[node][neighbor][0]["legs"][node] = i
-                G[node][neighbor][0]["size"] = T.shape[i]
+
+            # constructing the shape of the tensor at this site
+            dim = [None for i in G.adj[node]] + [D,]
+            for i,neighbor in enumerate(G.adj[node]): dim[G[node][neighbor][0]["legs"][node]] = G[node][neighbor][0]["size"]
+
+            # adding the tensor to this node
+            G.nodes[node]["T"] = randn(size = dim) / chi**(3/4)
 
         return cls(G,sanity_check=sanity_check)
 
@@ -223,6 +219,40 @@ class PEPS:
                 newG[node1][node2][0]["size"] = G[node1][node2][0]["size"]
 
         return newG
+
+    @staticmethod
+    def set_bond_dimensions(G:nx.MultiGraph,bond_dim_strategy:str,D:int=None,max_chi:int=None) -> None:
+        """
+        Initializes the bond dimensions in the graph `G`. The
+        string `bond_dim_strategy` determines how bond dimensions
+        are intialized. There are several options:
+        * `None` (default): Bond dimension `D` on every edge.
+        * `exp`: Exact solution on trees. Edge size grows
+        exponentially with distance from leaf nodes (internally
+        calls `belief_propagation.utils.write_exp_size_to_graph`).
+        Requires physical dimension `D`.
+        * `exp_cutoff`: Same as `exp`, with maximum size `max_chi`.
+
+        `D` is the physical dimension, and `max_chi` is the bond
+        dimension cutoff.
+        """
+        if bond_dim_strategy not in ("exp_cutoff","exp") and D == None:
+            raise ValueError("Bond dimension strategy " + bond_dim_strategy + " requires physical dimension.")
+
+        if bond_dim_strategy == "uniform":
+            for node1,node2,key in G.edges(keys=True): G[node1][node2][key]["size"] = max_chi
+            return
+
+        if bond_dim_strategy == "exp":
+            write_exp_size_to_graph(G=G,D=D)
+            return
+
+        if bond_dim_strategy == "exp_cutoff":
+            if max_chi == None: raise ValueError("Bond dimension strategy " + bond_dim_strategy + " requires cutoff.")
+            write_exp_size_to_graph(G=G,D=D,max_chi=max_chi)
+            return
+
+        raise ValueError("Bond dimension strategy " + bond_dim_strategy + " not implemented.")
 
     def __init__(self,G:nx.MultiGraph,sanity_check:bool=False) -> None:
         """

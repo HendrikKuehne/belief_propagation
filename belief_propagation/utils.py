@@ -127,6 +127,53 @@ def gen_eigval_problem(A:np.ndarray,B:np.ndarray,eps:float=1e-5) -> tuple[np.nda
 
     return lambda_A,U_B_tilde @ U_A
 
+def write_exp_size_to_graph(G:nx.MultiGraph,D:int,max_chi:int=np.inf) -> None:
+    """
+    Writes bond dimension to the edges of `G`, that is required for
+    exact solutions. `G` is modified in-place. `D` is the physical dimension.
+    Bond dimension is cut off at `chi_max`.
+
+    On networks with leaf nodes (i.e. nodes that have one neighbor),
+    the required bond dimension is related to the amount of
+    entanglement that the respective edge carries. Let `N` be the
+    minimum distance of an edge to a physical leg (i.e. the number
+    of nodes between the edge and any physical leg). Then the
+    bond dimension is `D**N`.
+
+    If there are no leaf nodes, the value `chi_max` is written to all
+    edges.
+
+    This becomes a heuristic when the network is not tree-shaped (I think).
+    """
+
+    # initialisation
+    for node1,node2,key in G.edges(keys=True): G[node1][node2][key]["size"] = max_chi
+
+    leaf_nodes = ()
+    for node in G.nodes(): leaf_nodes = leaf_nodes + (node,) if len(G.adj[node]) == 1 else leaf_nodes
+
+    # are there leaf nodes?
+    if len(leaf_nodes) == 0:
+        # no leaf nodes
+        if max_chi == np.inf:
+            raise RuntimeError("If G has no leaves, a finite maximum bond dimension must be given.")
+
+        return
+
+    max_path_length = int(np.log2(max_chi))
+    path_dict = dict(nx.all_pairs_shortest_path(G=G,cutoff=max_path_length))
+
+    for leaf in leaf_nodes:
+        for target in path_dict[leaf].keys():
+            if target == leaf: continue
+
+            # traversing the path and inserting new sizes, if we
+            # are able to reduce the size of the edges along the path
+            for pred,succ,dist in zip(path_dict[leaf][target][:-1],path_dict[leaf][target][1:],range(1,len(path_dict[leaf][target]))):
+                if D**dist < G[pred][succ][0]["size"]: G[pred][succ][0]["size"] = D**dist
+
+    return
+
 # -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis
 # -------------------------------------------------------------------------------
