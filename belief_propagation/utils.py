@@ -5,6 +5,11 @@ import numpy as np
 import networkx as nx
 import warnings
 import scipy.linalg as scialg
+import itertools
+
+# -------------------------------------------------------------------------------
+#                   math
+# -------------------------------------------------------------------------------
 
 def crandn(size=None,rng:np.random.Generator=np.random.default_rng()) -> np.ndarray:
     """
@@ -127,52 +132,90 @@ def gen_eigval_problem(A:np.ndarray,B:np.ndarray,eps:float=1e-5) -> tuple[np.nda
 
     return lambda_A,U_B_tilde @ U_A
 
-def write_exp_size_to_graph(G:nx.MultiGraph,D:int,max_chi:int=np.inf) -> None:
+# -------------------------------------------------------------------------------
+#                   graph routines
+# -------------------------------------------------------------------------------
+
+def write_exp_bonddim_to_graph(G:nx.MultiGraph,D:int,max_chi:int=np.inf) -> None:
     """
     Writes bond dimension to the edges of `G`, that is required for
-    exact solutions. `G` is modified in-place. `D` is the physical dimension.
-    Bond dimension is cut off at `chi_max`.
+    exact solutions. `G` is modified in-place. `D` is the physical
+    dimension. Bond dimension is cut off at `chi_max`.
 
-    On networks with leaf nodes (i.e. nodes that have one neighbor),
-    the required bond dimension is related to the amount of
-    entanglement that the respective edge carries. Let `N` be the
-    minimum distance of an edge to a physical leg (i.e. the number
-    of nodes between the edge and any physical leg). Then the
-    bond dimension is `D**N`.
-
-    If there are no leaf nodes, the value `chi_max` is written to all
-    edges.
-
-    This becomes a heuristic when the network is not tree-shaped (I think).
+    On loopy networks, the required bond dimension is obtained from
+    a spanning tree of a graph. This is a heuristic, that is designed
+    to prevent bond dimension bottlenecks. Results are exact on edges
+    that are not part of a loop.
     """
+    N = G.number_of_nodes()
 
-    # initialisation
-    for node1,node2,key in G.edges(keys=True): G[node1][node2][key]["size"] = max_chi
+    if nx.is_tree(G):
+        # if the graph is a tree, setting bond dimensions exactly is easy:
+        # the tree is cut along the respective edge, and the sizes of the
+        # resulting hilbert space determine the necessary bond dimension
+        for node1,node2 in G.edges():
+            # setting bond dimension using tree
+            Gcopy = nx.MultiGraph(G.edges)
+            Gcopy.remove_edge(node1,node2)
+            comp = nx.node_connected_component(Gcopy,node1)
+            N_subsystem = len(comp)
 
-    leaf_nodes = ()
-    for node in G.nodes(): leaf_nodes = leaf_nodes + (node,) if len(G.adj[node]) == 1 else leaf_nodes
-
-    # are there leaf nodes?
-    if len(leaf_nodes) == 0:
-        # no leaf nodes
-        if max_chi == np.inf:
-            raise RuntimeError("If G has no leaves, a finite maximum bond dimension must be given.")
+            # setting the bond dimension
+            chi = min(D**N_subsystem,D**(N - N_subsystem))
+            G[node1][node2][0]["size"] = min(chi,max_chi)
 
         return
 
-    max_path_length = int(np.log2(max_chi))
-    path_dict = dict(nx.all_pairs_shortest_path(G=G,cutoff=max_path_length))
+    # if the graph is not a tree, we find a new breadth-first spanning tree
+    # for every edge, and then cut the respective edge. This is only a
+    # heuristic, but should prevent bond dimension bottlenecks. This
+    # procedure becomes exact on trees, since the spanning tree of a tree
+    # is unique
 
-    for leaf in leaf_nodes:
-        for target in path_dict[leaf].keys():
-            if target == leaf: continue
+    for node1,node2 in G.edges():
+        # spanning tree that contains edge (node1,node2)
+        tree = nx.MultiGraph(nx.bfs_tree(G,source=node1).edges) # conversion because connected components are not implemented on directed graphs
+        tree.remove_edge(node1,node2)
+        comp = nx.node_connected_component(tree,node1)
+        N_subsystem = len(comp)
 
-            # traversing the path and inserting new sizes, if we
-            # are able to reduce the size of the edges along the path
-            for pred,succ,dist in zip(path_dict[leaf][target][:-1],path_dict[leaf][target][1:],range(1,len(path_dict[leaf][target]))):
-                if D**dist < G[pred][succ][0]["size"]: G[pred][succ][0]["size"] = D**dist
+        # setting the bond dimension
+        chi = min(D**N_subsystem,D**(N - N_subsystem))
+        G[node1][node2][0]["size"] = min(chi,max_chi)
 
     return
+
+def divide_graph(G:nx.MultiGraph) -> frozenset[frozenset[int]]:
+    """
+    Finds bipartition cuts of the graph `G`. A bipartition cut is a set of edges
+    such that, if these edges are cut, the resulting graph is disjoint.
+    **EXPONENTIAL RUNTiME** This could be used to find a good initial guess for
+    the bond dimension on loopy geometries, but this method is prohibitively
+    slow on all but the most basic graphs.
+    """
+    # The thinking is as follows: For every edge (u,v), I look for a cut of the graph such that
+    # u is contained in one component, and v in the other. Since a graph might have loops, in
+    # order to find a cut of the graph, I'll need to cut all the paths between u and v. The cuts
+    # associated with edge (u,v) are thus all possible ways of cutting all the paths between
+    # u and v. All cuts are saved as sets since my algorithm generates many duplicates.
+    cuts = frozenset()
+
+    for node1,node2 in G.edges():
+        paths = nx.all_simple_paths(G,source=node1,target=node2)
+        paths = tuple(
+            tuple(
+                frozenset((path[i],path[i+1]))
+                for i in range(len(path)-1)
+            )
+            for path in paths
+        )
+        """a single path consists of the edges as sets"""
+
+        for edge_collection in itertools.product(*paths):
+            cut = frozenset(edge_collection)
+            cuts = cuts.union(frozenset((cut,)))
+
+    return cuts
 
 # -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis

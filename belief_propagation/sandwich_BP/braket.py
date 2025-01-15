@@ -525,7 +525,7 @@ class Braket:
         # sanity check
         if sanity_check: assert self.intact_check()
 
-        if self.G.number_of_nodes() == 1:
+        if self.nsites == 1:
             # the network is trivial
             bra = tuple(self.bra.G.nodes(data="T"))[0][1]
             op = tuple(self.op.G.nodes(data="T"))[0][1]
@@ -613,6 +613,13 @@ class Braket:
             ket_T = self.ket.G.nodes[sending_node]["T"]
         )
 
+    @property
+    def nsites(self):
+        """
+        Number of sites on which the braket is defined.
+        """
+        return self.op.nsites
+
     @staticmethod
     def graph_compatible(G1:nx.MultiGraph,G2:nx.MultiGraph) -> bool:
         """
@@ -671,7 +678,7 @@ class Braket:
     @classmethod
     def Overlap(cls,psi1:PEPS,psi2:PEPS,sanity_check:bool=False):
         """
-        Overlap <`psi1`,`psi2`> of two MPS. Returns the corresponding `Braket` object.
+        Overlap <`psi1`,`psi2`> of two PEPS. Returns the corresponding `Braket` object.
         """
         return cls(
             bra = psi1.conj(sanity_check=sanity_check),
@@ -834,7 +841,7 @@ class DMRG:
 
         out_legs = tuple(range(nLegs)) + (3*nLegs,) + tuple(range(2*nLegs,3*nLegs)) + (3*nLegs+1,)
         # Leg ordering of the local hamiltonian: (bra virtual dimensions, bra physical dimension, ket virtual dimensions, ket physical dimension)
-        # The order of the virtual legs is inherited from the "legs" indices on the edges
+        # The order of the virtual dimensions is inherited from the "legs" indices on the edges
         vir_dim = 1
 
         for neighbor in self.overlap.G.adj[node]:
@@ -898,7 +905,7 @@ class DMRG:
                 if not np.isclose(overlap_local_cntr,self.overlap.cntr):
                     warnings.warn(f"Local environment at node {node} does not reproduce overlap. Relative error {rel_err(self.overlap.cntr,overlap_local_cntr):.3e}.")
 
-            eigvals,eigvecs = gen_eigval_problem(H,N)
+            eigvals,eigvecs = gen_eigval_problem(H,N,eps=self.tikhonov_regularization_eps)
 
             # re-shaping new statevector
             newshape = [np.nan for neighbor in self.overlap.G.adj[node]]
@@ -922,7 +929,7 @@ class DMRG:
     def run(self,nSweeps:int=None,verbose:bool=False,sanity_check:bool=False,**kwargs):
         """
         Runs single-site DMRG on the underlying braket.
-        `kwargs` are passed to BP iterations.
+        `kwargs` are passed to BP iterations. The state is not normalized afterwards!
         """
         if sanity_check: assert self.intact_check()
 
@@ -959,6 +966,13 @@ class DMRG:
     def E0(self) -> float:
         """Current best guess of the ground state energy."""
         return self.expval.cntr / self.overlap.cntr
+
+    @property
+    def nsites(self):
+        """
+        Number of sites on which the braket is defined.
+        """
+        return self.overlap.nsites
 
     def __init__(self,op:PEPO,psi_init:PEPS=None,chi:int=None,sanity_check:bool=False,**kwargs):
         """

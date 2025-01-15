@@ -104,6 +104,9 @@ This will be updated continuously, as questions come to mind.
     * David Tellenbach  
       Canonicalization of Loop-free Tensor Networks  
       [MediaTUM](https://mediatum.ub.tum.de/1654468?style=full_text)
+    * Christian B. Mendl  
+      PyTeNet: A concise Python implementation of quantum tensor network algorithms
+      [Journal of Open Source Software, 3(30), 948](https://doi.org/10.21105/joss.00948) ([github.com/cmendl/pytenet](https://github.com/cmendl/pytenet))
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  
@@ -111,6 +114,9 @@ This will be updated continuously, as questions come to mind.
     * J. Gray, S. Kourtis  
       Hyper-optimized tensor network contraction  
       [Quantum 5, 410 (2021)](https://doi.org/10.22331/q-2021-03-15-410) ([arXiv:2002.01935](https://arxiv.org/abs/2002.01935))
+    * Johnnie Gray, Garnet Kin-Lic Chan  
+      Hyper-optimized approximate contraction of tensor networks with arbitrary geometry  
+      [Phys. Rev. X 14, 011009](https://doi.org/10.1103/PhysRevX.14.011009) ([arXiv:2206.07044](https://arxiv.org/abs/2206.07044))
 * IBM kicked Ising experiment
   * Youngseok Kim, Andrew Eddins, Sajant Anand, Ken Xuan Wei, Ewout van den Berg, Sami Rosenblatt, Hasan Nayfeh, Yantao Wu, Michael Zaletel, Kristan Temme, Abhinav Kandala  
     Evidence for the utility of quantum computing before fault tolerance  

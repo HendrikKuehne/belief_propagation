@@ -13,9 +13,9 @@
   * **ToDo**: Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
     * Sparse matrices would be most useful in `PEPO.to_dense()`. There is hope that this could be done more or less easily, since the `sparse` package has an [einsum implementation](https://sparse.pydata.org/en/stable/generated/sparse.einsum.html#sparse.einsum) and a [reshape](https://sparse.pydata.org/en/stable/generated/sparse.reshape.html#sparse.reshape).
   * **ToDo**: `PEPS` instances do not require a leg ordering on the underlying graph, but `PEPO` instances do; there is no reason why PEPOs should require a leg ordering. (except if a typical workflow is to generate a PEPS first and use it's graph to generate a PEPO; the leg ordering in PEPO intialisation should be optional)
-  * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues.
-    * **ToDo**: Test against Christian's [chemtensor](https://github.com/qc-tum/chemtensor/tree/main).
+  * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues. Tested against Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master).
 * **`PEPS.py`** PEPS on arbitrary graphs.
+  * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
 * **`braket.py`** Stacks of combinations of PEPS and PEPO on arbitrary graphs.
   * **ToDo** Accelerate the mesage uodate somehow
     * Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
@@ -25,3 +25,4 @@
   * **ToDo** Smarter discrimination between cases in `Braket.contract`.
   * **ToDo** Optimize local updates; Lanczos algorithm? (In python implemented, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/))
   * **ToDo** The implementation of the DMRG class is wildly inefficient (at least in terms of memory) because the overlap $\braket{\psi|\psi}$ and the expectation value $\braket{\psi|H|\psi}$ are both stored as full `Braket` objects, although they contain essentially the same data
+  * **ToDo** Normalize states after DMRG algorithm

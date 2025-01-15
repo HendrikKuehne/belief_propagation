@@ -188,11 +188,10 @@ class PEPO:
         """
         if sanity_check: assert self.intact_check()
 
-        if self.G.number_of_nodes() == 1:
+        if self.nsites == 1:
             # the network is trivial
             return tuple(self.G.nodes(data="T"))[0][1]
 
-        N = self.G.number_of_edges()
         args = ()
 
         # enumerating the edges in the graph
@@ -200,18 +199,17 @@ class PEPO:
             node1,node2 = nodes
             self.G[node1][node2][0]["label"] = i
 
+        N = self.G.number_of_nodes()
         # extracting the einsum arguments
-        for node,T in self.G.nodes(data="T"):
-            args += (T,)
-            legs = [None for _ in range(T.ndim-2)] + [N,N+1] # last two indices are the physical legs
+        for i,nodeT in enumerate(self.G.nodes(data="T")):
+            node,T = nodeT
+            legs = [None for _ in range(T.ndim-2)] + [N+i,2*N+i] # last two indices are the physical legs
             for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
                 legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
-            args += (tuple(legs),)
-            N += 2
+            args += (T,tuple(legs),)
 
-        H = ctg.einsum(*args,optimize="greedy")
-        # reshaping
-        H = np.transpose(H,[2*i for i in range(self.G.number_of_nodes())] + [2*i+1 for i in range(self.G.number_of_nodes())])
+        out_legs = tuple(range(N,3*N))
+        H = np.einsum(*args,out_legs,optimize=True)
         H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
 
         if sanity_check: assert is_hermitian(H)
@@ -280,8 +278,15 @@ class PEPO:
 
     @property
     def I(self) -> np.ndarray:
-        """Identity matrix with the respective dimensions."""
+        """Identity matrix with the dimensions `(self.D,self.D)`."""
         return np.eye(self.D)
+
+    @property
+    def nsites(self):
+        """
+        Number of sites on which the operator is defined.
+        """
+        return self.G.number_of_nodes()
 
     @staticmethod
     def view_tensor(T:np.ndarray):
@@ -390,9 +395,9 @@ class TFI(PauliPEPO):
     Travsverse Field Ising model.
     """
 
-    def __init__(self,G:nx.MultiGraph,J:float=1,h:float=0,sanity_check:bool=False) -> nx.MultiGraph:
+    def __init__(self,G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> nx.MultiGraph:
         """
-        Travsverse Field Ising model PEPO on graph `G`, with coupling `J` and external field `h`.
+        Travsverse Field Ising model `J * sz * sz + g * sx` PEPO on graph `G`, with coupling `J` and external field `h`.
 
         Ordering of legs in the PEPO virtual dimensions is inherited from `G`. The last two dimensions of every PEPO tensor are the physical dimensions.
         """
@@ -407,7 +412,7 @@ class TFI(PauliPEPO):
         0 is the moving particle state, 1 the decay state, and 2 is the vacuum state.
         """
 
-        def ising_PEPO_tensor_without_coupling(N_pas:int,N_out:int,h:float) -> np.ndarray:
+        def ising_PEPO_tensor_without_coupling(N_pas:int,N_out:int,g:float) -> np.ndarray:
             """
             Returns a Transverse Field Ising PEPO tensor, that is missing the incoming and outgoing coupling.
 
@@ -431,7 +436,7 @@ class TFI(PauliPEPO):
 
             # transverse field
             index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
-            T[index] = h * self.X
+            T[index] = g * self.X
 
             return T
 
@@ -455,7 +460,7 @@ class TFI(PauliPEPO):
 
             # PEPO tensor, where the first dimension is the incoming leg, the passive legs
             # and the outgoing legs follow, and the last two dimensions are the physical legs
-            T = ising_PEPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,h=h)
+            T = ising_PEPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,g=g)
 
             if node == self.root:
                 # root node; we need to put the (incoming) boundary leg between the virtual dimensions and the physical dimensions

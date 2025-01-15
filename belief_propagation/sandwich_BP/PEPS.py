@@ -8,7 +8,7 @@ import cotengra as ctg
 import warnings
 import copy
 
-from belief_propagation.utils import network_message_check,crandn,write_exp_size_to_graph
+from belief_propagation.utils import network_message_check,crandn,write_exp_bonddim_to_graph
 
 class PEPS:
     """
@@ -74,7 +74,7 @@ class PEPS:
         """
         if sanity_check: assert self.intact_check()
 
-        if self.G.number_of_nodes() == 1:
+        if self.nsites == 1:
             # the network is trivial
             return tuple(self.G.nodes(data="T"))[0][1]
 
@@ -135,12 +135,21 @@ class PEPS:
 
         return
 
+    @property
+    def nsites(self):
+        """
+        Number of sites on which the state is defined.
+        """
+        return self.G.number_of_nodes()
+
     @classmethod
     def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=False,bond_dim_strategy:str="uniform",sanity_check:bool=False,**kwargs):
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
         the physical dimension is `D`. Any leg ordering in `G` is not
-        incorporated in the MPS that is returned.
+        incorporated in the MPS that is returned. Bond dimensions are
+        initialized using `bond_dim_strategy`; see
+        `PEPS.set_bond_dimensions`.
         """
         # random number generation
         if real:
@@ -244,12 +253,12 @@ class PEPS:
             return
 
         if bond_dim_strategy == "exp":
-            write_exp_size_to_graph(G=G,D=D)
+            write_exp_bonddim_to_graph(G=G,D=D)
             return
 
         if bond_dim_strategy == "exp_cutoff":
-            if max_chi == None: raise ValueError("Bond dimension strategy " + bond_dim_strategy + " requires cutoff.")
-            write_exp_size_to_graph(G=G,D=D,max_chi=max_chi)
+            if max_chi == None: raise ValueError("Bond dimension strategy " + bond_dim_strategy + " requires cutoff value.")
+            write_exp_bonddim_to_graph(G=G,D=D,max_chi=max_chi)
             return
 
         raise ValueError("Bond dimension strategy " + bond_dim_strategy + " not implemented.")
