@@ -132,6 +132,29 @@ def gen_eigval_problem(A:np.ndarray,B:np.ndarray,eps:float=1e-5) -> tuple[np.nda
 
     return lambda_A,U_B_tilde @ U_A
 
+def multi_tensor_rank(T:np.ndarray,threshold:float=1e-8) -> tuple[int]:
+    """
+    Computes the rank of all matricizations of `T`, where the
+    matricizations are obtained by grouping all dimensions
+    except one. Singular values below `threshold` are considered
+    zero.
+
+    Returns an array, where `rank[i]` is the rank of the `i`-mode
+    matricization.
+    """
+    rank = ()
+    newaxes = [_ for _ in range(1,T.ndim)] + [0,]
+    for l in range(T.ndim):
+        # l-mode matricization and it's singular value decomposition
+        mat = np.reshape(T,newshape=(T.shape[0],-1))
+        singvals = np.linalg.svd(mat,full_matrices=False,compute_uv=False)
+        rank += (mat.shape[0] - np.sum(np.isclose(singvals,0,atol=threshold)),)
+
+        # rolling axes for next matricization
+        T = np.transpose(T,axes=newaxes)
+
+    return rank
+
 # -------------------------------------------------------------------------------
 #                   graph routines
 # -------------------------------------------------------------------------------

@@ -11,12 +11,13 @@ algorithm on graphs, as well as DMRG.
 import numpy as np
 import networkx as nx
 import cotengra as ctg
+import scipy.linalg as scialg
+import ray
 import warnings
 import itertools
-import ray
 import tqdm
 
-from belief_propagation.utils import network_message_check,crandn,is_hermitian,rel_err,gen_eigval_problem
+from belief_propagation.utils import network_message_check,crandn
 from belief_propagation.sandwich_BP.PEPO import PEPO
 from belief_propagation.sandwich_BP.PEPS import PEPS
 
@@ -75,13 +76,6 @@ class Braket:
     """
     Base class for sandwiches of MPS and PEPOs. Contains code for belief propagation.
     """
-
-    numiter:int = 500
-    """Maximum number of message update iterations."""
-    numretries:int = 10
-    """Maximum number of message update iteration retries."""
-    threshold:float = 1e-10
-    """Default threshold for breaking of the BP iteration."""
 
     def intact_check(self) -> bool:
         """
@@ -397,7 +391,7 @@ class Braket:
 
         return
 
-    def BP(self,numiter:int=None,numretries:float=None,real:bool=False,normalize:bool=True,threshold:float=1e-10,parallel:bool=False,verbose:bool=True,sanity_check:bool=False,**kwargs) -> None:
+    def BP(self,numiter:int=500,numretries:float=10,real:bool=False,normalize:bool=True,threshold:float=1e-10,parallel:bool=False,verbose:bool=True,sanity_check:bool=False,**kwargs) -> None:
         """
         Runs the BP algorithm with `numiter` iterations on the network. Parameters:
         * `numretries`: Number of times the BP iteration is starting over when it does not converge.
@@ -427,10 +421,6 @@ class Braket:
 
         # initially, the messages are not converged
         self.converged = False
-
-        numiter = numiter if numiter != None else self.numiter
-        numretries = numretries if numretries != None else self.numretries
-        threshold = threshold if threshold != None else self.threshold
 
         iRetry = 0
         while iRetry < numretries:
@@ -716,277 +706,86 @@ class Braket:
 
         return
 
-class DMRG:
+def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False,**kwargs) -> PEPS:
     """
-    Single-site DMRG on graphs. Environments are calculated using belief propagation.
+    L2BP compression from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321).
+    Singular values below `singval_threshold` are discarded. `kwargs` are passed to
+    `Braket.BP`. `psi` is manipulated in-place.
     """
+    if sanity_check: assert psi.intact_check()
 
-    nSweeps:int=5
-    """Default number of sweeps."""
-    hermiticity_threshold:float=1e-6
-    """Allowed deviation from exact hermiticity."""
-    tikhonov_regularization_eps:float=1e-6
-    """Epsilon for Tikhonov-regularization of singular messages."""
+    # handling kwargs
+    kwargs["iterator_desc_prefix"] = kwargs["iterator_desc_prefix"] + " | L2BP compression" if "iterator_desc_prefix" in kwargs.keys() else "L2BP compression"
+    kwargs["sanity_check"] = sanity_check
 
-    def intact_check(self) -> bool:
-        """
-        Checks if the DMRG algrithm can be run. This amounts to:
-        * Checking if the underlying braket is intact.
-        + Checking if expval graph and overlap graph are compatible.
-        * Checking if bra and ket are adjoint to one another.
-        * Checking if the leg orderings in `self.overlap` and `self.expval` are the same.
-        """
-        if not self.expval.intact_check(): return False
-        if not self.overlap.intact_check(): return False
+    # BP iteration
+    overlap = Braket.Overlap(psi,psi,sanity_check=sanity_check)
+    overlap.BP(**kwargs)
 
-        # re the physical dimensions the same?
-        if not self.overlap.D == self.expval.D:
-            warnings.warn("Physical dimensions do not match.")
-            return False
+    # compressing every edge
+    for node1,node2 in psi.G.edges():
+        size = overlap.ket.G[node1][node2][0]["size"]
+        ndim1 = psi.G.nodes[node1]["T"].ndim
+        ndim2 = psi.G.nodes[node2]["T"].ndim
 
-        # are expval graph and overlap graph compatible?
-        if not Braket.graph_compatible(self.expval.G,self.overlap.G):
-            warnings.warn("Graphs of overlap and expval not compatible.")
-            return False
+        # get messages
+        msg_12 = np.reshape(overlap.G[node1][node2][0]["msg"][node2][:,0,:],newshape=(size,size))
+        msg_21 = np.reshape(overlap.G[node1][node2][0]["msg"][node1][:,0,:],newshape=(size,size))
 
-        # are bra and ket adjoint?
-        for node in self.overlap.G.nodes():
-            if not np.allclose(self.overlap.bra.G.nodes[node]["T"].conj(),self.overlap.ket.G.nodes[node]["T"]):
-                warnings.warn(f"Bra- and ket-tensors at node {node} in overlap not complex conjugates of one another.")
-                return False
-        for node in self.expval.G.nodes():
-            if not np.allclose(self.expval.bra.G.nodes[node]["T"].conj(),self.expval.ket.G.nodes[node]["T"]):
-                warnings.warn(f"Bra- and ket-tensors at node {node} in expval not complex conjugates of one another.")
-                return False
+        # splitting the messages
+        eigvals1,W1 = scialg.eigh(msg_12,overwrite_a=True)
+        eigvals2,W2 = scialg.eigh(msg_21,overwrite_a=True)
+        R1 = np.diag(np.sqrt(eigvals1)) @ W1.conj().T
+        R2 = np.diag(np.sqrt(eigvals2)) @ W2.conj().T
 
-        # do overlap and expval contain the same tensors?
-        for node in self.expval.G.nodes():
-            if not np.allclose(self.expval.ket.G.nodes[node]["T"],self.overlap.ket.G.nodes[node]["T"]):
-                warnings.warn(f"Tensor at node {node} is not the same in overlap and expval.")
-                return False
+        # SVD over the bond, and truncation
+        U,singvals,Vh = scialg.svd(R1 @ R2,full_matrices=False,overwrite_a=True)
+        nonzero_mask = np.logical_not(np.isclose(singvals,0,atol=singval_threshold))
 
-        # are the leg orderings the same?
-        for node1,node2,legs in self.expval.G.edges(data="legs"):
-            if not self.overlap.G.has_edge(node1,node2):
-                warnings.warn(f"Edge ({node1},{node2}) present in expval, but not present in overlap.")
-                return False
-            if self.expval.G[node1][node2][0]["legs"] != legs:
-                warnings.warn(f"Leg indices of edge ({node1},{node2}) different in expval and overlap.")
-                return False
+        if np.sum(nonzero_mask) == 0:
+            warnings.warn(f"Threshold {singval_threshold:.3e} cuts edge ({node1},{node2}). Setting bond dimension to one.")
+            nonzero_mask[0] = True
 
-        return True
+        U = U[:,nonzero_mask]
+        Vh = Vh[nonzero_mask,:]
+        singvals = singvals[nonzero_mask]
 
-    def local_H(self,node:int,threshold:float=hermiticity_threshold,sanity_check:bool=False) -> np.ndarray:
-        """
-        Hamiltonian at `node`, by taking inbound messages to be environments.
-        `threshold` is the absolute allowed error in the hermiticity of the
-        hamiltonian obtained (checked if `sanity_check=True`).
-        """
-        # sanity check
-        if sanity_check: assert self.intact_check()
+        # projectors
+        P1 = np.einsum("ij,jk,kl->il",R2,Vh.conj().T,np.diag(1 / np.sqrt(singvals)),optimize=True)
+        P2 = np.einsum("ij,jk,kl->il",np.diag(1 / np.sqrt(singvals)),U.conj().T,R1,optimize=True)
 
-        # The hamiltonian at node is obtained by tracing out the rest of the network. The environments are approximated by messages
-        nLegs = len(self.expval.G.adj[node])
-        args = ()
-        """Arguments for einsum"""
+        print(f"edge ({node1},{node2}): projector distance = {np.linalg.norm(np.eye(N=P1.shape[0]) - P1 @ P2)}")
 
-        out_legs = tuple(range(nLegs)) + (3*nLegs,) + tuple(range(2*nLegs,3*nLegs)) + (3*nLegs+1,)
-        # Leg ordering of the local hamiltonian: (bra virtual dimensions, bra physical dimension, ket virtual dimensions, ket physical dimension).
-        # The order of the virtual legs is inherited from the "legs" indices on the edges
-        vir_dim = 1
-
-        for neighbor in self.expval.G.adj[node]:
-            # collecting einsum arguments
-            args += (
-                self.expval.G[node][neighbor][0]["msg"][node],
-                (
-                    self.expval.bra.G[node][neighbor][0]["legs"][node], # bra leg
-                    nLegs + self.expval.op.G[node][neighbor][0]["legs"][node], # operator leg
-                    2 * nLegs + self.expval.ket.G[node][neighbor][0]["legs"][node], # ket leg
-                )
-            )
-
-            # compiling virtual dimensions for later reshape
-            vir_dim *= self.expval.ket.G[node][neighbor][0]["size"]
-
-        args += (
-            # operator tensor
-            self.expval.op.G.nodes[node]["T"],
-            tuple(nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs,3*nLegs+1),
+        # absorbing projector 1 tensor into node 1
+        Tlegs = tuple(range(ndim1))
+        Plegs = (overlap.ket.G[node1][node2][0]["legs"][node1],ndim1)
+        outlegs = list(range(ndim1))
+        outlegs[overlap.ket.G[node1][node2][0]["legs"][node1]] = ndim1
+        psi.G.nodes[node1]["T"] = np.einsum(
+            psi.G.nodes[node1]["T"],Tlegs,
+            P1,Plegs,
+            outlegs,
+            optimize=True
         )
 
-        H = np.einsum(*args,out_legs,optimize=True)
-        H = np.reshape(H,(vir_dim * self.expval.D,vir_dim * self.expval.D))
+        # absorbing projector 2 tensor into node 2
+        Tlegs = tuple(range(ndim2))
+        Plegs = (ndim2,overlap.ket.G[node1][node2][0]["legs"][node2])
+        outlegs = list(range(ndim2))
+        outlegs[overlap.ket.G[node1][node2][0]["legs"][node2]] = ndim2
+        psi.G.nodes[node2]["T"] = np.einsum(
+            P2,Plegs,
+            psi.G.nodes[node2]["T"],Tlegs,
+            outlegs,
+            optimize=True
+        )
 
-        if sanity_check: assert is_hermitian(H,threshold=threshold,verbose=False)
+        # updating size of edge
+        overlap.ket.G[node1][node2][0]["size"] = P1.shape[1]
 
-        return H
+    if sanity_check: assert psi.intact_check()
 
-    def local_env(self,node:int,threshold:float=hermiticity_threshold,regularize:bool=True,sanity_check:bool=False) -> np.ndarray:
-        """
-        Environment at node. Calculated from `self.overlap`. This amounts to
-        stacking and re-shaping messages, that are inbound to `node`.
-        `threshold` is the absolute allowed error in the hermiticity of the
-        resulting matrix (checked if `sanity_check=True`).
-
-        Messages from leafs are singular, in which case Tikhonov-regularization
-        is performed (if `regularize=True`).
-        """
-        # sanity check
-        if sanity_check: assert self.intact_check()
-
-        nLegs = len(self.overlap.G.adj[node])
-        args = ()
-        """Arguments for einsum"""
-
-        out_legs = tuple(range(nLegs)) + (3*nLegs,) + tuple(range(2*nLegs,3*nLegs)) + (3*nLegs+1,)
-        # Leg ordering of the local hamiltonian: (bra virtual dimensions, bra physical dimension, ket virtual dimensions, ket physical dimension)
-        # The order of the virtual dimensions is inherited from the "legs" indices on the edges
-        vir_dim = 1
-
-        for neighbor in self.overlap.G.adj[node]:
-            if not self.overlap.G[node][neighbor][0]["msg"][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
-            msg = self.overlap.G[node][neighbor][0]["msg"][node][:,0,:]
-
-            # collecting einsum arguments
-            args += (
-                msg,
-                (
-                    self.overlap.bra.G[node][neighbor][0]["legs"][node], # bra leg
-                    2 * nLegs + self.overlap.ket.G[node][neighbor][0]["legs"][node], # ket leg
-                )
-            )
-
-            # compiling virtual dimensions for later reshape
-            vir_dim *= self.overlap.ket.G[node][neighbor][0]["size"]
-
-        # identity for the physical dimension
-        args += (self.overlap.op.I,(3*nLegs,3*nLegs+1))
-
-        N = np.einsum(*args,out_legs,optimize=True)
-        N = np.reshape(N,(vir_dim * self.overlap.D,vir_dim * self.overlap.D))
-
-        if sanity_check: assert is_hermitian(N,threshold=threshold)
-
-        return N
-
-    def sweep(self,sanity_check:bool=False,normalize:bool=True,**kwargs) -> float:
-        """
-        Local update at all sites. `kwargs` are passed to `Braket.BP`.
-        Returns the change in energy after the sweep.
-
-        The graph is traversed in breadth-first manner. After each
-        local update, new outgoing messages are calculated,
-        thereby updating the environments.
-        """
-        if sanity_check: assert self.intact_check()
-
-        # calculating environments and previous energy
-        if not self.overlap.converged: self.overlap.BP(normalize=normalize,sanity_check=sanity_check,**kwargs)
-        if not self.expval.converged: self.expval.BP(normalize=normalize,sanity_check=sanity_check,**kwargs)
-        Eprev = self.E0
-
-        # we'll update tensors and matrices, so as a precaution, we'll set the convergence markers to False
-        self.overlap.converged = False
-        self.expval.converged = False
-
-        for node in nx.dfs_postorder_nodes(self.expval.G,source=self.expval.op.root):
-            H = self.local_H(node,sanity_check=sanity_check)
-            N = self.local_env(node,sanity_check=sanity_check)
-
-            if sanity_check: # are local hamiltonian and environment correctly defined?
-                T = self.overlap.ket.G.nodes[node]["T"]
-                local_psi = T.flatten()
-                expval_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),H,local_psi)
-                overlap_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),N,local_psi)
-
-                if not np.isclose(expval_local_cntr,self.expval.cntr):
-                    warnings.warn(f"Local hamiltonian at node {node} does not reproduce expectation value. Relative error {rel_err(self.expval.cntr,expval_local_cntr):.3e}.")
-                if not np.isclose(overlap_local_cntr,self.overlap.cntr):
-                    warnings.warn(f"Local environment at node {node} does not reproduce overlap. Relative error {rel_err(self.overlap.cntr,overlap_local_cntr):.3e}.")
-
-            eigvals,eigvecs = gen_eigval_problem(H,N,eps=self.tikhonov_regularization_eps)
-
-            # re-shaping new statevector
-            newshape = [np.nan for neighbor in self.overlap.G.adj[node]]
-            for neighbor in self.overlap.G.adj[node]: newshape[self.overlap.G[node][neighbor][0]["legs"][node]] = self.overlap.ket.G[node][neighbor][0]["size"]
-            newshape += [self.overlap.D,]
-            T = np.reshape(eigvecs[:,np.argmin(eigvals)],newshape)
-
-            # inserting it into PEPS and PEPO
-            self.overlap.ket.G.nodes[node]["T"] = T
-            self.overlap.bra.G.nodes[node]["T"] = T.conj()
-            self.expval.ket.G.nodes[node]["T"] = T
-            self.expval.bra.G.nodes[node]["T"] = T.conj()
-
-            # calculating new environments
-            self.overlap.BP(sanity_check=sanity_check,**kwargs)
-            self.expval.BP(sanity_check=sanity_check,**kwargs)
-        Enext = self.E0
-
-        return np.abs(Eprev - Enext)
-
-    def run(self,nSweeps:int=None,verbose:bool=False,sanity_check:bool=False,**kwargs):
-        """
-        Runs single-site DMRG on the underlying braket.
-        `kwargs` are passed to BP iterations. The state is not normalized afterwards!
-        """
-        if sanity_check: assert self.intact_check()
-
-        # preparing kwargs
-        kwargs["numretries"] = np.inf
-        kwargs["verbose"] = False
-
-        nSweeps = nSweeps if nSweeps != None else self.nSweeps
-        iterator = tqdm.tqdm(range(nSweeps),desc=f"DMRG sweeps",disable=not verbose)
-        eps_list = ()
-
-        for iSweep in iterator:
-            eps = self.sweep(sanity_check=sanity_check,**kwargs)
-            iterator.set_postfix_str(f"eps = {eps:.3e}")
-            eps_list += (eps,)
-
-        return
-
-    def contract(self,sanity_check:bool=True) -> float:
-        """
-        Exact calculation of the current expectation value.
-        """
-        expval_cntr = self.expval.contract(sanity_check=sanity_check)
-        overlap_cntr = self.overlap.contract(sanity_check=sanity_check)
-
-        return expval_cntr / overlap_cntr
-
-    @property
-    def converged(self) -> bool:
-        """Indicates whether the messages in `self.overlap.G` and `self.expval.G` are converged."""
-        return self.overlap.converged and self.expval.converged
-
-    @property
-    def E0(self) -> float:
-        """Current best guess of the ground state energy."""
-        return self.expval.cntr / self.overlap.cntr
-
-    @property
-    def nsites(self):
-        """
-        Number of sites on which the braket is defined.
-        """
-        return self.overlap.nsites
-
-    def __init__(self,op:PEPO,psi_init:PEPS=None,chi:int=None,sanity_check:bool=False,**kwargs):
-        """
-        Initialisation of a `DMRG` object. The initial is chosen randomly,
-        if it is not given. `kwargs` are passed to `PEPS.init_random`.
-        """
-        # if not given, initial state is chosen randomly
-        if psi_init == None:
-            psi_init = PEPS.init_random(G=op.G,D=op.D,chi=chi,**kwargs)
-
-        self.expval = Braket.Expval(psi=psi_init,op=op,sanity_check=sanity_check)
-        self.overlap = Braket.Overlap(psi1=psi_init,psi2=psi_init)
-
-        if sanity_check: assert self.intact_check()
+    return
 
 if __name__ == "__main__":
     pass
