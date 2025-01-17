@@ -136,7 +136,7 @@ class PEPS:
         return
 
     @property
-    def nsites(self):
+    def nsites(self) -> int:
         """
         Number of sites on which the state is defined.
         """
@@ -271,14 +271,31 @@ class PEPS:
         if sanity_check: assert network_message_check(G)
 
         # inferring physical dimension
-        self.D = tuple(T.shape[-1] for _,T in G.nodes(data="T"))[0]
+        self.D:int = tuple(T.shape[-1] for _,T in G.nodes(data="T"))[0]
         """Physical dimension."""
 
-        self.G = G
+        self.G:nx.MultiGraph = G
 
         if sanity_check: assert self.intact_check()
 
         return
+
+    def __getitem__(self,node:int) -> np.ndarray:
+        """
+        Subscripting with a node gives the tensor at that node.
+        """
+        if not self.G.has_node(node): raise ValueError(f"Node {node} not present in graph.")
+
+        return self.G.nodes[node]["T"]
+
+    def __setitem__(self,node:int,T:np.ndarray) -> None:
+        """
+        Changing tensors directly.
+        """
+        if not self.G.has_node(node): raise ValueError(f"Node {node} not present in graph.")
+        if not T.ndim == self.G.nodes[node]["T"].ndim: raise ValueError("Attempting to set site tensor with wrong number of legs.")
+
+        self.G.nodes[node]["T"] = T
 
 if __name__ == "__main__":
     pass

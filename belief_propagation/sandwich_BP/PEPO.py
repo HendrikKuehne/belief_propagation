@@ -282,7 +282,7 @@ class PEPO:
         return np.eye(self.D)
 
     @property
-    def nsites(self):
+    def nsites(self) -> int:
         """
         Number of sites on which the operator is defined.
         """
@@ -349,6 +349,23 @@ class PEPO:
         """Virtual bond dimension."""
 
         return
+
+    def __getitem__(self,node:int) -> np.ndarray:
+        """
+        Subscripting with a node gives the tensor at that node.
+        """
+        if not self.G.has_node(node): raise ValueError(f"Node {node} not present in graph.")
+
+        return self.G.nodes[node]["T"]
+
+    def __setitem__(self,node:int,T:np.ndarray) -> None:
+        """
+        Changing tensors directly.
+        """
+        if not self.G.has_node(node): raise ValueError(f"Node {node} not present in graph.")
+        if not T.ndim == self.G.nodes[node]["T"].ndim: raise ValueError("Attempting to set site tensor with wrong number of legs.")
+
+        self.G.nodes[node]["T"] = T
 
 class PauliPEPO(PEPO):
     """

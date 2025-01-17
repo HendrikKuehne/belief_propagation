@@ -72,6 +72,38 @@ def contract_tensor_msg(
 
     return msg
 
+class SubscriptableNode:
+    """
+    Auxiliary class to make the `.msg` property
+    of the `Braket` class doubly subscriptable.
+
+    **UNUSED** because this would induce a huge
+    memory overhead - and I thought of a more
+    elegant solution.
+    """
+    def __init__(self,neighborhood:dict[int,np.ndarray]):
+        self.neighborhood:dict[int,np.ndarray] = neighborhood
+
+    def __getitem__(self,node:int) -> np.ndarray:
+        """Access to the messages in a `Braket` instance."""
+        return self.neighborhood[node]
+
+class SubscriptableGraph:
+    """
+    Auxiliary class to make the `.msg` property
+    of the `Braket` class doubly subscriptable.
+
+    **UNUSED** because this would induce a huge
+    memory overhead - and I thought of a more
+    elegant solution.
+    """
+    def __init__(self,G:nx.MultiGraph):
+        self.G:nx.MultiGraph = G
+
+    def __getitem__(self,node:int) -> SubscriptableNode:
+        """Access to the messages that are outbound from `node`."""
+        return SubscriptableNode({neighbor:self.G[node][neighbor][0]["msg"][neighbor] for neighbor in self.G.adj[node]})
+
 class Braket:
     """
     Base class for sandwiches of MPS and PEPOs. Contains code for belief propagation.
@@ -101,24 +133,20 @@ class Braket:
             warnings.warn("Physical dimensions in braket do not match.")
             return False
 
-        # are there any messages with non-finite values?
-        for node1,node2,data in self.G.edges(data=True):
-            if "msg" in data.keys():
-                if node1 in data["msg"].keys():
-                    if not np.isfinite(data["msg"][node1]).all():
-                        warnings.warn(f"Non-finite message sent from {node2} to {node1}.")
-                        return False
-                if node2 in data["msg"].keys():
-                    if not np.isfinite(data["msg"][node2]).all():
-                        warnings.warn(f"Non-finite message sent from {node1} to {node2}.")
+        if self.msg != None:
+            # are there any messages with non-finite values?
+            for sending_node in self.msg.keys():
+                for receiving_node in self.msg[sending_node].keys():
+                    if not np.isfinite(self.msg[sending_node][receiving_node]).all():
+                        warnings.warn(f"Non-finite message sent from {sending_node} to {receiving_node}.")
                         return False
 
         return True
 
     def __construct_initial_messages(self,real:bool,normalize:bool,sanity_check:bool,rng:np.random.Generator=np.random.default_rng()) -> None:
         """
-        Initial messages for BP iteration. Saved under the key `msg`
-        in `self.G`.
+        Initial messages for BP iteration. Saved in the dictionary
+        `self.msg`.
 
         Messages are three-index tensors, where the first index belongs
         to the bra, the second index belongs to the operator and the third
@@ -153,6 +181,8 @@ class Braket:
 
             return randn(size=(bra_size,op_size,ket_size))
 
+        self.msg = {node:{} for node in self.G.nodes()}
+
         for node1,node2 in self.G.edges():
             for sending_node,receiving_node in itertools.permutations((node1,node2)):
                 # messages in both directions
@@ -172,7 +202,7 @@ class Braket:
                     )
 
                 if normalize: msg /= np.sum(msg)
-                self.G[sending_node][receiving_node][0]["msg"][receiving_node] = msg
+                self.msg[sending_node][receiving_node] = msg
 
         return
 
@@ -181,8 +211,7 @@ class Braket:
         Contracts tensor and messages at `sending_node`, and returns the message
         that flows from `sending_node` to `receiving_node`.
         """
-        if sanity_check:
-            assert self.G.has_node(sending_node) and self.G.has_node(receiving_node)
+        if sanity_check: assert self.G.has_node(sending_node) and self.G.has_node(receiving_node)
 
         # The outcoming message on one edge is the result of absorbing all incoming messages on all other edges into the tensor sandwich
         nLegs = len(self.G.adj[sending_node])
@@ -194,7 +223,7 @@ class Braket:
         for neighbor in self.G.adj[sending_node]:
             if neighbor == receiving_node: continue
             args += (
-                self.G[sending_node][neighbor][0]["msg"][sending_node],
+                self.msg[neighbor][sending_node],
                 (
                     self.bra.G[sending_node][neighbor][0]["legs"][sending_node], # bra leg
                     nLegs + self.op.G[sending_node][neighbor][0]["legs"][sending_node], # operator leg
@@ -240,8 +269,7 @@ class Braket:
 
         if not parallel:
             # old, non-parallel version of the code
-            newG = self.prepare_graph(self.G,keep_legs=True)
-            """Copy of the graph used to store the new messages."""
+            new_msg = {node:{} for node in self.G.nodes()}
 
             for node1,node2 in self.G.edges():
                 for sending_node,receiving_node in itertools.permutations((node1,node2)):
@@ -249,18 +277,18 @@ class Braket:
 
                     if len(self.G.adj[sending_node]) == 1:
                         # leaf node; no action necessary
-                        newG[sending_node][receiving_node][0]["msg"][receiving_node] = self.G[sending_node][receiving_node][0]["msg"][receiving_node]
+                        new_msg[sending_node][receiving_node] = self.msg[sending_node][receiving_node]
                         continue
 
                     msg = self.contract_tensor_msg(sending_node,receiving_node,sanity_check)
 
                     # saving the new message
-                    newG[sending_node][receiving_node][0]["msg"][receiving_node] = msg / np.sum(msg) if normalize else msg
+                    new_msg[sending_node][receiving_node] = msg / np.sum(msg) if normalize else msg
                     # change in message norm
-                    eps += (np.linalg.norm(self.G[sending_node][receiving_node][0]["msg"][receiving_node] - newG[sending_node][receiving_node][0]["msg"][receiving_node]),)
+                    eps += (np.linalg.norm(self.msg[sending_node][receiving_node] - new_msg[sending_node][receiving_node]),)
 
             # put new messages in the graph
-            self.G = newG
+            self.msg = new_msg
 
             return np.max(eps)
 
@@ -287,9 +315,9 @@ class Braket:
         for msg_id,msg in zip(msg_ids,new_msg):
             sending_node,receiving_node = msg_id
             # change in message norm
-            eps += (np.linalg.norm(self.G[sending_node][receiving_node][0]["msg"][receiving_node] - msg / np.sum(msg) if normalize else msg),)
+            eps += (np.linalg.norm(self.msg[sending_node][receiving_node] - msg / np.sum(msg) if normalize else msg),)
             # saving the new message
-            self.G[sending_node][receiving_node][0]["msg"][receiving_node] = msg / np.sum(msg) if normalize else msg
+            self.msg[sending_node][receiving_node] = msg / np.sum(msg) if normalize else msg
 
         return max(eps)
 
@@ -338,7 +366,7 @@ class Braket:
         for node in self.G.nodes():
             norm = np.real_if_close((self.cntr / self.G.nodes[node]["cntr"]) ** (1 / len(self.G.adj[node])))
 
-            for neighbor in self.G.adj[node]: self.G[node][neighbor][0]["msg"][node] *= norm
+            for neighbor in self.G.adj[node]: self.msg[neighbor][node] *= norm
 
         return
     
@@ -350,7 +378,8 @@ class Braket:
         # sanity check
         if sanity_check: assert self.intact_check()
 
-        for node1,node2 in self.G.edges(): self.G[node1][node2][0]["cntr"] = ctg.einsum("ijk,ijk->",self.G[node1][node2][0]["msg"][node1],self.G[node1][node2][0]["msg"][node2])
+        for node1,node2 in self.G.edges():
+            self.G[node1][node2][0]["cntr"] = ctg.einsum("ijk,ijk->",self.msg[node1][node2],self.msg[node2][node1])
 
         return
 
@@ -367,7 +396,7 @@ class Braket:
 
             for neighbor in self.G.adj[node]:
                 args += (
-                    self.G[node][neighbor][0]["msg"][node],
+                    self.msg[neighbor][node],
                     (
                         self.bra.G[node][neighbor][0]["legs"][node], # bra leg
                         nLegs + self.op.G[node][neighbor][0]["legs"][node], # operator leg
@@ -508,7 +537,8 @@ class Braket:
     def __contract_ctg_hyperopt(self,target_size:int=2**20,parallel:bool=False,verbose:bool=False,sanity_check:bool=False,**kwargs) -> float:
         """
         Exact contraction using a `cotengra.HyperOptimizer` object.
-        * `target_size`: Maximum intermediate tensor size (see [basic slicing](https://cotengra.readthedocs.io/en/latest/advanced.html#basic-slicing-slicing-opts)).
+        * `target_size`: Maximum intermediate tensor size (see
+        [basic slicing](https://cotengra.readthedocs.io/en/latest/advanced.html#basic-slicing-slicing-opts)).
         Standard value was chosen basically arbitrarily.
         * `parallel`: Whether Cotengra uses parallelization.
         """
@@ -592,7 +622,7 @@ class Braket:
             assert self.G.has_node(sending_node) and self.G.has_node(receiving_node)
 
         return dict(
-            msg = {neighbor:self.G[sending_node][neighbor][0]["msg"][sending_node] for neighbor in self.G.adj[sending_node]},
+            msg = {neighbor:self.msg[neighbor][sending_node] for neighbor in self.G.adj[sending_node]},
             sending_node = sending_node,
             receiving_node = receiving_node,
             bra_legs = self.bra.legs_dict(sending_node),
@@ -604,7 +634,7 @@ class Braket:
         )
 
     @property
-    def nsites(self):
+    def nsites(self) -> int:
         """
         Number of sites on which the braket is defined.
         """
@@ -692,10 +722,13 @@ class Braket:
             assert bra.D == op.D and ket.D == op.D
 
         self.G:nx.MultiGraph = self.prepare_graph(ket.G,True)
-        self.ket:PEPS = ket
         self.bra:PEPS = bra
         self.op:PEPO = op
+        self.ket:PEPS = ket
         self.D:int = op.D
+
+        self.msg:dict[int,dict[int,np.ndarray]] = None
+        """First key sending node, second key receiving node."""
 
         self.converged:bool=False
         """Indicates whether the messages in `self.G` are converged."""
@@ -703,6 +736,24 @@ class Braket:
         """Value of the network, calculated by BP."""
 
         if sanity_check: assert self.intact_check()
+
+        return
+
+    def __getitem__(self,node:int) -> tuple[np.ndarray]:
+        """
+        Subscripting with a node gives the tensor stack `(bra[node],op[node],ket[node])` at that node.
+        """
+        return (self.bra[node],self.op[node],self.ket[node])
+
+    def __setitem__(self,node:int,Tstack:tuple[np.ndarray]) -> None:
+        """
+        Changing tensors directly.
+        """
+        if not len(Tstack) == 3: raise ValueError(f"Tensor stacks must consist of three tensors. received {len(Tstack)} tensors.")
+
+        self.bra[node] = Tstack[0]
+        self.op[node] = Tstack[1]
+        self.ket[node] = Tstack[2]
 
         return
 
@@ -729,8 +780,8 @@ def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False
         ndim2 = psi.G.nodes[node2]["T"].ndim
 
         # get messages
-        msg_12 = np.reshape(overlap.G[node1][node2][0]["msg"][node2][:,0,:],newshape=(size,size))
-        msg_21 = np.reshape(overlap.G[node1][node2][0]["msg"][node1][:,0,:],newshape=(size,size))
+        msg_12 = np.reshape(overlap.msg[node1][node2][:,0,:],newshape=(size,size))
+        msg_21 = np.reshape(overlap.msg[node2][node1][:,0,:],newshape=(size,size))
 
         # splitting the messages
         eigvals1,W1 = scialg.eigh(msg_12,overwrite_a=True)
@@ -761,8 +812,8 @@ def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False
         Plegs = (overlap.ket.G[node1][node2][0]["legs"][node1],ndim1)
         outlegs = list(range(ndim1))
         outlegs[overlap.ket.G[node1][node2][0]["legs"][node1]] = ndim1
-        psi.G.nodes[node1]["T"] = np.einsum(
-            psi.G.nodes[node1]["T"],Tlegs,
+        psi[node1] = np.einsum(
+            psi[node1],Tlegs,
             P1,Plegs,
             outlegs,
             optimize=True
@@ -773,9 +824,9 @@ def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False
         Plegs = (ndim2,overlap.ket.G[node1][node2][0]["legs"][node2])
         outlegs = list(range(ndim2))
         outlegs[overlap.ket.G[node1][node2][0]["legs"][node2]] = ndim2
-        psi.G.nodes[node2]["T"] = np.einsum(
+        psi[node2] = np.einsum(
             P2,Plegs,
-            psi.G.nodes[node2]["T"],Tlegs,
+            psi[node2],Tlegs,
             outlegs,
             optimize=True
         )

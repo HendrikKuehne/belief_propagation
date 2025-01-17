@@ -11,7 +11,7 @@ import tqdm
 from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err
 from belief_propagation.sandwich_BP.PEPO import PEPO
 from belief_propagation.sandwich_BP.PEPS import PEPS
-from belief_propagation.sandwich_BP.braket import Braket
+from belief_propagation.sandwich_BP.braket import Braket,BP_compression
 
 class DMRG:
     """
@@ -48,17 +48,17 @@ class DMRG:
 
         # are bra and ket adjoint?
         for node in self.overlap.G.nodes():
-            if not np.allclose(self.overlap.bra.G.nodes[node]["T"].conj(),self.overlap.ket.G.nodes[node]["T"]):
+            if not np.allclose(self.overlap.bra[node].conj(),self.overlap.ket[node]):
                 warnings.warn(f"Bra- and ket-tensors at node {node} in overlap not complex conjugates of one another.")
                 return False
         for node in self.expval.G.nodes():
-            if not np.allclose(self.expval.bra.G.nodes[node]["T"].conj(),self.expval.ket.G.nodes[node]["T"]):
+            if not np.allclose(self.expval.bra[node].conj(),self.expval.ket[node]):
                 warnings.warn(f"Bra- and ket-tensors at node {node} in expval not complex conjugates of one another.")
                 return False
 
         # do overlap and expval contain the same tensors?
         for node in self.expval.G.nodes():
-            if not np.allclose(self.expval.ket.G.nodes[node]["T"],self.overlap.ket.G.nodes[node]["T"]):
+            if not np.allclose(self.expval.ket[node],self.overlap.ket[node]):
                 warnings.warn(f"Tensor at node {node} is not the same in overlap and expval.")
                 return False
 
@@ -95,7 +95,7 @@ class DMRG:
         for neighbor in self.expval.G.adj[node]:
             # collecting einsum arguments
             args += (
-                self.expval.G[node][neighbor][0]["msg"][node],
+                self.expval.msg[neighbor][node],
                 (
                     self.expval.bra.G[node][neighbor][0]["legs"][node], # bra leg
                     nLegs + self.expval.op.G[node][neighbor][0]["legs"][node], # operator leg
@@ -108,7 +108,7 @@ class DMRG:
 
         args += (
             # operator tensor
-            self.expval.op.G.nodes[node]["T"],
+            self.expval.op[node],
             tuple(nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs,3*nLegs+1),
         )
 
@@ -142,8 +142,8 @@ class DMRG:
         vir_dim = 1
 
         for neighbor in self.overlap.G.adj[node]:
-            if not self.overlap.G[node][neighbor][0]["msg"][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
-            msg = self.overlap.G[node][neighbor][0]["msg"][node][:,0,:]
+            if not self.overlap.msg[neighbor][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
+            msg = self.overlap.msg[neighbor][node][:,0,:]
 
             # collecting einsum arguments
             args += (
@@ -192,8 +192,7 @@ class DMRG:
             N = self.local_env(node,sanity_check=sanity_check)
 
             if sanity_check: # are local hamiltonian and environment correctly defined?
-                T = self.overlap.ket.G.nodes[node]["T"]
-                local_psi = T.flatten()
+                local_psi = self.overlap.ket[node].flatten()
                 expval_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),H,local_psi)
                 overlap_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),N,local_psi)
 
@@ -211,10 +210,10 @@ class DMRG:
             T = np.reshape(eigvecs[:,np.argmin(eigvals)],newshape)
 
             # inserting it into PEPS and PEPO
-            self.overlap.ket.G.nodes[node]["T"] = T
-            self.overlap.bra.G.nodes[node]["T"] = T.conj()
-            self.expval.ket.G.nodes[node]["T"] = T
-            self.expval.bra.G.nodes[node]["T"] = T.conj()
+            self.overlap.ket[node] = T
+            self.overlap.bra[node] = T.conj()
+            self.expval.ket[node] = T
+            self.expval.bra[node] = T.conj()
 
             # calculating new environments
             self.overlap.BP(sanity_check=sanity_check,**kwargs)
