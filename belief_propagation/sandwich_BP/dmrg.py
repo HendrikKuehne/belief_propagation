@@ -98,6 +98,12 @@ class DMRG:
             if not self.overlap.msg[neighbor][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
             msg = self.overlap.msg[neighbor][node][:,0,:]
 
+            eigvals = np.linalg.eigvals(msg)
+            nonzero_mask = np.logical_not(np.isclose(eigvals,0))
+            rank = np.sum(nonzero_mask)
+            edge_size = self.overlap.ket.G[node][neighbor][0]["size"]
+            print(f"    Message {neighbor} -> {node} has rank {rank} on edge of size {edge_size}. Cond.number {np.linalg.cond(msg):.5e}")
+
             # collecting einsum arguments
             args += (
                 msg,
@@ -143,6 +149,7 @@ class DMRG:
         for node in nx.dfs_postorder_nodes(self.expval.G,source=self.expval.op.root):
             H = self.local_H(node,sanity_check=sanity_check)
             N = self.local_env(node,sanity_check=sanity_check)
+            print(f"Condition number node {node}: {np.linalg.cond(N):.5e}")
 
             if sanity_check: # are local hamiltonian and environment correctly defined?
                 local_psi = self.overlap.ket[node].flatten()
@@ -194,6 +201,8 @@ class DMRG:
             eps = self.sweep(sanity_check=sanity_check,**kwargs)
             iterator.set_postfix_str(f"eps = {eps:.3e}")
             eps_list += (eps,)
+
+            print(f"After sweep {iSweep}: ",self)
 
             if compress:
                 # L2BP compression
@@ -298,8 +307,7 @@ class DMRG:
         if sanity_check: assert self.intact
 
     def __repr__(self) -> str:
-        digits = int(np.log10(self.nsites))
-        out = f"----------------------   DMRG problem on {self.nsites} sites.   ----------------------\nKet: " + str(self.overlap.ket) + "\nHamiltonian: " + str(self.expval.op)
+        out = f"----------------------   DMRG problem on {self.nsites} sites.   ----------------------\nKet: " + str(self.overlap.ket) + "\nHamiltonian: " + str(self.expval.op) + "\nMessages are " + "converged." if self.converged else "not converged."
         return out
 
 if __name__ == "__main__":
