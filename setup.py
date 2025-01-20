@@ -13,6 +13,7 @@ setup(
         "networkx",
         "matplotlib",
         "cotengra",
-        "scipy"
+        "scipy",
+        "sparse"
     ],
 )

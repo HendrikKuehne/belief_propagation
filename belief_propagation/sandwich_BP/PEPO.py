@@ -4,11 +4,15 @@ Projector-entangled pair operators on arbitrary graphs.
 
 import numpy as np
 import networkx as nx
+import sparse
 import cotengra as ctg
+import scipy.sparse as scisparse
 import warnings
 import itertools
+from typing import Union
 
 from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian
+from belief_propagation.sandwich_BP.PEPS import PEPS
 
 class PEPO:
     """
@@ -121,22 +125,65 @@ class PEPO:
             node1,node2 = nodes
             self.G[node1][node2][0]["label"] = i
 
-        N = self.G.number_of_nodes()
-        # extracting the einsum arguments
+        N_edges = self.G.number_of_edges()
+        # assembling the einsum arguments
         for i,nodeT in enumerate(self.G.nodes(data="T")):
             node,T = nodeT
-            legs = [None for _ in range(T.ndim-2)] + [N+i,2*N+i] # last two indices are the physical legs
+            legs = [None for _ in range(T.ndim-2)] + [N_edges + i,N_edges + self.G.number_of_nodes() + i] # last two indices are the physical legs
             for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
                 legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
             args += (T,tuple(legs),)
 
-        out_legs = tuple(range(N,3*N))
+        out_legs = tuple(range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
         H = np.einsum(*args,out_legs,optimize=True)
         H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
 
         if sanity_check: assert is_hermitian(H)
 
         return H
+
+    def to_sparse(self,sanity_check:bool=False) -> scisparse.csr_matrix:
+        """
+        Contracts the Hamiltonian using sparse operations
+        from the [sparse](https://github.com/pydata/sparse)
+        package.
+        """
+        if sanity_check: assert self.intact
+
+        if self.nsites == 1:
+            # the network is trivial
+            return tuple(self.G.nodes(data="T"))[0][1]
+
+        #if self.G.number_of_edges() > len(np.core.einsumfunc.einsum_symbols):
+        #    raise RuntimeError(f"The sparse package allows einsum contractions with up to {len(np.core.einsumfunc.einsum_symbols)} indices. The operator has too many edges ({self.G.number_of_edges()} edges).")
+
+        inputs = ()
+        tensors = ()
+
+        # enumerating the edges in the graph
+        for i,nodes in enumerate(self.G.edges()):
+            node1,node2 = nodes
+            self.G[node1][node2][0]["label"] = ctg.get_symbol(i)#np.core.einsumfunc.einsum_symbols[i]
+
+        N_edges = self.G.number_of_edges()
+        output = tuple(ctg.get_symbol(N_edges + i) for i in range(2 * self.nsites))
+
+        # assembling the einsum arguments
+        for i,node in enumerate(self.G.nodes()):
+            legs = [None for _ in range(self[node].ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
+            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+
+            inputs += (tuple(legs),)
+            tensors += (sparse.GCXS(self[node]),)
+
+        # einsum expression, with all physical dimensions contained in ellipsis
+        einsum_expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
+        # contraction using einsum
+        H = sparse.einsum(einsum_expr,*tensors)
+        H = sparse.reshape(H,shape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+
+        return H.to_scipy_sparse()
 
     def view_site(self,node:int):
         """
@@ -370,6 +417,49 @@ class PEPO:
             raise ValueError("Attempting to set site tensor with wrong number of legs.")
 
         self.G.nodes[node]["T"] = T
+
+    def __matmul__(self,psi:Union[PEPS,np.ndarray]) -> Union[PEPS,np.ndarray]:
+        """
+        Action of the operator on the state `psi`.
+        """
+
+        if isinstance(psi,PEPS):
+            # TODO: implement
+            raise NotImplementedError("PEPO action on PEPS is not yet implemented.")
+
+        if isinstance(psi,np.ndarray):
+            # sanity check
+            if not psi.ndim == 1: raise ValueError("psi must be a vector.")
+            if not psi.shape[0] == self.D ** self.nsites: raise ValueError(f"psi has the wrong number of components. Expected {self.D ** self.nsites}, got {psi.shape[0]}.")
+
+            # re-shaping. Order of sites will be determined by the order in which self.G.nodes() iterates through the graph
+            psi = np.reshape(psi,newshape=[self.D for _ in range(self.nsites)])
+
+            # enumerating the edges in the graph
+            for i,nodes in enumerate(self.G.edges()):
+                node1,node2 = nodes
+                self.G[node1][node2][0]["label"] = i
+
+            args = ()
+            N_edges = self.G.number_of_edges()
+            # assembling einsum arguments for the operator
+            for i,nodeT in enumerate(self.G.nodes(data="T")):
+                node,T = nodeT
+                legs = [None for _ in range(T.ndim-2)] + [N_edges + i,N_edges + self.G.number_of_nodes() + i] # last two indices are the physical legs
+                for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                    legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+                args += (T,tuple(legs),)
+
+            # einsum arguments for the state
+            args += (psi,tuple(range(N_edges + self.G.number_of_nodes(),N_edges + 2 * self.G.number_of_nodes())))
+
+            out_legs = tuple(range(N_edges,N_edges + self.G.number_of_nodes()))
+            psi = np.einsum(*args,out_legs,optimize=True)
+            psi = psi.flatten()
+
+            return psi
+
+        raise ValueError("PEPO.__matmul__ not implemented for type " + str(type(psi)) + ".")
 
     def __repr__(self) -> str:
         return f"Hamiltonian on {self.nsites} sites with Hilbert space of size {self.D} at each. PEPO is " + "intact." if self.intact else "not intact."

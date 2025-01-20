@@ -93,10 +93,12 @@ def check_msg_psd(G:nx.MultiGraph,threshold:float=1e-8,verbose:bool=False) -> bo
     """
     # TODO: implement
 
-def gen_eigval_problem(A:np.ndarray,B:np.ndarray,eps:float=1e-5) -> tuple[np.ndarray,np.ndarray]:
+def gen_eigval_problem(A:np.ndarray,B:np.ndarray,maxcond:float=1e6,eps:float=1e-5) -> tuple[np.ndarray,np.ndarray]:
     """
     Solves the generalized eigenvalue problem, using the
     workaround introduced [here](https://arxiv.org/abs/1903.11240v3).
+    Tikhonov regularization is used if the condition number
+    of `B` is larger than `maxcond`.
     The parameter `eps` is used for Tikhonov regularization,
     if `B` is singular. `A` is written over during computation.
 
@@ -105,7 +107,7 @@ def gen_eigval_problem(A:np.ndarray,B:np.ndarray,eps:float=1e-5) -> tuple[np.nda
     """
     cond = np.linalg.cond(B)
 
-    if cond > 1e6: # B is singular, let's employ Tikhonov-regularization
+    if cond > maxcond: # B is singular, let's employ Tikhonov-regularization
         B_inverse = np.linalg.inv(B + eps * np.eye(B.shape[0]))
         return scialg.eig(B_inverse @ A,overwrite_a=True)
     else:
