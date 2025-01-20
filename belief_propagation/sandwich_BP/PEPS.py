@@ -8,71 +8,18 @@ import cotengra as ctg
 import warnings
 import copy
 
-from belief_propagation.utils import network_message_check,crandn,write_exp_bonddim_to_graph
+from belief_propagation.utils import network_message_check,crandn,write_exp_bonddim_to_graph,multi_tensor_rank
 
 class PEPS:
     """
     Base class for matrix-product states with arbitrary geometry.
     """
 
-    def intact_check(self) -> bool:
-        """
-        Checks if the MPS is intact:
-        * Is the underlying network message-ready?
-        * Is the size of every edge saved?
-        * Are the physical legs the last dimension in each tensor?
-        * Do the physical legs have the correct sizes?
-        """
-        # are all the necessary attributes defined?
-        assert hasattr(self,"D")
-        assert hasattr(self,"G")
-
-        # is the underlying network message-ready?
-        if not network_message_check(self.G):
-            warnings.warn("Network not intact.")
-            return False
-
-        # size attribute given on every edge?
-        for node1,node2,data in self.G.edges(data=True):
-            if not "size" in data.keys():
-                warnings.warn(f"No size saved in edge ({node1},{node2}).")
-                return False
-            if data["size"] != self.G.nodes[node1]["T"].shape[data["legs"][node1]] or data["size"] != self.G.nodes[node2]["T"].shape[data["legs"][node2]]:
-                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
-                return False
-
-        # are the physical legs the last dimension in each tensor? Do the tensors have the correct physical dimensions?
-        for node,T in self.G.nodes(data="T"):
-            legs = [leg for leg in range(T.ndim)]
-            for node1,node2,key in self.G.edges(node,keys=True):
-                try:
-                    if not self.G[node1][node2][key]["trace"]:
-                        legs.remove(self.G[node1][node2][key]["legs"][node])
-                    else:
-                        # trace edge
-                        i1,i2 = self.G[node1][node2][key]["indices"]
-                        legs.remove(i1)
-                        legs.remove(i2)
-                except ValueError:
-                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
-                    return False
-
-            if not legs == [T.ndim - 1,]:
-                warnings.warn(f"Physical leg is not the last dimension in node {node}.")
-                return False
-
-            # correct size of physical leg?
-            if not T.shape[-1] == self.D:
-                warnings.warn(f"Hilbert space at node {node} has wrong size.")
-                return False
-
-        return True
-
     def to_dense(self,sanity_check:bool=False) -> np.ndarray:
         """
         Contracts the MPS using `ctg.einsum`.
         """
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         if self.nsites == 1:
             # the network is trivial
@@ -102,7 +49,7 @@ class PEPS:
         """
         bra to this state's ket: All site tensors are conjugated.
         """
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         newG = copy.deepcopy(self.G)
 
@@ -116,7 +63,7 @@ class PEPS:
         in a dictionary structure: `legs_dict[neighbor]` is the
         same as `self.G[node][neighbor][0]["legs"]`.
         """
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         val = dict()
 
@@ -129,7 +76,7 @@ class PEPS:
         """
         Multiplies all tensors in the PEPS by `x`.
         """
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         for node in self.G.nodes(): self.G.nodes[node]["T"] *= x
 
@@ -141,6 +88,60 @@ class PEPS:
         Number of sites on which the state is defined.
         """
         return self.G.number_of_nodes()
+
+    @property
+    def intact(self) -> bool:
+        """
+        Checks if the MPS is intact:
+        * Is the underlying network message-ready?
+        * Is the size of every edge saved?
+        * Are the physical legs the last dimension in each tensor?
+        * Do the physical legs have the correct sizes?
+        """
+        # are all the necessary attributes defined?
+        assert hasattr(self,"D")
+        assert hasattr(self,"G")
+
+        # is the underlying network message-ready?
+        if not network_message_check(self.G):
+            warnings.warn("Network not intact.")
+            return False
+
+        # size attribute given on every edge?
+        for node1,node2,data in self.G.edges(data=True):
+            if not "size" in data.keys():
+                warnings.warn(f"No size saved in edge ({node1},{node2}).")
+                return False
+            if data["size"] != self[node1].shape[data["legs"][node1]] or data["size"] != self[node2].shape[data["legs"][node2]]:
+                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
+                return False
+
+        # are the physical legs the last dimension in each tensor? Do the tensors have the correct physical dimensions?
+        for node,T in self.G.nodes(data="T"):
+            legs = [leg for leg in range(T.ndim)]
+            for node1,node2,key in self.G.edges(node,keys=True):
+                try:
+                    if not self.G[node1][node2][key]["trace"]:
+                        legs.remove(self.G[node1][node2][key]["legs"][node])
+                    else:
+                        # trace edge
+                        i1,i2 = self.G[node1][node2][key]["indices"]
+                        legs.remove(i1)
+                        legs.remove(i2)
+                except ValueError:
+                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                    return False
+
+            if not legs == [T.ndim - 1,]:
+                warnings.warn(f"Physical leg is not the last dimension in node {node}.")
+                return False
+
+            # correct size of physical leg?
+            if not T.shape[-1] == self.D:
+                warnings.warn(f"Hilbert space at node {node} has wrong size.")
+                return False
+
+        return True
 
     @classmethod
     def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=False,bond_dim_strategy:str="uniform",sanity_check:bool=False,**kwargs):
@@ -276,7 +277,7 @@ class PEPS:
 
         self.G:nx.MultiGraph = G
 
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         return
 
@@ -296,6 +297,19 @@ class PEPS:
         if not T.ndim == self.G.nodes[node]["T"].ndim: raise ValueError("Attempting to set site tensor with wrong number of legs.")
 
         self.G.nodes[node]["T"] = T
+
+    def __repr__(self) -> str:
+        out = ""
+        digits = int(np.log10(self.nsites))
+        out += f"PEPS with {self.nsites} sites.\n  Bond dimensions:"
+        for node1,node2,size in self.G.edges(data="size"): out += "\n    (" + str(node1).zfill(digits) + "," + str(node2).zfill(digits) + f") : size = {size}"
+
+        out += "\n  Multilinear tensor ranks:"
+        for node in self.G.nodes(): out += "\n    " + str(node).zfill(digits) + f" : {multi_tensor_rank(self[node])}"
+
+        out += "\n  PEPS is " + "intact." if self.intact else "not intact."
+
+        return out
 
 if __name__ == "__main__":
     pass

@@ -36,84 +36,6 @@ class PEPO:
     component.
     """
 
-    def intact_check(self) -> bool:
-        """
-        Checks if the PEPO is intact:
-        * Is the underlying network message-ready?
-        * Is the size of every edge saved?
-        * Are the physical legs the last two dimensions in each tensor?
-        * Do the physical legs have the correct sizes?
-        * is the information flow in the tree intact?
-        """
-        # are all the necessary attributes defined?
-        assert hasattr(self,"D")
-        assert hasattr(self,"chi")
-        assert hasattr(self,"G")
-        assert hasattr(self,"tree")
-        assert hasattr(self,"root")
-
-        # is the underlying network message-ready?
-        if not network_message_check(self.G):
-            warnings.warn("Network not intact.")
-            return False
-
-        # size attribute given on every edge?
-        for node1,node2,data in self.G.edges(data=True):
-            if not "size" in data.keys():
-                warnings.warn(f"No size saved in edge ({node1},{node2}).")
-                return False
-            if data["size"] != self.chi:
-                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
-                return False
-
-        # are the physical legs the last dimension in each tensor?
-        for node,T in self.G.nodes(data="T"):
-            legs = [leg for leg in range(T.ndim)]
-            for node1,node2,key in self.G.edges(node,keys=True):
-                try:
-                    if not self.G[node1][node2][key]["trace"]:
-                        legs.remove(self.G[node1][node2][key]["legs"][node])
-                    else:
-                        # trace edge
-                        i1,i2 = self.G[node1][node2][key]["indices"]
-                        legs.remove(i1)
-                        legs.remove(i2)
-                except ValueError:
-                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
-                    return False
-
-            if not legs == [T.ndim - 2,T.ndim - 1]:
-                warnings.warn(f"Physical legs are not the last two dimensions in node {node}.")
-                return False
-
-            if not (T.shape[-2] == self.D and T.shape[-1] == self.D):
-                warnings.warn(f"Hilbert space at node {node} has wrong size.")
-                return False
-
-        # tree traversal correct?
-        for node in self.tree.nodes():
-            if (len(self.tree.succ[node]) > 0) and (node != self.root):
-                # node is an intermediate node in the tree
-
-                # checking if the particle state is pased along
-                for parent,child in itertools.product(self.tree.pred[node],self.tree.succ[node]):
-                    index = tuple(
-                        0 if _ in (self.G[node][parent][key]["legs"][node],self.G[node][child][key]["legs"][node])
-                        else -1
-                        for _ in range(self.G.nodes[node]["T"].ndim - 2)
-                    ) + (slice(0,2),slice(0,2))
-                    if not np.allclose(self.G.nodes[node]["T"][index],self.I):
-                        warnings.warn(f"Wrong indices for particle state passthrough in node {node}.")
-                        return False
-
-                # checking if the vacuum state is passed along
-                index = tuple(-1 for _ in range(self.G.nodes[node]["T"].ndim - 2)) + (slice(0,2),slice(0,2))
-                if not np.allclose(self.G.nodes[node]["T"][index],self.I):
-                    warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.")
-                    return False
-
-        return True
-
     def permute_PEPO(self,T:np.ndarray,node:int) -> np.ndarray:
         """
         Re-shapes the PEPO-tensor `T` at node `node` such that it fits into
@@ -173,11 +95,11 @@ class PEPO:
         """
         for node in self.G.nodes():
             if node == self.root: # root node
-                self.G.nodes[node]["T"] = self.G.nodes[node]["T"][...,0,:,:]
+                self[node] = self[node][...,0,:,:]
                 continue
 
             if len(self.tree.succ[node]) == 0: # leaf node
-                self.G.nodes[node]["T"] = self.G.nodes[node]["T"][...,-1,:,:]
+                self[node] = self[node][...,-1,:,:]
                 continue
 
         return
@@ -186,7 +108,7 @@ class PEPO:
         """
         Contracts the PEPO using `ctg.einsum`.
         """
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         if self.nsites == 1:
             # the network is trivial
@@ -235,7 +157,7 @@ class PEPO:
             index = virtual_index + (slice(0,self.D),slice(0,self.D))
 
             if not np.allclose(self.G.nodes[node]["T"][index],0):
-                print(index[:-2],":\n",self.G.nodes[node]["T"][index],"\n")
+                print(index[:-2],":\n",self[node][index],"\n")
 
         return
 
@@ -267,7 +189,7 @@ class PEPO:
         in a dictionary structure: `legs_dict[neighbor]` is the
         same as `self.G[node][neighbor][0]["legs"]`.
         """
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         out = dict()
 
@@ -287,6 +209,86 @@ class PEPO:
         Number of sites on which the operator is defined.
         """
         return self.G.number_of_nodes()
+
+    @property
+    def intact(self) -> bool:
+        """
+        Whether the PEPO is intact:
+        * Is the underlying network message-ready?
+        * Is the size of every edge saved?
+        * Are the physical legs the last two dimensions in each tensor?
+        * Do the physical legs have the correct sizes?
+        * is the information flow in the tree intact?
+        """
+        # are all the necessary attributes defined?
+        assert hasattr(self,"D")
+        assert hasattr(self,"chi")
+        assert hasattr(self,"G")
+        assert hasattr(self,"tree")
+        assert hasattr(self,"root")
+
+        # is the underlying network message-ready?
+        if not network_message_check(self.G):
+            warnings.warn("Network not intact.")
+            return False
+
+        # size attribute given on every edge?
+        for node1,node2,data in self.G.edges(data=True):
+            if not "size" in data.keys():
+                warnings.warn(f"No size saved in edge ({node1},{node2}).")
+                return False
+            if data["size"] != self.chi:
+                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
+                return False
+
+        # are the physical legs the last dimension in each tensor?
+        for node,T in self.G.nodes(data="T"):
+            legs = [leg for leg in range(T.ndim)]
+            # accounting for virtual dimensions
+            for node1,node2,key in self.G.edges(node,keys=True):
+                try:
+                    if not self.G[node1][node2][key]["trace"]:
+                        legs.remove(self.G[node1][node2][key]["legs"][node])
+                    else:
+                        # trace edge
+                        i1,i2 = self.G[node1][node2][key]["indices"]
+                        legs.remove(i1)
+                        legs.remove(i2)
+                except ValueError:
+                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                    return False
+
+            if not legs == [T.ndim - 2,T.ndim - 1]:
+                warnings.warn(f"Physical legs are not the last two dimensions in node {node}.")
+                return False
+
+            if not (T.shape[-2] == self.D and T.shape[-1] == self.D):
+                warnings.warn(f"Hilbert space at node {node} has wrong size.")
+                return False
+
+        # tree traversal correct?
+        for node in self.tree.nodes():
+            if (len(self.tree.succ[node]) > 0) and (node != self.root):
+                # node is an intermediate node in the tree
+
+                # checking if the particle state is pased along
+                for parent,child in itertools.product(self.tree.pred[node],self.tree.succ[node]):
+                    index = tuple(
+                        0 if _ in (self.G[node][parent][key]["legs"][node],self.G[node][child][key]["legs"][node])
+                        else -1
+                        for _ in range(self.G.nodes[node]["T"].ndim - 2)
+                    ) + (slice(0,2),slice(0,2))
+                    if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                        warnings.warn(f"Wrong indices for particle state passthrough in node {node}.")
+                        return False
+
+                # checking if the vacuum state is passed along
+                index = tuple(-1 for _ in range(self.G.nodes[node]["T"].ndim - 2)) + (slice(0,2),slice(0,2))
+                if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                    warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.")
+                    return False
+
+        return True
 
     @staticmethod
     def view_tensor(T:np.ndarray):
@@ -333,7 +335,7 @@ class PEPO:
             T[...,:,:] = Id.I
             Id.G.nodes[node]["T"] = T
 
-        if sanity_check: assert Id.intact_check()
+        if sanity_check: assert Id.intact
 
         return Id
 
@@ -363,9 +365,14 @@ class PEPO:
         Changing tensors directly.
         """
         if not self.G.has_node(node): raise ValueError(f"Node {node} not present in graph.")
-        if not T.ndim == self.G.nodes[node]["T"].ndim: raise ValueError("Attempting to set site tensor with wrong number of legs.")
+        if not (T.ndim == self.G.nodes[node]["T"].ndim or T.ndim == len(self.G.adj[node]) + 2):
+            # first checks against previous tensor, second checks against number of legs that are necessary in the given graph
+            raise ValueError("Attempting to set site tensor with wrong number of legs.")
 
         self.G.nodes[node]["T"] = T
+
+    def __repr__(self) -> str:
+        return f"Hamiltonian on {self.nsites} sites with Hilbert space of size {self.D} at each. PEPO is " + "intact." if self.intact else "not intact."
 
 class PauliPEPO(PEPO):
     """
@@ -379,13 +386,14 @@ class PauliPEPO(PEPO):
     Z=np.array([[1,0],[0,-1]])
     """Pauli $Z$-matrix."""
 
-    def intact_check(self) -> bool:
+    @property
+    def intact(self) -> bool:
         """
-        Checks if the PEPO is intact:
-        * Calls `super().intact_check()`.
+        Whether the PEPO is intact:
+        * Checks `super().intact`.
         * Checks if the hamiltonian is composed of Pauli operators.
         """
-        if not super().intact_check(): return False
+        if not super().intact: return False
 
         # Hamiltonian composed of pauli operators?
         for node,T in self.G.nodes(data="T"):
@@ -527,7 +535,7 @@ class TFI(PauliPEPO):
         # contracting boundary legs
         self.contract_boundaries()
 
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         return
 
@@ -742,7 +750,7 @@ class Heisenberg(PauliPEPO):
         # contracting boundary legs
         self.contract_boundaries()
 
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         return
 

@@ -17,7 +17,7 @@ import warnings
 import itertools
 import tqdm
 
-from belief_propagation.utils import network_message_check,crandn
+from belief_propagation.utils import network_message_check,crandn,is_hermitian
 from belief_propagation.sandwich_BP.PEPO import PEPO
 from belief_propagation.sandwich_BP.PEPS import PEPS
 
@@ -107,41 +107,8 @@ class SubscriptableGraph:
 class Braket:
     """
     Base class for sandwiches of MPS and PEPOs. Contains code for belief propagation.
+    Always describes a braket-object of the form `<bra|op|ket>`.
     """
-
-    def intact_check(self) -> bool:
-        """
-        Cheks if the braket is intact. This includes:
-        * Is the network `G` message-ready?
-        * Are `bra`, `op`, and `ket` themselves intact?
-        * Do the physical dimensions match?
-        * Do all the messages contain finite values?
-        """
-        assert hasattr(self,"bra")
-        assert hasattr(self,"op")
-        assert hasattr(self,"ket")
-        assert hasattr(self,"D")
-
-        if not network_message_check(self.G): return False
-
-        if not self.bra.intact_check(): return False
-        if not self.op.intact_check(): return False
-        if not self.ket.intact_check(): return False
-
-        # do the physical dimensions match?
-        if not self.bra.D == self.D and self.ket.D == self.D and self.op.D == self.D:
-            warnings.warn("Physical dimensions in braket do not match.")
-            return False
-
-        if self.msg != None:
-            # are there any messages with non-finite values?
-            for sending_node in self.msg.keys():
-                for receiving_node in self.msg[sending_node].keys():
-                    if not np.isfinite(self.msg[sending_node][receiving_node]).all():
-                        warnings.warn(f"Non-finite message sent from {sending_node} to {receiving_node}.")
-                        return False
-
-        return True
 
     def __construct_initial_messages(self,real:bool,normalize:bool,sanity_check:bool,rng:np.random.Generator=np.random.default_rng()) -> None:
         """
@@ -153,7 +120,7 @@ class Braket:
         one belongs to the ket.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         # random number generation
         if real:
@@ -259,7 +226,7 @@ class Braket:
         Parallelized using ray.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         if all([len(self.G.adj[node]) <= 1 for node in self.G.nodes]):
             # there are only leaf nodes in the graph; we don't need to do anything
@@ -321,19 +288,19 @@ class Braket:
 
         return max(eps)
 
-    def __message_passing_iteration(self,numiter:int,real:bool,normalize:bool,threshold:float,parallel:bool,iterator_desc_prefix:str,verbose:bool,sanity_check:bool) -> tuple[float]:
+    def __message_passing_iteration(self,numiter:int,real:bool,normalize:bool,threshold:float,parallel:bool,iterator_desc_prefix:str,verbose:bool,new_messages:bool,sanity_check:bool) -> tuple[float]:
         """
         Performs a message passing iteration. Returns the change `eps` in maximum
         message norm for every iteration.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         iterator = tqdm.tqdm(range(numiter),desc=iterator_desc_prefix + f"BP iteration",disable=not verbose)
 
         eps_list = ()
         # message initialization
-        self.__construct_initial_messages(real=real,normalize=normalize,sanity_check=sanity_check)
+        if new_messages: self.__construct_initial_messages(real=real,normalize=normalize,sanity_check=sanity_check)
 
         for i in iterator:
             eps = self.__message_passing_step(normalize=normalize,parallel=parallel,sanity_check=sanity_check)
@@ -358,7 +325,7 @@ class Braket:
         when messages were obtained with `normalize=True`.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         # contract messages into tensors first to obtain tensor values, if necessary
         if not "cntr" in self.G.nodes[self.op.root].keys(): self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
@@ -376,7 +343,7 @@ class Braket:
         edge, on every edge. Value is saved under the key `cntr`.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         for node1,node2 in self.G.edges():
             self.G[node1][node2][0]["cntr"] = ctg.einsum("ijk,ijk->",self.msg[node1][node2],self.msg[node2][node1])
@@ -388,7 +355,7 @@ class Braket:
         Contracts all messages into the respective nodes, and saves the value in each node.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         for node in self.G.nodes():
             nLegs = len(self.G.adj[node])
@@ -420,10 +387,10 @@ class Braket:
 
         return
 
-    def BP(self,numiter:int=500,numretries:float=10,real:bool=False,normalize:bool=True,threshold:float=1e-10,parallel:bool=False,verbose:bool=True,sanity_check:bool=False,**kwargs) -> None:
+    def BP(self,numiter:int=500,trials:int=10,real:bool=False,normalize:bool=True,threshold:float=1e-10,parallel:bool=False,verbose:bool=True,new_messages:bool=True,sanity_check:bool=False,**kwargs) -> None:
         """
         Runs the BP algorithm with `numiter` iterations on the network. Parameters:
-        * `numretries`: Number of times the BP iteration is starting over when it does not converge.
+        * `trials`: Number of times the BP iteration is attempted.
         The value `np.inf` can be supplied, in which case the algorithm runs until `threshold` is reached.
         * `real`: Initialization of messages with real values (otherwise complex).
         * `normalize`: Normalization of messages after new message calculation. If `normalize=True`,
@@ -431,6 +398,7 @@ class Braket:
         ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). Otherwise,
         this function becomes Belief Propagation on trees.
         * `threshold`: When to abort the BP iteration.
+        * `new_messages`: Whether or not to initialize new messages.
 
         Writes the network contraction value to `self.cntr`. Converged messages are normalized
         such that the contraction of a tensor with it's inbound messages gives the complete network
@@ -439,7 +407,7 @@ class Braket:
         If the algorithm converges, the flag `self.converged` is set to `True`.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         if self.G.number_of_nodes() == 1:
             warnings.warn("The network is trivial.")
@@ -447,12 +415,13 @@ class Braket:
 
         # handling kwargs
         kwargs["iterator_desc_prefix"] = kwargs["iterator_desc_prefix"] + " | " if "iterator_desc_prefix" in kwargs.keys() else ""
+        if trials == 0: warnings.warn(f"Braket.BP received trials = 0. This results in no BP iteration attempt.")
 
         # initially, the messages are not converged
         self.converged = False
 
         iRetry = 0
-        while iRetry < numretries:
+        while iRetry < trials:
             # message passing iteration
             eps_list = self.__message_passing_iteration(
                 numiter=numiter,
@@ -462,6 +431,7 @@ class Braket:
                 parallel=parallel,
                 iterator_desc_prefix=kwargs["iterator_desc_prefix"] + f"retry {iRetry} | ",
                 verbose=verbose,
+                new_messages=new_messages,
                 sanity_check=sanity_check,
             )
 
@@ -494,7 +464,7 @@ class Braket:
         Exact contraction using `ctg.einsum`.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         if self.G.number_of_nodes() == 1:
             # the network is trivial
@@ -543,7 +513,7 @@ class Braket:
         * `parallel`: Whether Cotengra uses parallelization.
         """
         # sanity check
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         if self.nsites == 1:
             # the network is trivial
@@ -618,7 +588,7 @@ class Braket:
         """
         # sanity check
         if sanity_check:
-            assert self.intact_check()
+            assert self.intact
             assert self.G.has_node(sending_node) and self.G.has_node(receiving_node)
 
         return dict(
@@ -639,6 +609,41 @@ class Braket:
         Number of sites on which the braket is defined.
         """
         return self.op.nsites
+
+    @property
+    def intact(self) -> bool:
+        """
+        Whether the braket is intact or not. This includes:
+        * Is the network `G` message-ready?
+        * Are `bra`, `op`, and `ket` themselves intact?
+        * Do the physical dimensions match?
+        * Do all the messages contain finite values?
+        """
+        assert hasattr(self,"bra")
+        assert hasattr(self,"op")
+        assert hasattr(self,"ket")
+        assert hasattr(self,"D")
+
+        if not network_message_check(self.G): return False
+
+        if not self.bra.intact: return False
+        if not self.op.intact: return False
+        if not self.ket.intact: return False
+
+        # do the physical dimensions match?
+        if not self.bra.D == self.D and self.ket.D == self.D and self.op.D == self.D:
+            warnings.warn("Physical dimensions in braket do not match.")
+            return False
+
+        if self.msg != None:
+            # are there any messages with non-finite values?
+            for sending_node in self.msg.keys():
+                for receiving_node in self.msg[sending_node].keys():
+                    if not np.isfinite(self.msg[sending_node][receiving_node]).all():
+                        warnings.warn(f"Non-finite message sent from {sending_node} to {receiving_node}.")
+                        return False
+
+        return True
 
     @staticmethod
     def graph_compatible(G1:nx.MultiGraph,G2:nx.MultiGraph) -> bool:
@@ -730,12 +735,12 @@ class Braket:
         self.msg:dict[int,dict[int,np.ndarray]] = None
         """First key sending node, second key receiving node."""
 
-        self.converged:bool=False
+        self.converged:bool = False
         """Indicates whether the messages in `self.G` are converged."""
         self.cntr:float = np.nan
         """Value of the network, calculated by BP."""
 
-        if sanity_check: assert self.intact_check()
+        if sanity_check: assert self.intact
 
         return
 
@@ -757,13 +762,13 @@ class Braket:
 
         return
 
-def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False,**kwargs) -> PEPS:
+def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,sanity_check:bool=False,**kwargs) -> PEPS:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321).
     Singular values below `singval_threshold` are discarded. `kwargs` are passed to
     `Braket.BP`. `psi` is manipulated in-place.
     """
-    if sanity_check: assert psi.intact_check()
+    if sanity_check: assert psi.intact
 
     # handling kwargs
     kwargs["iterator_desc_prefix"] = kwargs["iterator_desc_prefix"] + " | L2BP compression" if "iterator_desc_prefix" in kwargs.keys() else "L2BP compression"
@@ -784,8 +789,8 @@ def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False
         msg_21 = np.reshape(overlap.msg[node2][node1][:,0,:],newshape=(size,size))
 
         # splitting the messages
-        eigvals1,W1 = scialg.eigh(msg_12,overwrite_a=True)
-        eigvals2,W2 = scialg.eigh(msg_21,overwrite_a=True)
+        eigvals1,W1 = scialg.eig(msg_12,overwrite_a=True)
+        eigvals2,W2 = scialg.eig(msg_21,overwrite_a=True)
         R1 = np.diag(np.sqrt(eigvals1)) @ W1.conj().T
         R2 = np.diag(np.sqrt(eigvals2)) @ W2.conj().T
 
@@ -805,9 +810,7 @@ def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False
         P1 = np.einsum("ij,jk,kl->il",R2,Vh.conj().T,np.diag(1 / np.sqrt(singvals)),optimize=True)
         P2 = np.einsum("ij,jk,kl->il",np.diag(1 / np.sqrt(singvals)),U.conj().T,R1,optimize=True)
 
-        print(f"edge ({node1},{node2}): projector distance = {np.linalg.norm(np.eye(N=P1.shape[0]) - P1 @ P2)}")
-
-        # absorbing projector 1 tensor into node 1
+        # absorbing projector 1 into node 1
         Tlegs = tuple(range(ndim1))
         Plegs = (overlap.ket.G[node1][node2][0]["legs"][node1],ndim1)
         outlegs = list(range(ndim1))
@@ -819,7 +822,7 @@ def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False
             optimize=True
         )
 
-        # absorbing projector 2 tensor into node 2
+        # absorbing projector 2 into node 2
         Tlegs = tuple(range(ndim2))
         Plegs = (ndim2,overlap.ket.G[node1][node2][0]["legs"][node2])
         outlegs = list(range(ndim2))
@@ -832,9 +835,9 @@ def BP_compression(psi:PEPS,singval_threshold:float=1e-8,sanity_check:bool=False
         )
 
         # updating size of edge
-        overlap.ket.G[node1][node2][0]["size"] = P1.shape[1]
+        psi.G[node1][node2][0]["size"] = P1.shape[1]
 
-    if sanity_check: assert psi.intact_check()
+    if sanity_check: assert psi.intact
 
     return
 
