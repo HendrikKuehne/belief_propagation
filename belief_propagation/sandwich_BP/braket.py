@@ -389,14 +389,15 @@ class Braket:
 
     def BP(self,numiter:int=500,trials:int=10,real:bool=False,normalize:bool=True,threshold:float=1e-10,parallel:bool=False,verbose:bool=True,new_messages:bool=True,sanity_check:bool=False,**kwargs) -> None:
         """
-        Runs the BP algorithm with `numiter` iterations on the network. Parameters:
-        * `trials`: Number of times the BP iteration is attempted.
-        The value `np.inf` can be supplied, in which case the algorithm runs until `threshold` is reached.
+        Layz BP algorithm from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321). Parameters:
+        * `numiter`: Number of iterations.
+        * `trials`: Number of times the BP iteration is attempted. The value `np.inf` can be supplied, in which
+        case the algorithm terminates only when a trial reaches `threshold`.
         * `real`: Initialization of messages with real values (otherwise complex).
         * `normalize`: Normalization of messages after new message calculation. If `normalize=True`,
-        this function implements the BP algorithm from Kirkley, 2021
+        this function implements the BP algorithm from
         ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). Otherwise,
-        this function becomes Belief Propagation on trees.
+        the algorithm becomes Belief Propagation on trees.
         * `threshold`: When to abort the BP iteration.
         * `new_messages`: Whether or not to initialize new messages.
 
@@ -411,7 +412,7 @@ class Braket:
 
         if self.G.number_of_nodes() == 1:
             warnings.warn("The network is trivial.")
-            return None
+            return
 
         # handling kwargs
         kwargs["iterator_desc_prefix"] = kwargs["iterator_desc_prefix"] + " | " if "iterator_desc_prefix" in kwargs.keys() else ""
@@ -420,8 +421,8 @@ class Braket:
         # initially, the messages are not converged
         self.converged = False
 
-        iRetry = 0
-        while iRetry < trials:
+        iTrial = 0
+        while iTrial < trials:
             # message passing iteration
             eps_list = self.__message_passing_iteration(
                 numiter=numiter,
@@ -429,13 +430,13 @@ class Braket:
                 normalize=normalize,
                 threshold=threshold,
                 parallel=parallel,
-                iterator_desc_prefix=kwargs["iterator_desc_prefix"] + f"retry {iRetry} | ",
+                iterator_desc_prefix=kwargs["iterator_desc_prefix"] + f"trial {iTrial+1} | ",
                 verbose=verbose,
                 new_messages=new_messages,
                 sanity_check=sanity_check,
             )
 
-            iRetry += 1
+            iTrial += 1
 
             if eps_list[-1] < threshold:
                 self.converged = True
@@ -762,7 +763,7 @@ class Braket:
 
         return
 
-def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,sanity_check:bool=False,**kwargs) -> PEPS:
+def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,sanity_check:bool=False,**kwargs) -> None:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321).
     Singular values below `singval_threshold` are discarded. `kwargs` are passed to
@@ -838,6 +839,71 @@ def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,sanity_check:bool=Fa
         psi.G[node1][node2][0]["size"] = P1.shape[1]
 
     if sanity_check: assert psi.intact
+
+    return
+
+def QR_gauging(psi:PEPS,tree:nx.DiGraph=None,nodes:tuple[int]=None,sanity_check:bool=False,**kwargs) -> None:
+    """
+    Gauging of a state using QR decompositions. The root node of `tree` is
+    the orthogonality center; if `tree` is not given, a breadth-first search spanning
+    tree will be used. If given, only the nodes in `nodes` will be gauged.
+    """
+    if sanity_check: assert psi.intact
+
+    if tree == None:
+        # orthogonality center will be the node with the largest number of neighborhoods
+        ortho_center = 0
+        max_degree = 0
+        for node in psi.G.nodes():
+            if len(psi.G.adj[node]) > max_degree:
+                ortho_center = node
+                max_degree = len(psi.G.adj[node])
+        tree = nx.bfs_tree(G=psi.G,source=ortho_center)
+    else:
+        if not isinstance(tree,nx.DiGraph): raise ValueError("tree must be an oriented graph.")
+        if not nx.is_tree(tree): raise ValueError("Given spanning tree is not actually a tree.")
+        # finding the orthogonality center
+        ortho_center = None
+        for node in tree.nodes():
+            if tree.in_degree(node) == 0:
+                ortho_center = node
+                break
+
+    if nodes == None: nodes = tuple(psi.G.nodes())
+
+    # QR decompositions in upstream direction of the tree
+    for node in nx.dfs_postorder_nodes(tree,source=ortho_center):
+        if node not in nodes: continue
+
+        if node == ortho_center:
+            # we have reached the source
+            continue
+
+        # finding the upstream neighbor
+        assert tree.in_degree(node) == 1
+        pred = [_ for _ in tree.pred[node]][0]
+
+        # exposing the upstream leg of the site tensor, and re-shaping
+        T_exposed = np.moveaxis(psi[node],source=psi.G[pred][node][0]["legs"][node],destination=-1)
+        oldshape = T_exposed.shape
+        T_exposed = np.reshape(T_exposed,newshape=(-1,psi.G[pred][node][0]["size"]))
+
+        # QR decomposition
+        Q,R = np.linalg.qr(T_exposed,mode="reduced")
+
+        # re-shaping Q, and inserting into the state
+        Q = np.reshape(Q,newshape=oldshape)
+        Q = np.moveaxis(Q,source=-1,destination=psi.G[pred][node][0]["legs"][node])
+        psi[node] = Q
+
+        # absorbing R into upstream node
+        upstream_legs = tuple(range(psi[pred].ndim))
+        out_legs = tuple(psi[pred].ndim if i == psi.G[pred][node][0]["legs"][pred] else i for i in range(psi[pred].ndim))
+        psi[pred] = np.einsum(
+            psi[pred],upstream_legs,
+            R,(psi[pred].ndim,psi.G[pred][node][0]["legs"][pred]),
+            out_legs,
+        )
 
     return
 

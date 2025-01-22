@@ -7,12 +7,11 @@ import networkx as nx
 import cotengra as ctg
 import warnings
 import tqdm
-import copy
 
 from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err
 from belief_propagation.sandwich_BP.PEPO import PEPO
 from belief_propagation.sandwich_BP.PEPS import PEPS
-from belief_propagation.sandwich_BP.braket import Braket,L2BP_compression
+from belief_propagation.sandwich_BP.braket import Braket,L2BP_compression,QR_gauging
 
 class DMRG:
     """
@@ -98,12 +97,6 @@ class DMRG:
             if not self.overlap.msg[neighbor][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
             msg = self.overlap.msg[neighbor][node][:,0,:]
 
-            eigvals = np.linalg.eigvals(msg)
-            nonzero_mask = np.logical_not(np.isclose(eigvals,0))
-            rank = np.sum(nonzero_mask)
-            edge_size = self.overlap.ket.G[node][neighbor][0]["size"]
-            print(f"    Message {neighbor} -> {node} has rank {rank} on edge of size {edge_size}. Cond.number {np.linalg.cond(msg):.5e}")
-
             # collecting einsum arguments
             args += (
                 msg,
@@ -126,7 +119,7 @@ class DMRG:
 
         return N
 
-    def sweep(self,sanity_check:bool=False,normalize:bool=True,**kwargs) -> float:
+    def __sweep(self,gauge:bool,sanity_check:bool,**kwargs) -> float:
         """
         Local update at all sites. `kwargs` are passed to `Braket.BP`.
         Returns the change in energy after the sweep.
@@ -138,18 +131,17 @@ class DMRG:
         if sanity_check: assert self.intact
 
         # calculating environments and previous energy
-        if not self.overlap.converged: self.overlap.BP(normalize=normalize,sanity_check=sanity_check,**kwargs)
-        if not self.expval.converged: self.expval.BP(normalize=normalize,sanity_check=sanity_check,**kwargs)
+        if not self.overlap.converged: self.overlap.BP(sanity_check=sanity_check,**kwargs)
+        if not self.expval.converged: self.expval.BP(sanity_check=sanity_check,**kwargs)
         Eprev = self.E0
 
         # we'll update tensors and matrices, so as a precaution, we'll set the convergence markers to False
         self.overlap.converged = False
         self.expval.converged = False
 
-        for node in nx.dfs_postorder_nodes(self.expval.G,source=self.expval.op.root):
+        for node in nx.dfs_postorder_nodes(self.expval.op.tree,source=self.expval.op.root):
             H = self.local_H(node,sanity_check=sanity_check)
             N = self.local_env(node,sanity_check=sanity_check)
-            print(f"Condition number node {node}: {np.linalg.cond(N):.5e}")
 
             if sanity_check: # are local hamiltonian and environment correctly defined?
                 local_psi = self.overlap.ket[node].flatten()
@@ -169,11 +161,12 @@ class DMRG:
             newshape += [self.overlap.D,]
             T = np.reshape(eigvecs[:,np.argmin(eigvals)],newshape)
 
-            # inserting it into PEPS and PEPO
+            # inserting it into overlap ket and gauging the current node
             self.overlap.ket[node] = T
             self.overlap.bra[node] = T.conj()
             self.expval.ket[node] = T
             self.expval.bra[node] = T.conj()
+            if gauge: self.gauge(sanity_check=sanity_check,tree=self.expval.op.tree,nodes=(node,))
 
             # calculating new environments
             self.overlap.BP(sanity_check=sanity_check,**kwargs)
@@ -182,10 +175,10 @@ class DMRG:
 
         return np.abs(Eprev - Enext)
 
-    def run(self,nSweeps:int=None,verbose:bool=False,compress:bool=True,sanity_check:bool=False,**kwargs):
+    def run(self,nSweeps:int=None,verbose:bool=False,gauge:bool=True,compress:bool=True,sanity_check:bool=False,**kwargs):
         """
-        Runs single-site DMRG on the underlying braket.
-        `kwargs` are passed to BP iterations. The state is not normalized afterwards!
+        Runs single-site DMRG on the underlying braket. `kwargs` are passed to
+        BP iterations. The state is not normalized afterwards!
         """
         if sanity_check: assert self.intact
 
@@ -197,21 +190,14 @@ class DMRG:
         iterator = tqdm.tqdm(range(nSweeps),desc=f"DMRG sweeps",disable=not verbose)
         eps_list = ()
 
+        if gauge: self.gauge(sanity_check=sanity_check,**kwargs)
+
         for iSweep in iterator:
-            eps = self.sweep(sanity_check=sanity_check,**kwargs)
+            eps = self.__sweep(gauge=gauge,sanity_check=sanity_check,**kwargs)
             iterator.set_postfix_str(f"eps = {eps:.3e}")
             eps_list += (eps,)
 
-            print(f"After sweep {iSweep}: ",self)
-
-            if compress:
-                # L2BP compression
-                L2BP_compression(self.overlap.ket,sanity_check=sanity_check,**kwargs)
-                self.expval.ket = self.overlap.ket
-                self.overlap.bra = self.overlap.ket.conj(sanity_check=sanity_check)
-                self.expval.bra = self.expval.ket.conj(sanity_check=sanity_check)
-                self.overlap.converged = False
-                self.expval.converged = False
+            if compress: self.compress(sanity_check=sanity_check,**kwargs)
 
         return
 
@@ -223,6 +209,38 @@ class DMRG:
         overlap_cntr = self.overlap.contract(sanity_check=sanity_check)
 
         return expval_cntr / overlap_cntr
+
+    def gauge(self,method:str="QR",sanity_check:bool=False,**kwargs) -> None:
+        """
+        Gauges bra and ket. `kwargs` are passed to the respective gauging methods.
+        """
+        if method == "QR":
+            QR_gauging(self.overlap.ket,sanity_check=sanity_check,**kwargs)
+            self.expval.ket = self.overlap.ket
+            self.overlap.bra = self.overlap.ket.conj(sanity_check=sanity_check)
+            self.expval.bra = self.expval.ket.conj(sanity_check=sanity_check)
+            self.overlap.converged = False
+            self.expval.converged = False
+
+            return
+
+        raise NotImplementedError("Gauging method " + method + " not implemented.")
+
+    def compress(self,method:str="L2BP",sanity_check:bool=False,**kwargs) -> None:
+        """
+        Compresses bra and ket. `kwargs` are passed to the respective compression methods.
+        """
+        if method == "L2BP":
+            L2BP_compression(self.overlap.ket,sanity_check=sanity_check,**kwargs)
+            self.expval.ket = self.overlap.ket
+            self.overlap.bra = self.overlap.ket.conj(sanity_check=sanity_check)
+            self.expval.bra = self.expval.ket.conj(sanity_check=sanity_check)
+            self.overlap.converged = False
+            self.expval.converged = False
+
+            return
+
+        raise NotImplementedError("Compression method " + method + " not implemented.")
 
     @property
     def converged(self) -> bool:
@@ -299,15 +317,16 @@ class DMRG:
         if psi_init == None:
             psi_init = PEPS.init_random(G=op.G,D=op.D,chi=chi,**kwargs)
 
-        self.expval = Braket.Expval(psi=psi_init,op=op,sanity_check=sanity_check)
+        self.expval:Braket = Braket.Expval(psi=psi_init,op=op,sanity_check=sanity_check)
         """`Braket`-object that contains the operator."""
-        self.overlap = Braket.Overlap(psi1=psi_init,psi2=psi_init)
+        self.overlap:Braket = Braket.Overlap(psi1=psi_init,psi2=psi_init)
         """Norm of the current state."""
 
         if sanity_check: assert self.intact
 
     def __repr__(self) -> str:
-        out = f"----------------------   DMRG problem on {self.nsites} sites.   ----------------------\nKet: " + str(self.overlap.ket) + "\nHamiltonian: " + str(self.expval.op) + "\nMessages are " + "converged." if self.converged else "not converged."
+        out = f"DMRG problem on {self.nsites} sites.\nKet: " + str(self.overlap.ket) + "\nHamiltonian: " + str(self.expval.op) + "\nMessages are "
+        out += "converged." if self.converged else "not converged."
         return out
 
 if __name__ == "__main__":

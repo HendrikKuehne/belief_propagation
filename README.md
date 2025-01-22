@@ -107,6 +107,9 @@ This will be updated continuously, as questions come to mind.
     * Christian B. Mendl  
       PyTeNet: A concise Python implementation of quantum tensor network algorithms
       [Journal of Open Source Software, 3(30), 948](https://doi.org/10.21105/joss.00948) ([github.com/cmendl/pytenet](https://github.com/cmendl/pytenet))
+    * Richard M. Milbradt and Qunsheng Huang and Christian B. Mendl  
+      State diagrams to determine tree tensor network operators  
+      [SciPost Phys. Core 7, 036 (2024)](https://doi.org/10.21468/SciPostPhysCore.7.2.036) ([arXiv:2311.13433](https://arxiv.org/abs/2311.13433))
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  

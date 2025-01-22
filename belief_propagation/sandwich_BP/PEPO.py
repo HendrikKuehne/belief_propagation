@@ -27,7 +27,8 @@ class PEPO:
     Writing down a PEPO on an arbitrary graph `G` can be achieved by
     finding a spanning tree of `G`. The flow of finite state automaton
     information is then defined by the tree: The origin is at the root,
-    and it terminates at the leaves.
+    and it terminates at the leaves. This method is similar to what is
+    presented in [SciPost Phys. Core 7, 036 (2024)](https://doi.org/10.21468/SciPostPhysCore.7.2.036).
 
     During initialisation, the root and each leaf are equipped with an
     additional leg. These legs connect to the initial and final states of
@@ -118,12 +119,46 @@ class PEPO:
             # the network is trivial
             return tuple(self.G.nodes(data="T"))[0][1]
 
-        args = ()
+        inputs = ()
+        tensors = ()
+
+        # enumerating the edges in the graph
+        for i,nodes in enumerate(self.G.edges()):
+            node1,node2 = nodes
+            self.G[node1][node2][0]["label"] = ctg.get_symbol(i)
+
+        N_edges = self.G.number_of_edges()
+        # assembling the einsum arguments
+        for i,nodeT in enumerate(self.G.nodes(data="T")):
+            node,T = nodeT
+            legs = [None for _ in range(T.ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
+            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+
+            inputs += (legs,)
+            tensors += (T,)
+
+        # output ordering
+        output = tuple(ctg.get_symbol(i) for i in range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
+
+        # getting the einsum expression, and contracting
+        expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
+        H = ctg.einsum(expr,*tensors)
+        H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+
+        if sanity_check: assert is_hermitian(H)
+
+        return H
+
+        inputs = ()
+        arrays = ()
+        size_dict = {}
 
         # enumerating the edges in the graph
         for i,nodes in enumerate(self.G.edges()):
             node1,node2 = nodes
             self.G[node1][node2][0]["label"] = i
+            size_dict[i] = self.G[node1][node2][0]["size"]
 
         N_edges = self.G.number_of_edges()
         # assembling the einsum arguments
@@ -132,10 +167,14 @@ class PEPO:
             legs = [None for _ in range(T.ndim-2)] + [N_edges + i,N_edges + self.G.number_of_nodes() + i] # last two indices are the physical legs
             for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
                 legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
-            args += (T,tuple(legs),)
 
-        out_legs = tuple(range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
-        H = np.einsum(*args,out_legs,optimize=True)
+            inputs += (legs,)
+            arrays += (T,)
+
+        # output ordering
+        output = tuple(_ for _ in range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
+
+        H = ctg.array_contract(arrays=arrays,inputs=inputs,output=output,size_dict=size_dict)
         H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
 
         if sanity_check: assert is_hermitian(H)
@@ -424,7 +463,7 @@ class PEPO:
         """
 
         if isinstance(psi,PEPS):
-            # TODO: implement
+            # TODO: implement; what I should do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024) (https://doi.org/10.1126/sciadv.adk4321)
             raise NotImplementedError("PEPO action on PEPS is not yet implemented.")
 
         if isinstance(psi,np.ndarray):
