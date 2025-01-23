@@ -60,6 +60,7 @@ This will be updated continuously, as questions come to mind.
 * Why are long loops negligible?
     * Many runs of the BP algorithm give exact results when only long loops are present, which is what Kirkley et Al claim in their paper; they do not give a source though.
     * :arrow_right: Loops behave like vector iterations, which is not how Kirkleys algorithm works; it is in fact detrimental to the accuracy. Vector iterations require many iterations, however, and the longer the loop the more iterations one needs to reach vector iteration territory. Long loops will (probably - this is what I expect) introduce larger errors, when one does more iterations in the BP algorithm.
+    * :arrow_right: Actually not! The eigenvalue spectra of long loops tend to feature one dominant eigenvalue, while all others are neglectable in magnitude. See [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#spectra-of-a-matrix-chain) for details.
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
@@ -110,6 +111,9 @@ This will be updated continuously, as questions come to mind.
     * Richard M. Milbradt and Qunsheng Huang and Christian B. Mendl  
       State diagrams to determine tree tensor network operators  
       [SciPost Phys. Core 7, 036 (2024)](https://doi.org/10.21468/SciPostPhysCore.7.2.036) ([arXiv:2311.13433](https://arxiv.org/abs/2311.13433))
+    * David Tellenbach  
+      Canonicalization of Loop-free Tensor Networks  
+      [MediaTUM](https://mediatum.ub.tum.de/node?id=1654468)
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  

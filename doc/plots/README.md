@@ -54,3 +54,35 @@ Data generated using
 ```
 
 Blocking into a 3 by 3 block.
+
+# Spectra of a matrix chain
+
+Why does the BP algorithm give better results for longer loops, as opposed to shorter ones? Recall [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main?tab=readme-ov-file#open-questions), where I argue that BP on loops can be understood as a vector iteration, that converges to the largest eigenvalue. There is, a priori, no reason to expect that the largest eigenvalue corresponds to the network value; what is happening?
+
+Consider a toy model, where a loop is formed as the product
+
+$$
+    \prod_{i=1}^L A_i
+$$
+
+of random matrices $A_i$[^2]. The network contraction value becomes
+
+$$
+    \text{cntr}\{A_i\}=\text{tr}\prod_{i=1}^L A_i = \sum\lambda,
+$$
+
+where the $\lambda$ are the eigenvalues of the matrix chain. What do the eigenvalue spectra of the matrix chains look like? As it turns out, for increasing length $L$, the magnitudes of the eigenvalues increase! The spectra come to be dominated by one large eigenvalue, and all others vanish in magnitude. The largest eigenvalue will thus be more and more close to the network contrcation value.[^3]
+
+Plots that show histograms og eifenvalue magnitudes and the flatness of the spectrum are shown below.
+
+<p align="center">
+  <img width="800" height="480" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/plots/matrix_chain_spectra_hist.jpeg">
+</p>
+
+<p align="center">
+  <img width="800" height="480" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/plots/matrix_chain_spectra_flatness.jpeg">
+</p>
+
+[^2]: Each matrix is drawn from a normal distribution (centered around zero, std. one), e.g. `(rng.normal(size=size) + 1j*rng.normal(size=size)) / np.sqrt(2)`.
+
+[^3]: [The plot](https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/plots/matrix_chain_spectra_flatness.jpeg) doesn't really support this well - maybe look at this again.
