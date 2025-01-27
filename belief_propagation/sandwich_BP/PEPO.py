@@ -9,6 +9,7 @@ import cotengra as ctg
 import scipy.sparse as scisparse
 import warnings
 import itertools
+import copy
 from typing import Union
 
 from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian
@@ -16,8 +17,9 @@ from belief_propagation.sandwich_BP.PEPS import PEPS
 
 class PEPO:
     """
-    Base class for tensor product operators, composed of Pauli matrices. Subclasses must provide `__init__`.
-    Therein, the following attributes must be defined:
+    Base class for tensor product operators, that are defined as sums
+    of operator chains. Subclasses must provide `__init__`. Therein,
+    the following attributes must be defined:
     * `self.G`: Graph on which the Hamiltonian is defined.
     * `self.chi`: Virtual bond dimension.
     * `self.D`: Physical dimension.
@@ -29,6 +31,13 @@ class PEPO:
     information is then defined by the tree: The origin is at the root,
     and it terminates at the leaves. This method is similar to what is
     presented in [SciPost Phys. Core 7, 036 (2024)](https://doi.org/10.21468/SciPostPhysCore.7.2.036).
+
+    Every node in the graph has one inbound leg, passive legs, and outbound
+    legs. The initial and final
+    state of the finite state automaton are the first and last components,
+    respectively. The initial state ("particle state") is only passed along
+    the tree, while intermediate states ("decay states") can be passed along
+    any edge. The final state ("vacuum state") is passed along every edge.
 
     During initialisation, the root and each leaf are equipped with an
     additional leg. These legs connect to the initial and final states of
@@ -91,7 +100,8 @@ class PEPO:
 
     def contract_boundaries(self):
         """
-        Contracts boundary legs.
+        Contracts boundary legs. Boundary legs are assumed to be located
+        in the last virtual dimension.
 
         This means contraction of the root node with the initial state,
         and each leaf with the final state. It is assumed that the initial
@@ -284,6 +294,32 @@ class PEPO:
 
         return out
 
+    def traversal_tensor(self,N_pas:int,N_out:int) -> np.ndarray:
+        """
+        Returns the minimum tensor for PEPOs, that is, a tensor
+        that ensures correct tree traversal.
+
+        `T` has the canonical leg ordering: The first leg is the incoming leg, afterwards follow the
+        passive legs, and finally the outgoing legs.
+        """
+        # sanity check
+        assert N_pas >= 0
+        assert N_out >= 0
+        assert hasattr(self,"chi")
+
+        T = np.zeros(shape=[self.chi for _ in range(1 + N_pas + N_out)] + [self.D,self.D])
+
+        # particle index
+        for i_out in range(N_out):
+            index = (0,) + tuple(self.chi - 1 for _ in range(N_pas)) + tuple(0 if _ == i_out else self.chi - 1 for _ in range(N_out)) + (slice(0,self.D),slice(0,self.D))
+            T[index] = self.I
+
+        # vacuum index
+        index = tuple(self.chi - 1 for _ in range(1 + N_pas + N_out)) + (slice(0,self.D),slice(0,self.D))
+        T[index] = self.I
+
+        return T
+
     @property
     def I(self) -> np.ndarray:
         """Identity matrix with the dimensions `(self.D,self.D)`."""
@@ -305,6 +341,7 @@ class PEPO:
         * Are the physical legs the last two dimensions in each tensor?
         * Do the physical legs have the correct sizes?
         * is the information flow in the tree intact?
+        * Is every constituent operator hermitian?
         """
         # are all the necessary attributes defined?
         assert hasattr(self,"D")
@@ -360,18 +397,40 @@ class PEPO:
                 # checking if the particle state is pased along
                 for parent,child in itertools.product(self.tree.pred[node],self.tree.succ[node]):
                     index = tuple(
-                        0 if _ in (self.G[node][parent][key]["legs"][node],self.G[node][child][key]["legs"][node])
+                        0 if _ in (self.G[node][parent][0]["legs"][node],self.G[node][child][0]["legs"][node])
                         else -1
-                        for _ in range(self.G.nodes[node]["T"].ndim - 2)
-                    ) + (slice(0,2),slice(0,2))
-                    if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                        for _ in range(self[node].ndim - 2)
+                    ) + (slice(0,self.D),slice(0,self.D))
+                    if not np.allclose(self[node][index],self.I):
                         warnings.warn(f"Wrong indices for particle state passthrough in node {node}.")
                         return False
 
                 # checking if the vacuum state is passed along
-                index = tuple(-1 for _ in range(self.G.nodes[node]["T"].ndim - 2)) + (slice(0,2),slice(0,2))
-                if not np.allclose(self.G.nodes[node]["T"][index],self.I):
+                index = tuple(-1 for _ in range(self[node].ndim - 2)) + (slice(0,2),slice(0,2))
+                if not np.allclose(self[node][index],self.I):
                     warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.")
+                    return False
+
+                # checking if a particle state is passed along a passive edge
+                for parent,child in itertools.product(self.tree.pred[node],self.G.adj[node]):
+                    if child in self.tree.succ[node] or child in self.tree.pred[node]: continue
+
+                    index = tuple(
+                        0 if _ in (self.G[node][parent][0]["legs"][node],self.G[node][child][0]["legs"][node])
+                        else -1
+                        for _ in range(self[node].ndim - 2)
+                    ) + (slice(0,self.D),slice(0,self.D))
+                    if np.allclose(self[node][index],self.I):
+                        warnings.warn(f"Particle state passed along passive edge ({node},{child}).")
+                        return False
+
+        # local operators hermitian?
+        for node in self.G.nodes():
+            iterables = tuple(range(size) for size in self[node].shape[:-2])
+            for index in itertools.product(*iterables):
+                index += (slice(0,self.D),slice(0,self.D))
+                if not is_hermitian(self[node][index]):
+                    warnings.warn(f"Non-hermitian operator at node {node} in index " + str(index) + ".")
                     return False
 
         return True
@@ -451,9 +510,16 @@ class PEPO:
         Changing tensors directly.
         """
         if not self.G.has_node(node): raise ValueError(f"Node {node} not present in graph.")
-        if not (T.ndim == self.G.nodes[node]["T"].ndim or T.ndim == len(self.G.adj[node]) + 2):
-            # first checks against previous tensor, second checks against number of legs that are necessary in the given graph
-            raise ValueError("Attempting to set site tensor with wrong number of legs.")
+
+        if "T" in self.G.nodes[node].keys():
+            if not (T.ndim == self.G.nodes[node]["T"].ndim or T.ndim == len(self.G.adj[node]) + 2):
+                # first checks against previous tensor, second checks against number of legs that are necessary in the given graph
+                raise ValueError("Attempting to set site tensor with wrong number of legs.")
+        else:
+            # I do not check the dimensions of the tensor here because the dimensions are different
+            # from the above cases, while the PEPO is constructed. It is advised to check self.intact
+            # after construction of the PEPO.
+            pass
 
         self.G.nodes[node]["T"] = T
 
@@ -520,9 +586,14 @@ class PauliPEPO(PEPO):
         """
         Whether the PEPO is intact:
         * Checks `super().intact`.
+        * Checks if the physical dimension is two.
         * Checks if the hamiltonian is composed of Pauli operators.
         """
         if not super().intact: return False
+
+        if not self.D == 2:
+            warnings.warn("Physical dimension unequal to two.")
+            return False
 
         # Hamiltonian composed of pauli operators?
         for node,T in self.G.nodes(data="T"):
@@ -549,7 +620,84 @@ class TFI(PauliPEPO):
     Travsverse Field Ising model.
     """
 
-    def __init__(self,G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> nx.MultiGraph:
+    def __ising_PEPO_tensor_without_coupling(self,N_pas:int,N_out:int,g:float) -> np.ndarray:
+        """
+        Returns a Transverse Field Ising PEPO tensor.
+
+        `T` has the canonical leg ordering: The first leg is the incoming leg, afterwards follow the
+        passive legs, and finally the outgoing legs.
+        """
+        # sanity check
+        assert N_pas >= 0
+        assert N_out >= 0
+        assert hasattr(self,"chi")
+
+        T = self.traversal_tensor(N_pas=N_pas,N_out=N_out)
+
+        # transverse field
+        index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
+        T[index] = g * self.X
+
+        return T
+
+    def __ising_coupling(self,node1:int,node2:int,Jz:float) -> None:
+        """
+        Adds Ising-type coupling to the edge `(node1,node2)`. This means that
+        both decay stages (of the finite state automaton) are added to this
+        edge, NOT that an operator `Jz * sz * sz` is added to the
+        Hamiltonian!
+        """
+        # Why is the construction of the PEPO this convoluted? Why do I not
+        # assemble the tensors in `__ising_PEPO_tensor_without_coupling`,
+        # re-shape them according to the tree structure, and insert them
+        # into the PEPO? The code would be much more intelligible. The
+        # problem is that I want only one ising coupling per edge. Since
+        # my graph might have any structure, there's no way to know where
+        # to add coupling in a graph-agnostic way. Put in another way, I have
+        # to take the graph (and thus the tree) into account to avoid adding
+        # double the coupling to some edges. The edges that are affected by
+        # this are edges that are not contained in the tree.
+
+        if node1 in self.tree.succ[node2]:
+            # node1 is downstream from node2
+            child = node1
+            parent = node2
+        else:
+            # node2 is downstream from node1, or the edge is not contained in the tree (in which case the order does not matter)
+            child = node2
+            parent = node1
+
+        # first particle decay stage at this edge; at parent node
+        if parent != self.root:
+            grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
+            index = tuple(
+                0 if i == self.G[grandparent][parent][0]["legs"][parent]
+                else 1 if i == self.G[parent][child][0]["legs"][parent]
+                else 2
+                for i in range(self[parent].ndim - 2)
+            ) + (slice(0,2),slice(0,2))
+        else:
+            # the incoming leg of the root node is a boundary leg, and thus
+            # located just before the physical legs. This is why this case
+            # distinction is necessary.
+            index = tuple(
+                1 if i == self.G[parent][child][0]["legs"][parent]
+                else 2
+                for i in range(self[parent].ndim - 3)
+            ) + (0,slice(0,2),slice(0,2))
+        self[parent][index] = Jz * self.Z
+
+        # second particle decay stage at this edge; at child node
+        index = tuple(
+            1 if i == self.G[parent][child][0]["legs"][child]
+            else 2
+            for i in range(self[child].ndim - 2)
+        ) + (slice(0,2),slice(0,2))
+        self[child][index] = self.Z
+
+        return
+
+    def __init__(self,G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> None:
         """
         Travsverse Field Ising model `J * sz * sz + g * sx` PEPO on graph `G`, with coupling `J` and external field `h`.
 
@@ -566,34 +714,6 @@ class TFI(PauliPEPO):
         0 is the moving particle state, 1 the decay state, and 2 is the vacuum state.
         """
 
-        def ising_PEPO_tensor_without_coupling(N_pas:int,N_out:int,g:float) -> np.ndarray:
-            """
-            Returns a Transverse Field Ising PEPO tensor, that is missing the incoming and outgoing coupling.
-
-            `T` has the canonical leg ordering: The first leg is the incoming leg, afterwards follow the
-            passive legs, and finally the outgoing legs.
-            """
-            # sanity check
-            assert N_pas >= 0
-            assert N_out >= 0
-
-            T = np.zeros(shape=[self.chi for _ in range(1 + N_pas + N_out)] + [2,2])
-
-            # particle index
-            for i_out in range(N_out):
-                index = (0,) + tuple(self.chi - 1 for _ in range(N_pas)) + tuple(0 if _ == i_out else self.chi - 1 for _ in range(N_out)) + (slice(0,2),slice(0,2))
-                T[index] = self.I
-
-            # vacuum index
-            index = tuple(self.chi - 1 for _ in range(1 + N_pas + N_out)) + (slice(0,2),slice(0,2))
-            T[index] = self.I
-
-            # transverse field
-            index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
-            T[index] = g * self.X
-
-            return T
-
         self.G = super().prepare_graph(G)
 
         # root node is node with smallest degree
@@ -606,7 +726,7 @@ class TFI(PauliPEPO):
         for node in self.G.nodes():
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
-            N_pas = len(G.adj[node]) - N_out - N_in
+            N_pas = len(self.G.adj[node]) - N_out - N_in
 
             if N_out == 0:
                 # node is a leaf
@@ -614,7 +734,7 @@ class TFI(PauliPEPO):
 
             # PEPO tensor, where the first dimension is the incoming leg, the passive legs
             # and the outgoing legs follow, and the last two dimensions are the physical legs
-            T = ising_PEPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,g=g)
+            T = self.__ising_PEPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,g=g)
 
             if node == self.root:
                 # root node; we need to put the (incoming) boundary leg between the virtual dimensions and the physical dimensions
@@ -623,43 +743,11 @@ class TFI(PauliPEPO):
             # re-shaping PEPO tensor to match the graph leg ordering
             T = self.permute_PEPO(T,node)
 
-            self.G.nodes[node]["T"] = T
+            self[node] = T
 
         # adding incoming and outgoing coupling to every node but the root
         for node1,node2 in self.G.edges():
-            if node1 in self.tree.succ[node2]:
-                # node1 is downstream from node2
-                child = node1
-                parent = node2
-            else:
-                # node2 is downstream from node1, or the edge is not contained in the tree (in which case the order does not matter)
-                child = node2
-                parent = node1
-
-            # first particle decay stage at this edge; at parent node
-            if parent != self.root:
-                grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
-                index = tuple(
-                    0 if i == G[grandparent][parent][0]["legs"][parent]
-                    else 1 if i == G[parent][child][0]["legs"][parent]
-                    else 2
-                    for i in range(self.G.nodes[parent]["T"].ndim - 2)
-                ) + (slice(0,2),slice(0,2))
-            else:
-                index = tuple(
-                    1 if i == G[parent][child][0]["legs"][parent]
-                    else 2
-                    for i in range(self.G.nodes[parent]["T"].ndim - 3)
-                ) + (0,slice(0,2),slice(0,2))
-            self.G.nodes[parent]["T"][index] = J * self.Z
-
-            # second particle decay stage at this edge; at child node
-            index = tuple(
-                1 if i == G[parent][child][0]["legs"][child]
-                else 2
-                for i in range(self.G.nodes[child]["T"].ndim - 2)
-            ) + (slice(0,2),slice(0,2))
-            self.G.nodes[child]["T"][index] = self.Z
+            self.__ising_coupling(node1,node2,Jz=J)
 
         # contracting boundary legs
         self.contract_boundaries()
@@ -728,9 +816,108 @@ class Heisenberg(PauliPEPO):
     Heisenberg model with transverse field in x.
     """
 
-    def __init__(self,G:nx.MultiGraph,Jx:float=1,Jy:float=1,Jz:float=1,h:float=0,sanity_check:bool=False) -> nx.MultiGraph:
+    def __heisenberg_PEPO_tensor_without_coupling(self,N_pas:int,N_out:int,g:float) -> np.ndarray:
         """
-        Travsverse Field Ising model PEPO on graph `G`, with coupling `J` and external field `h`.
+        Returns a Heisenberg PEPO tensor, that is missing the incoming and outgoing coupling.
+
+        `T` has the canonical leg ordering: The first leg is the incoming leg, afterwards follow the
+        passive legs, and finally the outgoing legs.
+        """
+        # sanity check
+        assert N_pas >= 0
+        assert N_out >= 0
+        assert hasattr(self,"chi")
+
+        T = self.traversal_tensor(N_pas=N_pas,N_out=N_out)
+
+        # transverse field
+        index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
+        T[index] = g * self.X
+
+        return T
+
+    def __heisenberg__coupling(self,node1:int,node2:int,Jx:float,Jy:float,Jz:float) -> None:
+        """
+        Adds Heisenberg-type coupling to the edge `(node1,node2)`. This means that
+        both decay stages (of the finite state automaton) are added to this
+        edge, NOT that an operator `Jz * sz * sz` is added to the
+        Hamiltonian!
+        """
+        if node1 in self.tree.succ[node2]:
+            # node1 is downstream from node2
+            child = node1
+            parent = node2
+        else:
+            # node2 is downstream from node1, or the edge is not contained in the tree (in which case the order does not matter)
+            child = node2
+            parent = node1
+
+        # first particle decay stage at this edge; at parent node
+        if parent != self.root:
+            grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
+            x_index = tuple(
+                0 if i == self.G[grandparent][parent][0]["legs"][parent]
+                else 1 if i == self.G[parent][child][0]["legs"][parent]
+                else 4
+                for i in range(self.G.nodes[parent]["T"].ndim - 2)
+            ) + (slice(0,2),slice(0,2))
+            y_index = tuple(
+                0 if i == self.G[grandparent][parent][0]["legs"][parent]
+                else 2 if i == self.G[parent][child][0]["legs"][parent]
+                else 4
+                for i in range(self.G.nodes[parent]["T"].ndim - 2)
+            ) + (slice(0,2),slice(0,2))
+            z_index = tuple(
+                0 if i == self.G[grandparent][parent][0]["legs"][parent]
+                else 3 if i == self.G[parent][child][0]["legs"][parent]
+                else 4
+                for i in range(self.G.nodes[parent]["T"].ndim - 2)
+            ) + (slice(0,2),slice(0,2))
+        else:
+            x_index = tuple(
+                1 if i == self.G[parent][child][0]["legs"][parent]
+                else 4
+                for i in range(self.G.nodes[parent]["T"].ndim - 3)
+            ) + (0,slice(0,2),slice(0,2))
+            y_index = tuple(
+                2 if i == self.G[parent][child][0]["legs"][parent]
+                else 4
+                for i in range(self.G.nodes[parent]["T"].ndim - 3)
+            ) + (0,slice(0,2),slice(0,2))
+            z_index = tuple(
+                3 if i == self.G[parent][child][0]["legs"][parent]
+                else 4
+                for i in range(self.G.nodes[parent]["T"].ndim - 3)
+            ) + (0,slice(0,2),slice(0,2))
+        self.G.nodes[parent]["T"][x_index] = Jx * self.X
+        self.G.nodes[parent]["T"][y_index] = Jy * self.Y
+        self.G.nodes[parent]["T"][z_index] = Jz * self.Z
+
+        # second particle decay stage at this edge; at child node
+        x_index = tuple(
+            1 if i == self.G[parent][child][0]["legs"][child]
+            else 4
+            for i in range(self.G.nodes[child]["T"].ndim - 2)
+        ) + (slice(0,2),slice(0,2))
+        y_index = tuple(
+            2 if i == self.G[parent][child][0]["legs"][child]
+            else 4
+            for i in range(self.G.nodes[child]["T"].ndim - 2)
+        ) + (slice(0,2),slice(0,2))
+        z_index = tuple(
+            3 if i == self.G[parent][child][0]["legs"][child]
+            else 4
+            for i in range(self.G.nodes[child]["T"].ndim - 2)
+        ) + (slice(0,2),slice(0,2))
+        self.G.nodes[child]["T"][x_index] = self.X
+        self.G.nodes[child]["T"][y_index] = self.Y
+        self.G.nodes[child]["T"][z_index] = self.Z
+
+        return
+
+    def __init__(self,G:nx.MultiGraph,Jx:float=1,Jy:float=1,Jz:float=1,g:float=0,sanity_check:bool=False):
+        """
+        Travsverse Field Ising model PEPO on graph `G`, with coupling `J` and external field `g`.
 
         Ordering of legs in the PEPO virtual dimensions is inherited from `G`. The last two dimensions of every PEPO tensor are the physical dimensions.
         """
@@ -745,34 +932,6 @@ class Heisenberg(PauliPEPO):
         0 is the moving particle state, 1/2/3 the decay state in x/y/z, and 4 is the vacuum state.
         """
 
-        def heisenberg_PEPO_tensor_without_coupling(N_pas:int,N_out:int,h:float) -> np.ndarray:
-            """
-            Returns a Heisenberg PEPO tensor, that is missing the incoming and outgoing coupling.
-
-            `T` has the canonical leg ordering: The first leg is the incoming leg, afterwards follow the
-            passive legs, and finally the outgoing legs.
-            """
-            # sanity check
-            assert N_pas >= 0
-            assert N_out >= 0
-
-            T = np.zeros(shape=[self.chi for _ in range(1 + N_pas + N_out)] + [2,2],dtype=np.complex128)
-
-            # particle index
-            for i_out in range(N_out):
-                index = (0,) + tuple(self.chi - 1 for _ in range(N_pas)) + tuple(0 if _ == i_out else self.chi - 1 for _ in range(N_out)) + (slice(0,2),slice(0,2))
-                T[index] = self.I
-
-            # vacuum index
-            index = tuple(self.chi - 1 for _ in range(1 + N_pas + N_out)) + (slice(0,2),slice(0,2))
-            T[index] = self.I
-
-            # transverse field
-            index = (0,) + tuple(self.chi - 1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
-            T[index] = h * self.X
-
-            return T
-
         self.G = super().prepare_graph(G)
 
         # root node is node with smallest degree
@@ -785,7 +944,7 @@ class Heisenberg(PauliPEPO):
         for node in self.G.nodes():
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
-            N_pas = len(G.adj[node]) - N_out - N_in
+            N_pas = len(self.G.adj[node]) - N_out - N_in
 
             if N_out == 0:
                 # node is a leaf
@@ -793,7 +952,7 @@ class Heisenberg(PauliPEPO):
 
             # PEPO tensor, where the first dimension is the incoming leg, the passive legs
             # and the outgoing legs follow, and the last two dimensions are the physical legs
-            T = heisenberg_PEPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,h=h)
+            T = self.__heisenberg_PEPO_tensor_without_coupling(N_pas=N_pas,N_out=N_out,g=g)
 
             if node == self.root:
                 # root node; we need to put the (incoming) boundary leg at the last place within the virtual dimensions
@@ -806,75 +965,7 @@ class Heisenberg(PauliPEPO):
 
         # adding incoming and outgoing coupling to every node but the root
         for node1,node2 in self.G.edges():
-            if node1 in self.tree.succ[node2]:
-                # node1 is downstream from node2
-                child = node1
-                parent = node2
-            else:
-                # node2 is downstream from node1, or the edge is not contained in the tree (in which case the order does not matter)
-                child = node2
-                parent = node1
-
-            # first particle decay stage at this edge; at parent node
-            if parent != self.root:
-                grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
-                x_index = tuple(
-                    0 if i == G[grandparent][parent][0]["legs"][parent]
-                    else 1 if i == G[parent][child][0]["legs"][parent]
-                    else 4
-                    for i in range(self.G.nodes[parent]["T"].ndim - 2)
-                ) + (slice(0,2),slice(0,2))
-                y_index = tuple(
-                    0 if i == G[grandparent][parent][0]["legs"][parent]
-                    else 2 if i == G[parent][child][0]["legs"][parent]
-                    else 4
-                    for i in range(self.G.nodes[parent]["T"].ndim - 2)
-                ) + (slice(0,2),slice(0,2))
-                z_index = tuple(
-                    0 if i == G[grandparent][parent][0]["legs"][parent]
-                    else 3 if i == G[parent][child][0]["legs"][parent]
-                    else 4
-                    for i in range(self.G.nodes[parent]["T"].ndim - 2)
-                ) + (slice(0,2),slice(0,2))
-            else:
-                x_index = tuple(
-                    1 if i == G[parent][child][0]["legs"][parent]
-                    else 4
-                    for i in range(self.G.nodes[parent]["T"].ndim - 3)
-                ) + (0,slice(0,2),slice(0,2))
-                y_index = tuple(
-                    2 if i == G[parent][child][0]["legs"][parent]
-                    else 4
-                    for i in range(self.G.nodes[parent]["T"].ndim - 3)
-                ) + (0,slice(0,2),slice(0,2))
-                z_index = tuple(
-                    3 if i == G[parent][child][0]["legs"][parent]
-                    else 4
-                    for i in range(self.G.nodes[parent]["T"].ndim - 3)
-                ) + (0,slice(0,2),slice(0,2))
-            self.G.nodes[parent]["T"][x_index] = Jx * self.X
-            self.G.nodes[parent]["T"][y_index] = Jy * self.Y
-            self.G.nodes[parent]["T"][z_index] = Jz * self.Z
-
-            # second particle decay stage at this edge; at child node
-            x_index = tuple(
-                1 if i == G[parent][child][0]["legs"][child]
-                else 4
-                for i in range(self.G.nodes[child]["T"].ndim - 2)
-            ) + (slice(0,2),slice(0,2))
-            y_index = tuple(
-                2 if i == G[parent][child][0]["legs"][child]
-                else 4
-                for i in range(self.G.nodes[child]["T"].ndim - 2)
-            ) + (slice(0,2),slice(0,2))
-            z_index = tuple(
-                3 if i == G[parent][child][0]["legs"][child]
-                else 4
-                for i in range(self.G.nodes[child]["T"].ndim - 2)
-            ) + (slice(0,2),slice(0,2))
-            self.G.nodes[child]["T"][x_index] = self.X
-            self.G.nodes[child]["T"][y_index] = self.Y
-            self.G.nodes[child]["T"][z_index] = self.Z
+            self.__heisenberg__coupling(node1,node2,Jx,Jy,Jz)
 
         # contracting boundary legs
         self.contract_boundaries()
@@ -882,6 +973,128 @@ class Heisenberg(PauliPEPO):
         if sanity_check: assert self.intact
 
         return
+
+def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> tuple[PEPO,PEPO]:
+    """
+    Constructs two PEPOs, where one contains the positive-semidefinite part of the TFI
+    and the other contains the negative-semidefinite part.
+    """
+    # sanity check
+    if sanity_check: assert network_message_check(G)
+
+    # spectral decompositions of X and Z
+    X_pos = np.ones(shape=(2,2)) / 2
+    X_neg = np.array([[-1,1],[1,-1]]) / 2
+    Z_pos = np.array([[1,0],[0,0]])
+    Z_neg = np.array([[0,0],[0,-1]])
+
+    pos_op = PEPO(D=2)
+    neg_op = PEPO(D=2)
+
+    chi = 4
+    """
+    Virtual bond dimension.
+    0 is the moving particle state, 1 & 2 are decay states, and 3 is the vacuum state.
+    """
+
+    pos_op.chi = chi
+    neg_op.chi = chi
+
+    G = pos_op.prepare_graph(G)
+    pos_op.G = copy.deepcopy(G)
+    neg_op.G = copy.deepcopy(G)
+
+    # root node is node with smallest degree
+    root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
+    pos_op.root = root
+    neg_op.root = root
+
+    # depth-first search trees
+    tree = nx.dfs_tree(G,root)
+    pos_op.tree = copy.deepcopy(tree)
+    neg_op.tree = copy.deepcopy(tree)
+
+    # adding PEPO tensors (without coupling)
+    for node in G.nodes():
+        N_in = len(tree.pred[node])
+        N_out = len(tree.succ[node])
+        N_pas = len(G.adj[node]) - N_out - N_in
+
+        if N_out == 0:
+            # node is a leaf
+            N_out = 1
+
+        # PEPO tensor, where the first dimension is the incoming leg, the passive legs
+        # and the outgoing legs follow, and the last two dimensions are the physical legs
+        pos_T = pos_op.traversal_tensor(N_pas=N_pas,N_out=N_out)
+        neg_T = neg_op.traversal_tensor(N_pas=N_pas,N_out=N_out)
+
+        # transverse field
+        index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
+        pos_T[index] = g * X_pos
+        neg_T[index] = g * X_neg
+
+        if node == root:
+            # root node; we need to put the (incoming) boundary leg between the virtual dimensions and the physical dimensions
+            pos_T = np.moveaxis(pos_T,0,-3)
+            neg_T = np.moveaxis(neg_T,0,-3)
+
+        # re-shaping PEPO tensor to match the graph leg ordering
+        pos_op[node] = pos_op.permute_PEPO(pos_T,node)
+        neg_op[node] = neg_op.permute_PEPO(neg_T,node)
+
+    # adding incoming and outgoing coupling to every node but the root
+    for node1,node2 in G.edges():
+        if node1 in tree.succ[node2]:
+            # node1 is downstream from node2
+            child = node1
+            parent = node2
+        else:
+            # node2 is downstream from node1, or the edge is not contained in the tree (in which case the order does not matter)
+            child = node2
+            parent = node1
+
+        # first particle decay stages at this edge; at parent node
+        if parent != root:
+            grandparent = tuple(_ for _ in tree.pred[parent].keys())[0]
+            index = lambda x: tuple(
+                0 if i == G[grandparent][parent][0]["legs"][parent]
+                else x if i == G[parent][child][0]["legs"][parent]
+                else -1
+                for i in range(pos_op[parent].ndim - 2)
+            ) + (slice(0,2),slice(0,2))
+        else:
+            # the incoming leg of the root node is a boundary leg, and thus
+            # located just before the physical legs. This is why this case
+            # distinction is necessary.
+            index = lambda x: tuple(
+                x if i == G[parent][child][0]["legs"][parent]
+                else -1
+                for i in range(pos_op[parent].ndim - 3)
+            ) + (0,slice(0,2),slice(0,2))
+        pos_op[parent][index(1)] = J * Z_pos
+        pos_op[parent][index(2)] = J * Z_neg
+        neg_op[parent][index(1)] = J * Z_pos
+        neg_op[parent][index(2)] = J * Z_neg
+
+        # final particle decay stage at this edge; at child node
+        index = lambda x: tuple(
+            x if i == G[parent][child][0]["legs"][child]
+            else -1
+            for i in range(pos_op[child].ndim - 2)
+        ) + (slice(0,2),slice(0,2))
+        pos_op[child][index(1)] = Z_pos
+        pos_op[child][index(2)] = Z_neg
+        neg_op[child][index(1)] = Z_neg
+        neg_op[child][index(2)] = Z_pos
+
+    # contracting boundary legs
+    pos_op.contract_boundaries()
+    neg_op.contract_boundaries()
+
+    if sanity_check: assert pos_op.intact and neg_op.intact
+
+    return pos_op,neg_op
 
 if __name__ == "__main__":
     pass
