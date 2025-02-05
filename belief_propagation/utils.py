@@ -307,5 +307,17 @@ def network_message_check(G:nx.MultiGraph) -> bool:
 
     return True
 
+def same_legs(G1:nx.MultiGraph,G2:nx.MultiGraph) -> bool:
+    """
+    Checks if the leg orderings in `G1` and `G2` are the same.
+    """
+    if not nx.utils.edges_equal(G1.edges(),G2.edges()): raise ValueError("G1 and G2 do not have equal edges.")
+    if not nx.utils.nodes_equal(G1.nodes(),G2.nodes()): raise ValueError("G1 and G2 do not have equal nodes.")
+
+    for node1,node2,legs in G1.edges(data="legs"):
+        if G2[node1][node2][0]["legs"] != legs: return False
+
+    return True
+
 if __name__ == "__main__":
     pass

@@ -290,7 +290,7 @@ def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.ra
     """
     Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
     The graph `G` is manipulated in-place. Tensors are only added if `tensors=True` (default: `True`).
-    Returns the tensors in a dictionary where the nodes are keys, and the tensors are tbe values.
+    Returns the tensors in a dictionary where the nodes are keys, and the tensors are the values.
     """
     # random number generation
     if real:

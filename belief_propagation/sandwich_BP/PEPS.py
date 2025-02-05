@@ -233,7 +233,7 @@ class PEPS:
     @staticmethod
     def set_bond_dimensions(G:nx.MultiGraph,bond_dim_strategy:str,D:int=None,max_chi:int=None) -> None:
         """
-        Initializes the bond dimensions in the graph `G`. The
+        Initializes the bond dimensions in the graph `G` in-place. The
         string `bond_dim_strategy` determines how bond dimensions
         are intialized. There are several options:
         * `None` (default): Bond dimension `D` on every edge.
@@ -297,6 +297,8 @@ class PEPS:
         if not T.ndim == self.G.nodes[node]["T"].ndim: raise ValueError("Attempting to set site tensor with wrong number of legs.")
 
         self.G.nodes[node]["T"] = T
+
+        return
 
     def __repr__(self) -> str:
         out = ""

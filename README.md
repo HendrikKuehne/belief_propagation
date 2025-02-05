@@ -142,3 +142,6 @@ computing before fault tolerance
   * Benyamin Ghojogh, Fakhri Karray, Mark Crowley  
     Eigenvalue and Generalized Eigenvalue Problems: Tutorial  
     [arXiv:1903.11240](https://arxiv.org/abs/1903.11240v3)
+  * Silvia Martina  
+    Sepctra of Random Matrices  
+    [hosted by Università degli Studi di Padova](https://thesis.unipd.it/retrieve/b409c829-d57d-491c-9c0f-7d5f21f6a756/Tesi_LM_Martina_Silvia.pdf)

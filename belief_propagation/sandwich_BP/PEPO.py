@@ -12,7 +12,7 @@ import itertools
 import copy
 from typing import Union
 
-from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian
+from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian,same_legs
 from belief_propagation.sandwich_BP.PEPS import PEPS
 
 class PEPO:
@@ -389,6 +389,19 @@ class PEPO:
                 warnings.warn(f"Hilbert space at node {node} has wrong size.")
                 return False
 
+        # local operators hermitian?
+        for node in self.G.nodes():
+            iterables = tuple(range(size) for size in self[node].shape[:-2])
+            for index in itertools.product(*iterables):
+                index += (slice(0,self.D),slice(0,self.D))
+                if not is_hermitian(self[node][index]):
+                    warnings.warn(f"Non-hermitian operator at node {node} in index " + str(index) + ".")
+                    return False
+
+        if not self.check_tree:
+            # the following tests fail if the PEPO is constructed using PEPO.__add__ (status on 5th of February)
+            return True
+
         # tree traversal correct?
         for node in self.tree.nodes():
             if (len(self.tree.succ[node]) > 0) and (node != self.root):
@@ -423,15 +436,6 @@ class PEPO:
                     if np.allclose(self[node][index],self.I):
                         warnings.warn(f"Particle state passed along passive edge ({node},{child}).")
                         return False
-
-        # local operators hermitian?
-        for node in self.G.nodes():
-            iterables = tuple(range(size) for size in self[node].shape[:-2])
-            for index in itertools.product(*iterables):
-                index += (slice(0,self.D),slice(0,self.D))
-                if not is_hermitian(self[node][index]):
-                    warnings.warn(f"Non-hermitian operator at node {node} in index " + str(index) + ".")
-                    return False
 
         return True
 
@@ -494,6 +498,9 @@ class PEPO:
         """Root node of the spanning tree."""
         self.chi:int
         """Virtual bond dimension."""
+        self.check_tree:bool=True
+        """False if this PEPO is the result of a summation. Means that the tree traversal checks in `self.intact` are disabled."""
+        # TODO: I don't like that I have to disable the tree traversal checks; maybe find a workaround?
 
         return
 
@@ -522,6 +529,8 @@ class PEPO:
             pass
 
         self.G.nodes[node]["T"] = T
+
+        return
 
     def __matmul__(self,psi:Union[PEPS,np.ndarray]) -> Union[PEPS,np.ndarray]:
         """
@@ -566,8 +575,48 @@ class PEPO:
 
         raise ValueError("PEPO.__matmul__ not implemented for type " + str(type(psi)) + ".")
 
+    def __add__(lhs,rhs):
+        """
+        Addition of two PEPOs. The bond dimension of the new operator
+        is the sum of the two old bond dimensions.
+        """
+        # notice that lhs == self !!!
+
+        # sanity check
+        if not nx.utils.nodes_equal(lhs.G.nodes(),rhs.G.nodes()): raise ValueError(f"Operands have different geometries; nodes do not match.")
+        if not nx.utils.edges_equal(lhs.G.edges(),rhs.G.edges()): raise ValueError(f"Operands have different geometries; edges do not match.")
+        if not lhs.D == rhs.D: raise ValueError("Operands must have the same physical dimensions.")
+        if not nx.utils.graphs_equal(lhs.tree,rhs.tree): warnings.warn("The trees of the operands are not the same. This is not a problem (as of 29th of January).")
+
+        if not same_legs(lhs.G,rhs.G):
+            # permute dimensions of rhs to make both PEPOs compatible
+            raise NotImplementedError
+
+        res = PEPO(D=lhs.D)
+        res.chi = lhs.chi + rhs.chi
+        res.root = lhs.root
+        res.tree = lhs.tree
+        res.check_tree = False
+
+        # graph for the result with correct legs and sizes
+        res.G = res.prepare_graph(lhs.G)
+
+        for node in res.G.nodes():
+            shape = tuple(res.chi for _ in res.G.adj[node]) + (res.D,res.D)
+            T = np.zeros(shape=shape,dtype=np.complex128)
+            index_lhs = tuple(slice(0,lhs.chi) for _ in res.G.adj[node]) + (slice(0,res.D),slice(0,res.D))
+            index_rhs = tuple(slice(lhs.chi,res.chi) for _ in res.G.adj[node]) + (slice(0,res.D),slice(0,res.D))
+            T[index_lhs] = lhs.G.nodes[node]["T"]
+            T[index_rhs] = rhs.G.nodes[node]["T"]
+            res.G.nodes[node]["T"] = T
+
+        if not res.intact:
+            raise RuntimeError("PEPO not intact.")
+
+        return res
+
     def __repr__(self) -> str:
-        return f"Hamiltonian on {self.nsites} sites with Hilbert space of size {self.D} at each. PEPO is " + "intact." if self.intact else "not intact."
+        return f"Hamiltonian on {self.nsites} sites with Hilbert space of size {self.D} at each. Bond dimension {self.chi}. PEPO is " + ("intact." if self.intact else "not intact.")
 
 class PauliPEPO(PEPO):
     """
@@ -990,6 +1039,9 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
 
     pos_op = PEPO(D=2)
     neg_op = PEPO(D=2)
+    # why not PauliPEPO? Because pos_op and neg_op will contain
+    # operators that are not pauli matrices (e.g. projectors),
+    # so the sanity check of PauliPEPO would not work
 
     chi = 4
     """

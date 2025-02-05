@@ -659,14 +659,8 @@ class Braket:
         # sanity check
         assert network_message_check(G1)
         assert network_message_check(G2)
-        for node1,node2,key in G1.edges(keys=True):
-            if key != 0: raise ValueError(f"Edge ({node1},{node2}) is contained multiple times in G1.")
-        for node1,node2,key in G2.edges(keys=True):
-            if key != 0: raise ValueError(f"Edge ({node1},{node2}) is contained multiple times in G2.")
-
-        # let's check
-        for node1,node2 in G1.edges():
-            if not G2.has_edge(node1,node2,0): return False
+        assert nx.utils.nodes_equal(G1.nodes(),G2.nodes())
+        assert nx.utils.edges_equal(G1.edges(),G2.edges())
 
         return True
 
@@ -732,12 +726,13 @@ class Braket:
         self.op:PEPO = op
         self.ket:PEPS = ket
         self.D:int = op.D
+        """Physical dimension."""
 
         self.msg:dict[int,dict[int,np.ndarray]] = None
         """First key sending node, second key receiving node."""
 
         self.converged:bool = False
-        """Indicates whether the messages in `self.G` are converged."""
+        """Whether the messages in `self.msg` are converged."""
         self.cntr:float = np.nan
         """Value of the network, calculated by BP."""
 

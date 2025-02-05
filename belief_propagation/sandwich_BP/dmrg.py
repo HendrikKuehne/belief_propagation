@@ -7,15 +7,17 @@ import networkx as nx
 import cotengra as ctg
 import warnings
 import tqdm
+import itertools
+import copy
 
-from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err
+from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err,same_legs
 from belief_propagation.sandwich_BP.PEPO import PEPO
 from belief_propagation.sandwich_BP.PEPS import PEPS
 from belief_propagation.sandwich_BP.braket import Braket,L2BP_compression,QR_gauging
 
 class DMRG:
     """
-    Single-site DMRG on graphs. Environments are calculated using belief propagation.
+    Single-site DMRG on graphs, with a sum hamiltonian. Environments are calculated using belief propagation.
     """
 
     nSweeps:int=5
@@ -24,6 +26,53 @@ class DMRG:
     """Allowed deviation from exact hermiticity."""
     tikhonov_regularization_eps:float=1e-6
     """Epsilon for Tikhonov-regularization of singular messages."""
+
+    def __assemble_messages(self,sanity_check:bool=False) -> None:
+        """
+        Evaluates the direct product of messages, and writes to `self._msg`.
+        """
+        if sanity_check: assert self.intact
+
+        self._msg = {node:{node_:None for node_ in self.overlap.G.nodes()} for node in self.overlap.G.nodes()}
+
+        for node1,node2 in self.overlap.G.edges():
+            for sending_node,receiving_node in itertools.permutations((node1,node2)):
+                chi = sum(expval.op.chi for expval in self.expvals)
+                msg = np.full(shape=(self.overlap.bra.G[sending_node][receiving_node][0]["size"],chi,self.overlap.ket.G[sending_node][receiving_node][0]["size"]),fill_value=np.inf) + 0j
+
+                full_chi = 0
+                for expval in self.expvals:
+                    msg[:,full_chi:full_chi+expval.op.chi,:] = expval.msg[sending_node][receiving_node]
+                    full_chi += expval.op.chi
+
+                assert np.all(np.isfinite(msg))
+                self._msg[sending_node][receiving_node] = msg
+
+        return
+
+    def __assemble_total_op_T(self,sanity_check:bool=False) -> None:
+        """
+        Evaluates the direct product of PEPO tensors,
+        and writes to `self._total_op_T`.
+        """
+        if sanity_check: assert self.intact
+
+        self._total_op_T = {node:None for node in self.overlap.G.nodes()}
+
+        chi = sum(expval.op.chi for expval in self.expvals)
+        for node in self.overlap.G.nodes():
+            H = np.zeros(shape=tuple(chi for _ in self.overlap.G.adj[node]) + (self.D,self.D)) + 0j
+
+            full_chi = 0
+            # filling the Hamiltonian
+            for expval in self.expvals:
+                index = tuple(slice(full_chi,full_chi+expval.op.chi) for _ in self.overlap.G.adj[node]) + (slice(0,self.D),slice(0,self.D))
+                H[index] = expval.op[node]
+                full_chi += expval.op.chi
+
+            self._total_op_T[node] = H
+
+        return
 
     def local_H(self,node:int,threshold:float=hermiticity_threshold,sanity_check:bool=False) -> np.ndarray:
         """
@@ -34,8 +83,11 @@ class DMRG:
         # sanity check
         if sanity_check: assert self.intact
 
+        # construct total PEPO tensors, if necessary
+        if self._total_op_T == None: self.__assemble_total_op_T(sanity_check=sanity_check)
+
         # The hamiltonian at node is obtained by tracing out the rest of the network. The environments are approximated by messages
-        nLegs = len(self.expval.G.adj[node])
+        nLegs = len(self.overlap.G.adj[node])
         args = ()
         """Arguments for einsum"""
 
@@ -44,28 +96,28 @@ class DMRG:
         # The order of the virtual legs is inherited from the "legs" indices on the edges
         vir_dim = 1
 
-        for neighbor in self.expval.G.adj[node]:
+        for neighbor in self.overlap.G.adj[node]:
             # collecting einsum arguments
             args += (
-                self.expval.msg[neighbor][node],
+                self.msg[neighbor][node],
                 (
-                    self.expval.bra.G[node][neighbor][0]["legs"][node], # bra leg
-                    nLegs + self.expval.op.G[node][neighbor][0]["legs"][node], # operator leg
-                    2 * nLegs + self.expval.ket.G[node][neighbor][0]["legs"][node], # ket leg
+                    self.overlap.bra.G[node][neighbor][0]["legs"][node], # bra leg
+                    nLegs + self.expvals[0].op.G[node][neighbor][0]["legs"][node], # operator leg
+                    2 * nLegs + self.overlap.ket.G[node][neighbor][0]["legs"][node], # ket leg
                 )
             )
 
             # compiling virtual dimensions for later reshape
-            vir_dim *= self.expval.ket.G[node][neighbor][0]["size"]
+            vir_dim *= self.overlap.ket.G[node][neighbor][0]["size"]
 
         args += (
             # operator tensor
-            self.expval.op[node],
+            self._total_op_T[node],
             tuple(nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs,3*nLegs+1),
         )
 
         H = np.einsum(*args,out_legs,optimize=True)
-        H = np.reshape(H,(vir_dim * self.expval.D,vir_dim * self.expval.D))
+        H = np.reshape(H,(vir_dim * self.D,vir_dim * self.D))
 
         if sanity_check: assert is_hermitian(H,threshold=threshold,verbose=False)
 
@@ -94,7 +146,7 @@ class DMRG:
         vir_dim = 1
 
         for neighbor in self.overlap.G.adj[node]:
-            if not self.overlap.msg[neighbor][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not correspond to an overlap!")
+            if not self.overlap.msg[neighbor][node].shape[1] == 1: warnings.warn(f"Message {neighbor} -> {node} does not originate from an overlap!")
             msg = self.overlap.msg[neighbor][node][:,0,:]
 
             # collecting einsum arguments
@@ -113,11 +165,30 @@ class DMRG:
         args += (self.overlap.op.I,(3*nLegs,3*nLegs+1))
 
         N = np.einsum(*args,out_legs,optimize=True)
-        N = np.reshape(N,(vir_dim * self.overlap.D,vir_dim * self.overlap.D))
+        N = np.reshape(N,(vir_dim * self.D,vir_dim * self.D))
 
         if sanity_check: assert is_hermitian(N,threshold=threshold)
 
         return N
+
+    def BP(self,sanity_check:bool=False,**kwargs) -> None:
+        """
+        BP iteration on the overlap and all expvals. Total messages
+        and local PEPO tensors are formed, if BP converged.
+        """
+        if not self.overlap.converged: self.overlap.BP(sanity_check=sanity_check,**kwargs)
+        for i in range(len(self.expvals)):
+            if not self.expvals[i].converged: self.expvals[i].BP(sanity_check=sanity_check,**kwargs)
+
+        if self.converged:
+            self.__assemble_messages(sanity_check=sanity_check)
+            self.__assemble_total_op_T(sanity_check=sanity_check)
+        else:
+            warnings.warn("BP iteration not converged.")
+            self._msg = None
+            self._total_op_T = None
+
+        return
 
     def __sweep(self,gauge:bool,sanity_check:bool,**kwargs) -> float:
         """
@@ -131,25 +202,24 @@ class DMRG:
         if sanity_check: assert self.intact
 
         # calculating environments and previous energy
-        if not self.overlap.converged: self.overlap.BP(sanity_check=sanity_check,**kwargs)
-        if not self.expval.converged: self.expval.BP(sanity_check=sanity_check,**kwargs)
+        self.BP(sanity_check=sanity_check,**kwargs)
         Eprev = self.E0
 
         # we'll update tensors and matrices, so as a precaution, we'll set the convergence markers to False
-        self.overlap.converged = False
-        self.expval.converged = False
+        self.converged = False
 
-        for node in nx.dfs_postorder_nodes(self.expval.op.tree,source=self.expval.op.root):
+        for node in nx.dfs_postorder_nodes(self.expvals[0].op.tree,source=self.expvals[0].op.root):
             H = self.local_H(node,sanity_check=sanity_check)
             N = self.local_env(node,sanity_check=sanity_check)
 
             if sanity_check: # are local hamiltonian and environment correctly defined?
-                local_psi = self.overlap.ket[node].flatten()
+                local_psi = self.ket[node].flatten()
                 expval_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),H,local_psi)
                 overlap_local_cntr = ctg.einsum("i,ik,k",local_psi.conj(),N,local_psi)
+                expvals_total_cntr = sum(expval.cntr for expval in self.expvals)
 
-                if not np.isclose(expval_local_cntr,self.expval.cntr):
-                    warnings.warn(f"Local hamiltonian at node {node} does not reproduce expectation value. Relative error {rel_err(self.expval.cntr,expval_local_cntr):.3e}.")
+                if not np.isclose(expval_local_cntr,expvals_total_cntr):
+                    warnings.warn(f"Local hamiltonian at node {node} does not reproduce expectation value. Relative error {rel_err(expvals_total_cntr,expval_local_cntr):.3e}.")
                 if not np.isclose(overlap_local_cntr,self.overlap.cntr):
                     warnings.warn(f"Local environment at node {node} does not reproduce overlap. Relative error {rel_err(self.overlap.cntr,overlap_local_cntr):.3e}.")
 
@@ -161,16 +231,12 @@ class DMRG:
             newshape += [self.overlap.D,]
             T = np.reshape(eigvecs[:,np.argmin(eigvals)],newshape)
 
-            # inserting it into overlap ket and gauging the current node
-            self.overlap.ket[node] = T
-            self.overlap.bra[node] = T.conj()
-            self.expval.ket[node] = T
-            self.expval.bra[node] = T.conj()
-            if gauge: self.gauge(sanity_check=sanity_check,tree=self.expval.op.tree,nodes=(node,))
+            # inserting the new tensor and gauging the current node
+            self[node] = T
+            if gauge: self.gauge(sanity_check=sanity_check,tree=self.expvals[0].op.tree,nodes=(node,))
 
             # calculating new environments
-            self.overlap.BP(sanity_check=sanity_check,**kwargs)
-            self.expval.BP(sanity_check=sanity_check,**kwargs)
+            self.BP(sanity_check=sanity_check,**kwargs)
         Enext = self.E0
 
         return np.abs(Eprev - Enext)
@@ -205,22 +271,21 @@ class DMRG:
         """
         Exact calculation of the current expectation value.
         """
-        expval_cntr = self.expval.contract(sanity_check=sanity_check)
-        overlap_cntr = self.overlap.contract(sanity_check=sanity_check)
+        cntr = 0
+        for expval in self.expvals: cntr += expval.contract(sanity_check=sanity_check)
+        cntr /= self.overlap.contract(sanity_check=sanity_check)
 
-        return expval_cntr / overlap_cntr
+        return cntr
 
     def gauge(self,method:str="QR",sanity_check:bool=False,**kwargs) -> None:
         """
         Gauges bra and ket. `kwargs` are passed to the respective gauging methods.
         """
+
         if method == "QR":
-            QR_gauging(self.overlap.ket,sanity_check=sanity_check,**kwargs)
-            self.expval.ket = self.overlap.ket
-            self.overlap.bra = self.overlap.ket.conj(sanity_check=sanity_check)
-            self.expval.bra = self.expval.ket.conj(sanity_check=sanity_check)
-            self.overlap.converged = False
-            self.expval.converged = False
+            ket_gauged = copy.deepcopy(self.ket)
+            QR_gauging(ket_gauged,sanity_check=sanity_check,**kwargs)
+            self.ket = ket_gauged
 
             return
 
@@ -230,32 +295,68 @@ class DMRG:
         """
         Compresses bra and ket. `kwargs` are passed to the respective compression methods.
         """
+
         if method == "L2BP":
-            L2BP_compression(self.overlap.ket,sanity_check=sanity_check,**kwargs)
-            self.expval.ket = self.overlap.ket
-            self.overlap.bra = self.overlap.ket.conj(sanity_check=sanity_check)
-            self.expval.bra = self.expval.ket.conj(sanity_check=sanity_check)
-            self.overlap.converged = False
-            self.expval.converged = False
+            ket_cmpr = copy.deepcopy(self.ket)
+            L2BP_compression(ket_cmpr,sanity_check=sanity_check,**kwargs)
+            self.ket = ket_cmpr
 
             return
 
         raise NotImplementedError("Compression method " + method + " not implemented.")
 
     @property
+    def msg(self) -> dict[int,dict[int,np.ndarray]]:
+        """
+        Messages on the total expval. These are formed as
+        direct products of messages on the individual expvals.
+        """
+        if self._msg == None: self.__assemble_messages()
+        return self._msg
+
+    @property
     def converged(self) -> bool:
-        """Indicates whether the messages in `self.overlap.G` and `self.expval.G` are converged."""
-        return self.overlap.converged and self.expval.converged
+        """Whether the messages are converged."""
+        return self.overlap.converged and all(expval.converged for expval in self.expvals)
+
+    @converged.setter
+    def converged(self,value:bool) -> None:
+        """
+        Set `converged` in all `Braket`-objects to `False`.
+        """
+        if value: warnings.warn("It is heavily discouraged to set converged to True manually, since `self.converged` automatically keeps track of whether the messages are converged. Setting `self.converged` to True may lead to unexpected behavior.")
+        self.overlap.converged = value
+        for i in range(len(self.expvals)): self.expvals[i].converged = value
+
+    @property
+    def ket(self) -> PEPS:
+        """The current state of the system."""
+        return self.overlap.ket
+
+    @ket.setter
+    def ket(self,newket:PEPS) -> None:
+        """
+        Changing the state of the system requires inserting a new PEPS in all `Braket` objects.
+        """
+        self.overlap.ket = newket
+        self.overlap.bra = newket.conj()
+        for expval in self.expvals:
+            expval.ket = newket
+            expval.bra = newket.conj()
+
+        self.converged = False
+
+        return
 
     @property
     def E0(self) -> float:
         """Current best guess of the ground state energy."""
-        return self.expval.cntr / self.overlap.cntr
+        return sum(expval.cntr for expval in self.expvals) / self.overlap.cntr
 
     @property
     def nsites(self) -> int:
         """
-        Number of sites on which the braket is defined.
+        Number of sites of the system.
         """
         return self.overlap.nsites
 
@@ -264,68 +365,112 @@ class DMRG:
         """
         Checks if the DMRG algrithm can be run. This amounts to:
         * Checking if the underlying braket is intact.
-        + Checking if expval graph and overlap graph are compatible.
+        + Checking if expval graphs and overlap graph are compatible.
         * Checking if bra and ket are adjoint to one another.
-        * Checking if the leg orderings in `self.overlap` and `self.expval` are the same.
+        * Checking if the leg orderings in `self.overlap` and `self.expvals` are the same.
         """
-        if not self.expval.intact: return False
+        # are the brakets compatible?
+        for expval in self.expvals:
+            if not expval.intact: return False
+            if expval.D != self.D: return False
         if not self.overlap.intact: return False
 
         # re the physical dimensions the same?
-        if not self.overlap.D == self.expval.D:
+        if not self.overlap.D == self.D:
             warnings.warn("Physical dimensions do not match.")
             return False
 
-        # are expval graph and overlap graph compatible?
-        if not Braket.graph_compatible(self.expval.G,self.overlap.G):
-            warnings.warn("Graphs of overlap and expval not compatible.")
-            return False
+        # are expval graphs and overlap graph compatible?
+        for i,expval in enumerate(self.expvals):
+            if not Braket.graph_compatible(expval.G,self.overlap.G):
+                warnings.warn(f"Graphs of overlap and expval {i} not compatible.")
+                return False
 
         # are bra and ket adjoint?
         for node in self.overlap.G.nodes():
             if not np.allclose(self.overlap.bra[node].conj(),self.overlap.ket[node]):
                 warnings.warn(f"Bra- and ket-tensors at node {node} in overlap not complex conjugates of one another.")
                 return False
-        for node in self.expval.G.nodes():
-            if not np.allclose(self.expval.bra[node].conj(),self.expval.ket[node]):
-                warnings.warn(f"Bra- and ket-tensors at node {node} in expval not complex conjugates of one another.")
-                return False
+        for i,expval in enumerate(self.expvals):
+            for node in expval.G.nodes():
+                if not np.allclose(expval.bra[node].conj(),expval.ket[node]):
+                    warnings.warn(f"Bra- and ket-tensors at node {node} in expval {i} not complex conjugates of one another.")
+                    return False
 
         # do overlap and expval contain the same tensors?
-        for node in self.expval.G.nodes():
-            if not np.allclose(self.expval.ket[node],self.overlap.ket[node]):
-                warnings.warn(f"Tensor at node {node} is not the same in overlap and expval.")
-                return False
+        for i,expval in enumerate(self.expvals):
+            for node in expval.G.nodes():
+                if not np.allclose(expval.ket[node],self.overlap.ket[node]):
+                    warnings.warn(f"Tensor at node {node} is not the same in overlap and expval {i}.")
+                    return False
 
         # are the leg orderings the same?
-        for node1,node2,legs in self.expval.G.edges(data="legs"):
-            if not self.overlap.G.has_edge(node1,node2):
-                warnings.warn(f"Edge ({node1},{node2}) present in expval, but not present in overlap.")
-                return False
-            if self.expval.G[node1][node2][0]["legs"] != legs:
-                warnings.warn(f"Leg indices of edge ({node1},{node2}) different in expval and overlap.")
+        for i,expval in enumerate(self.expvals):
+            if not same_legs(self.overlap.G,expval.G):
+                warnings.warn(f"Leg orderings in overlap and expval {i} are different.")
                 return False
 
         return True
 
-    def __init__(self,op:PEPO,psi_init:PEPS=None,chi:int=None,sanity_check:bool=False,**kwargs):
+    def __init__(self,oplist:tuple[PEPO],psi_init:PEPS=None,chi:int=None,sanity_check:bool=False,**kwargs):
         """
-        Initialisation of a `DMRG` object. The initial is chosen randomly,
-        if it is not given. `kwargs` are passed to `PEPS.init_random`.
+        Initialisation of a `DMRG` object, where the state has bond dimension `chi`.
+        The initial is chosen randomly, if it is not given. `kwargs` are passed to `PEPS.init_random`.
+        
+        For `oplist = (H1,H2,...)`, this object runs single-site DMRG on the Hamiltonian `H = H1 + H2 + ...`.
         """
+        # sanity check
+        if sanity_check:
+            for op in oplist:
+                assert op.intact
+                if not oplist[0].D == op.D: raise ValueError("All operators must have the same physical dimension.")
+            if psi_init != None:
+                assert psi_init.intact
+                assert oplist[0].D == psi_init.D
+
         # if not given, initial state is chosen randomly
         if psi_init == None:
-            psi_init = PEPS.init_random(G=op.G,D=op.D,chi=chi,**kwargs)
+            psi_init = PEPS.init_random(G=op.G,D=oplist[0].D,chi=chi,**kwargs)
 
-        self.expval:Braket = Braket.Expval(psi=psi_init,op=op,sanity_check=sanity_check)
-        """`Braket`-object that contains the operator."""
+        self.D = oplist[0].D
+        """Physical dimension."""
+        self.expvals = tuple(Braket.Expval(psi=psi_init,op=op,sanity_check=sanity_check) for op in oplist)
+        """`Braket`-objects for every operator."""
         self.overlap:Braket = Braket.Overlap(psi1=psi_init,psi2=psi_init)
         """Norm of the current state."""
 
+        self._msg:dict[int,dict[int,np.ndarray]] = None
+        """Messages on the total expval. Formed as direct products of expval messages."""
+        self._total_op_T:dict[int,np.ndarray] = None
+        """Total local PEPO tensors. Formed as direct products of constituent PEPO tensors."""
+
         if sanity_check: assert self.intact
 
+    def __getitem__(self,node:int) -> np.ndarray:
+        """
+        Subscripting with a node gives the ket tensor at this node.
+        """
+        return self.overlap.ket[node]
+
+    def __setitem__(self,node:int,T:np.ndarray) -> None:
+        """
+        Changing local tensors in the state directly.
+        """
+        self.overlap.ket[node] = T
+        self.overlap.bra[node] = T.conj()
+        for i in range(len(self.expvals)):
+            self.expvals[i].ket[node] = T
+            self.expvals[i].bra[node] = T.conj()
+
+        # convergence is no ore guaranteed
+        self.converged = False
+
+        return
+
     def __repr__(self) -> str:
-        out = f"DMRG problem on {self.nsites} sites.\nKet: " + str(self.overlap.ket) + "\nHamiltonian: " + str(self.expval.op) + "\nMessages are "
+        out = f"DMRG problem on {self.nsites} sites.\nKet: " + str(self.overlap.ket) + "\nHamiltonians: "
+        for expval in self.expvals: out += "\n" + str(expval.op)
+        out += "\nMessages are "
         out += "converged." if self.converged else "not converged."
         return out
 
