@@ -5,6 +5,7 @@ import numpy as np
 import networkx as nx
 import warnings
 import scipy.linalg as scialg
+import scipy.sparse as scisparse
 import itertools
 
 # -------------------------------------------------------------------------------
@@ -24,13 +25,25 @@ def delta_tensor(nLegs:int,chi:int) -> np.ndarray:
     T[idx] = 1
     return T
 
-def multi_kron(*ops):
+def multi_kron(*ops,create_using:str="numpy"):
     """
     Tensor product of all the given operators.
     """
-    res_op = 1
-    for op in ops: res_op = np.kron(op,res_op)
-    return res_op
+    if create_using == "numpy":
+        res_op = 1
+        for op in ops: res_op = np.kron(op,res_op)
+        return res_op
+
+    if "scipy" in create_using:
+        if not all(scisparse.issparse(op) for op in ops): raise RuntimeError("There are non-sparse operators.")
+        format = create_using.split(sep=".")[-1]
+        if format not in ("bsr","coo","csc","csr","dia","dok","lil"): raise ValueError("multi_kron not implemented for method " + create_using + ". " + format + " is not a scipy.sparse array type.")
+
+        res_op = ops[0]
+        for op in ops[1:]: res_op = scisparse.kron(op,res_op,format=format)
+        return res_op
+
+    raise ValueError("multi_kron not implemented for method " + create_using + ".")
 
 def proportional(A:np.ndarray,B:np.ndarray,decimals:int=None,verbose:bool=False) -> bool:
     """

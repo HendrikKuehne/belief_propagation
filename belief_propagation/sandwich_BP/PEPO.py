@@ -11,8 +11,9 @@ import warnings
 import itertools
 import copy
 from typing import Union
+import time
 
-from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian,same_legs
+from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian,same_legs,npdense_to_scisparse
 from belief_propagation.sandwich_BP.PEPS import PEPS
 
 class PEPO:
@@ -121,7 +122,7 @@ class PEPO:
 
     def to_dense(self,sanity_check:bool=False) -> np.ndarray:
         """
-        Contracts the PEPO using `ctg.einsum`.
+        Constructs the operator using `ctg.einsum`.
         """
         if sanity_check: assert self.intact
 
@@ -191,11 +192,9 @@ class PEPO:
 
         return H
 
-    def to_sparse(self,sanity_check:bool=False) -> scisparse.csr_matrix:
+    def to_sparse(self,create_using:str="scipy.csr",sanity_check:bool=False) -> Union[scisparse.csr_array,scisparse.csr_matrix]:
         """
-        Contracts the Hamiltonian using sparse operations
-        from the [sparse](https://github.com/pydata/sparse)
-        package.
+        Constructs the operator using sparse operations.
         """
         if sanity_check: assert self.intact
 
@@ -203,36 +202,59 @@ class PEPO:
             # the network is trivial
             return tuple(self.G.nodes(data="T"))[0][1]
 
-        #if self.G.number_of_edges() > len(np.core.einsumfunc.einsum_symbols):
-        #    raise RuntimeError(f"The sparse package allows einsum contractions with up to {len(np.core.einsumfunc.einsum_symbols)} indices. The operator has too many edges ({self.G.number_of_edges()} edges).")
+        if create_using == "scipy.csr":
+            # H will be constructed by summing the contributions from all operator chains.
+            # array construction is fastest using the coo format, but I'm returning csr
+            # because this is optimal for matrix-vector multiplication; an operation that
+            # the Lanczos algorithm heavily relies on
+            chains = self.operator_chains(sanity_check=sanity_check)
 
-        inputs = ()
-        tensors = ()
+            H = scisparse.csr_array((self.D**self.nsites,self.D**self.nsites))
+            nodes = tuple(self.G.nodes())
 
-        # enumerating the edges in the graph
-        for i,nodes in enumerate(self.G.edges()):
-            node1,node2 = nodes
-            self.G[node1][node2][0]["label"] = ctg.get_symbol(i)#np.core.einsumfunc.einsum_symbols[i]
+            for chain in chains:
+                ops = tuple(
+                    scisparse.coo_array(self[node][chain[node]]) if node in chain.keys()
+                    else scisparse.eye_array(self.D,format="coo")
+                    for node in nodes[::-1]
+                )
+                H += multi_kron(*ops,create_using="scipy.coo")
 
-        N_edges = self.G.number_of_edges()
-        output = tuple(ctg.get_symbol(N_edges + i) for i in range(2 * self.nsites))
+            return H.tocsr()
 
-        # assembling the einsum arguments
-        for i,node in enumerate(self.G.nodes()):
-            legs = [None for _ in range(self[node].ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
-            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
-                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+        if create_using == "sparse":
+            #if self.G.number_of_edges() > len(np.core.einsumfunc.einsum_symbols):
+            #    raise RuntimeError(f"The sparse package allows einsum contractions with up to {len(np.core.einsumfunc.einsum_symbols)} indices. The operator has too many edges ({self.G.number_of_edges()} edges).")
 
-            inputs += (tuple(legs),)
-            tensors += (sparse.GCXS(self[node]),)
+            inputs = ()
+            tensors = ()
 
-        # einsum expression, with all physical dimensions contained in ellipsis
-        einsum_expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
-        # contraction using einsum
-        H = sparse.einsum(einsum_expr,*tensors)
-        H = sparse.reshape(H,shape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+            # enumerating the edges in the graph
+            for i,nodes in enumerate(self.G.edges()):
+                node1,node2 = nodes
+                self.G[node1][node2][0]["label"] = ctg.get_symbol(i)#np.core.einsumfunc.einsum_symbols[i]
 
-        return H.to_scipy_sparse()
+            N_edges = self.G.number_of_edges()
+            output = tuple(ctg.get_symbol(N_edges + i) for i in range(2 * self.nsites))
+
+            # assembling the einsum arguments
+            for i,node in enumerate(self.G.nodes()):
+                legs = [None for _ in range(self[node].ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
+                for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                    legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+
+                inputs += (tuple(legs),)
+                tensors += (sparse.GCXS(self[node]),)
+
+            # einsum expression, with all physical dimensions contained in ellipsis
+            einsum_expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
+            # contraction using einsum
+            H = sparse.einsum(einsum_expr,*tensors)
+            H = sparse.reshape(H,shape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+
+            return H.to_scipy_sparse()
+
+        raise ValueError("to_sparse not implemented for method " + create_using + ".")
 
     def view_site(self,node:int):
         """
@@ -320,6 +342,83 @@ class PEPO:
 
         return T
 
+    def operator_chains(self,sanity_check:bool=False) -> tuple[dict[int:tuple]]:
+        """
+        Returns all operator chains. An operator chain is a collection
+        of operators. The summation of the tensor products of all operator chains
+        gives the operator.
+
+        Operator chains are returned as a dict, where nodes are keys
+        and indices are values. The index is an index for the node
+        tensor, s.t. `self[node][index]` is part of the respective
+        operator chain.
+        """
+        # sanity checks
+        if sanity_check: assert self.intact
+
+        # why a recursion? For large graphs, simply iterating through all
+        # indices to find valid chains might take prohibitively long
+
+        operator_chains = []
+
+        self.__chain_construction_recursion(node=self.root,i_upstream=np.nan,chain=dict(),chains=operator_chains)
+
+        return tuple(operator_chains)
+
+    def __chain_construction_recursion(self,node:int,i_upstream:int,chain:dict[int,tuple],chains:list[dict[int,tuple]]) -> None:
+        """
+        Traversing the PEPO either downstream along the tree, or hopping
+        from one branch (of the tree) to another, collecting the operator
+        chains. Chains are saved in the argument `chains`, which is
+        amnipulated in-place.
+        """
+        # this recursion breaks off eventually because the finite state automaton
+        # that defines the tree does not have feedback loops
+
+        if node != self.root:
+            assert len(self.tree.pred[node]) == 1
+            # parameters of the upstream node (parent)
+            parent = tuple(self.tree.pred[node])[0]
+            upstream_leg = self.G[node][parent][0]["legs"][node]
+        else:
+            # an upstream node only exists if node is not the root node
+            parent = np.nan
+            upstream_leg = np.nan
+
+        # checking if the operator chain that terminates in node is non-zero
+        terminal_index = tuple(i_upstream if _ == upstream_leg else self.chi - 1 for _ in range(self[node].ndim - 2)) + (slice(0,self.D),slice(0,self.D))
+        if not np.allclose(self[node][terminal_index],0):
+            chain = copy.deepcopy(chain)
+            chain[node] = terminal_index
+            chains.append(chain)
+
+        for child,i_downstream in itertools.product(self.G.adj[node],range(self.chi)):
+            if child == parent:
+                # this leg is the upstream leg in the PEPO tree; this is not where the operator chain continues
+                continue
+
+            downstream_leg = self.G[node][child][0]["legs"][node]
+            # assembling an index that takes us downstream in the operator chain
+            index = tuple(
+                i_downstream if _ == downstream_leg else
+                i_upstream if _ == upstream_leg else
+                self.chi - 1
+                for _ in range(self[node].ndim-2)
+            ) + (slice(0,self.D),slice(0,self.D))
+
+            if np.allclose(self[node][index],0):
+                # not part of any operator chain
+                continue
+
+            if index == terminal_index:
+                # this operator chain terminates here
+                continue
+
+            nextchain = copy.deepcopy(chain)
+            nextchain[node] = index
+
+            self.__chain_construction_recursion(node=child,i_upstream=i_downstream,chain=nextchain,chains=chains)
+
     @property
     def I(self) -> np.ndarray:
         """Identity matrix with the dimensions `(self.D,self.D)`."""
@@ -402,6 +501,11 @@ class PEPO:
             # the following tests fail if the PEPO is constructed using PEPO.__add__ (status on 5th of February)
             return True
 
+        if self.chi == 1:
+            # PEPOs with bond dimension 1 are product operators, for which tree traversal checks are not necessary
+            # (one does not need a finite state automaton to write a product operator as a PEPO)
+            return True
+
         # tree traversal correct?
         for node in self.tree.nodes():
             if (len(self.tree.succ[node]) > 0) and (node != self.root):
@@ -419,7 +523,7 @@ class PEPO:
                         return False
 
                 # checking if the vacuum state is passed along
-                index = tuple(-1 for _ in range(self[node].ndim - 2)) + (slice(0,2),slice(0,2))
+                index = tuple(-1 for _ in range(self[node].ndim - 2)) + (slice(0,self.D),slice(0,self.D))
                 if not np.allclose(self[node][index],self.I):
                     warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.")
                     return False
@@ -1147,6 +1251,17 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
     if sanity_check: assert pos_op.intact and neg_op.intact
 
     return pos_op,neg_op
+
+def print_operator_chain(op:PEPO,chain:dict[int:tuple],sanity_check:bool=False) -> None:
+    """
+    Prints the given operator chain.
+    """
+    if sanity_check: assert op.intact
+
+    for node in chain.keys():
+        print(f"op[{node}] : \n",op[node][chain[node]])
+
+    return
 
 if __name__ == "__main__":
     pass

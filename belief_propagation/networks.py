@@ -286,7 +286,7 @@ def feynman_cut(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> 
 #                   Network creation
 # -------------------------------------------------------------------------------
 
-def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False,tensors:bool=True) -> dict:
+def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.random.default_rng(),real:bool=True,psd:bool=False,tensors:bool=False) -> dict:
     """
     Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
     The graph `G` is manipulated in-place. Tensors are only added if `tensors=True` (default: `True`).
