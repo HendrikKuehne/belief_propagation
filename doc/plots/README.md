@@ -92,6 +92,6 @@ Plots that show histograms og eifenvalue magnitudes and the flatness of the spec
 * `sparse_dense_eig.pdf`: Sparse representation of PEPO using `scipy.sparse.bsr_array`, diagonalization using `scipy.sparse.linalg.eigsh`
 * `sparse_lanczos_eig.pdf`: Diagonalization using `pytenet.eigh_krylov`, with `numiter = 10 * 2**N` (number of qubits `N`).[^4]
 * `sparse_format_comp.pdf`: Sparse representation of PEPOs using the scipy array formats that are indicated in the plot.
-* `sparse_format_comp_2.pdf`: Omitting `scipy.sparse.bsr_array` snd repeating the calculation from `sparse_format_comp.pdf`, while also investigating the sparsity.
+* `sparse_format_comp_2.pdf`: Omitting `scipy.sparse.bsr_array` and repeating the calculation from `sparse_format_comp.pdf`, while also investigating sparsity.
 
 [^4]: This is the default number of iterations in `scipy.sparse.linalg.eigsh`.

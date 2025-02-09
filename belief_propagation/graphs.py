@@ -211,16 +211,31 @@ def tree(nNodes:int,rng:np.random.Generator=None) -> nx.MultiGraph:
 
     return G
 
-def heavyhex(m:int,n:int) -> nx.MultiGraph:
+def hex(m:int,n:int) -> nx.MultiGraph:
     """
-    Heavy-hex configuration, as defined in [Phys. Rev. X 10, 011022 (2020)](https://doi.org/10.1103/PhysRevX.10.011022).
+    Hexagonal graph.
     """
-    G = nx.hexagonal_lattice_graph(m=m,n=n,create_using=nx.MultiGraph)
-    N = G.number_of_nodes()
+    G = nx.hexagonal_lattice_graph(m=m,n=n,create_using=nx.MultiGraph,with_positions=False)
+
+    # removing the pos key
+    for node in G.nodes():
+        try:
+            del G.nodes[node]["pos"]
+        except KeyError:
+            continue
 
     # re-labeling nodes
     mapping = {label:i for i,label in enumerate(G.nodes())}
     G = nx.relabel_nodes(G,mapping)
+
+    return G
+
+def heavyhex(m:int,n:int) -> nx.MultiGraph:
+    """
+    Heavy-hex graph, as defined in [Phys. Rev. X 10, 011022 (2020)](https://doi.org/10.1103/PhysRevX.10.011022).
+    """
+    G = hex(m=m,n=n)
+    N = G.number_of_nodes()
 
     edges_to_add = ()
     edges_to_remove = ()

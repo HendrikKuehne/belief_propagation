@@ -1,5 +1,5 @@
 """
-Matrix product states on arbitrary graphs.
+Projector-entangled pair states on arbitrary graphs.
 """
 
 import numpy as np
@@ -15,7 +15,7 @@ class PEPS:
     Base class for matrix-product states with arbitrary geometry.
     """
 
-    def to_dense(self,sanity_check:bool=False) -> np.ndarray:
+    def toarray(self,sanity_check:bool=False) -> np.ndarray:
         """
         Contracts the MPS using `ctg.einsum`.
         """

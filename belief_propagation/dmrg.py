@@ -11,9 +11,9 @@ import itertools
 import copy
 
 from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err,same_legs
-from belief_propagation.sandwich_BP.PEPO import PEPO
-from belief_propagation.sandwich_BP.PEPS import PEPS
-from belief_propagation.sandwich_BP.braket import Braket,L2BP_compression,QR_gauging
+from belief_propagation.PEPO import PEPO
+from belief_propagation.PEPS import PEPS
+from belief_propagation.braket import Braket,L2BP_compression,QR_gauging
 
 class DMRG:
     """
@@ -182,11 +182,9 @@ class DMRG:
 
         if self.converged:
             self.__assemble_messages(sanity_check=sanity_check)
-            self.__assemble_total_op_T(sanity_check=sanity_check)
         else:
             warnings.warn("BP iteration not converged.")
             self._msg = None
-            self._total_op_T = None
 
         return
 
@@ -350,7 +348,7 @@ class DMRG:
 
     @property
     def E0(self) -> float:
-        """Current best guess of the ground state energy."""
+        """Current estimate of the ground state energy."""
         return sum(expval.cntr for expval in self.expvals) / self.overlap.cntr
 
     @property
@@ -375,7 +373,7 @@ class DMRG:
             if expval.D != self.D: return False
         if not self.overlap.intact: return False
 
-        # re the physical dimensions the same?
+        # are the physical dimensions the same?
         if not self.overlap.D == self.D:
             warnings.warn("Physical dimensions do not match.")
             return False
@@ -462,7 +460,7 @@ class DMRG:
             self.expvals[i].ket[node] = T
             self.expvals[i].bra[node] = T.conj()
 
-        # convergence is no ore guaranteed
+        # messages are not necessarily converged any more
         self.converged = False
 
         return

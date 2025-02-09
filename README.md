@@ -33,6 +33,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
     * Assume that we construct neighborhoods $N_a^{(r)}$, i.e. neighborhoods that contain loops up to length $r+2$. If the network contains loops that are only a little bit longer than $r+2$, say $r+2+\epsilon$, the neighborhood decomposition transforms these neighborhoods into loops of length $\epsilon$. The neighborhood decomposition (using the heuristic I have implemented) is only to be used if there is a gap in the loop length spectrum.
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
+* Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
 

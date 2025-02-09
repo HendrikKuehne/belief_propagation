@@ -1,7 +1,7 @@
 """
 Creating sandwiches of the form
-* MPS - PEPO - MPS, or
-* MPS - MPS,
+* MPS @ PEPO @ MPS, or
+* MPS @ MPS,
 
 by combining the classes MPS and PEPO.
 These classes implement the Belief Propagation
@@ -17,9 +17,9 @@ import warnings
 import itertools
 import tqdm
 
-from belief_propagation.utils import network_message_check,crandn,is_hermitian
-from belief_propagation.sandwich_BP.PEPO import PEPO
-from belief_propagation.sandwich_BP.PEPS import PEPS
+from belief_propagation.utils import network_message_check,crandn
+from belief_propagation.PEPO import PEPO
+from belief_propagation.PEPS import PEPS
 
 @ray.remote(num_cpus=1)
 def contract_tensor_msg(
@@ -396,7 +396,7 @@ class Braket:
         * `real`: Initialization of messages with real values (otherwise complex).
         * `normalize`: Normalization of messages after new message calculation. If `normalize=True`,
         this function implements the BP algorithm from
-        ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). Otherwise,
+        [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211). Otherwise,
         the algorithm becomes Belief Propagation on trees.
         * `threshold`: When to abort the BP iteration.
         * `new_messages`: Whether or not to initialize new messages.

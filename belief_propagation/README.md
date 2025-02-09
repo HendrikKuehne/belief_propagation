@@ -1,52 +1,35 @@
-# The structure of the tensor networks
+# Open questions
 
-Tensor networks are realised using the `networkx.MultiGraph` class.
+* **Stoudenmire vs Gray:** Kim et Al claimed utility of quantum computing before fault tolerance in 2023 ([Nature 618, 500 - 505 (2023)](https://doi.org/10.1038/s41586-023-06096-3)). Both Stoudenmire et Al ([PRX Quantum 5, 010308 (2024)](https://doi.org/10.1103/PRXQuantum.5.010308)) and Gray et Al ([Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321)) published results, where they simulate this experiment using BP on tensor networks - so what's the difference?
+  * Both use the same gauge[^1]; Stoudenmire calls it the "Vidal gauge", while Gray calls it the "super-orthogonal gauge".
+  * :arrow_right: Gray uses mixed time evolution, where they evolve both the PEPS and the PEPO "towards each other" to limit entanglement creation; Stoudenmire stays in the Schrödinger picture.
+  * :arrow_right: Gray compresses each layer of the trotterized time evolution into a single PEPO, that he applies using what he calls "L2BP". Stoudenmire applies gates individually using the Simple-Update algorithm.
 
-Each node in the graph has a key `T` that holds the respective tensor. 
+[^1]: Consult Tindall 2023 ([arXiv:2306.17837](https://arxiv.org/abs/2306.17837)) to see this; this gauge can be found using Belief Propagation.
 
-Edges in the network represent contractions, of course. This code distinguishes two kinds of edges, using the key `trace`. Edges with `trace=True` corresponds to contraction of a tensor with itself, i.e. "tracing out of dimensions". The edges where `trace=False` are contraction that involve two nodes, these are "default nodes".
+# File contents
 
-The edges also hold information about which legs of the adjacent tensors are involved in the contraction. Trace-edges possess an `indices`-key, whose value is a set `{i1,i2}` that holds the two legs of the tensor that the trace runs over. Default legs possess a `legs`-key, whose value is a dictionary `{node1:i2,node2:i2}`, that gives the leg for the respective node. The `legs`-value of trace-edges is `None`, and vice-versa.[^1]
+* **`PEPO.py`** Projector-entangled Pair Operators on arbitary graphs, where the Tensor Network structure is inherited from the main module (see [this file](https://github.com/HendrikKuehne/belief_propagation/blob/main/belief_propagation/README.md) for an introduction).
+  * **ToDo**: Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
+    * Sparse matrices would be most useful in `PEPO.to_dense()`. There is hope that this could be done more or less easily, since the `sparse` package has an [einsum implementation](https://sparse.pydata.org/en/stable/generated/sparse.einsum.html#sparse.einsum) and a [reshape](https://sparse.pydata.org/en/stable/generated/sparse.reshape.html#sparse.reshape).
+    * The catch is that their `einsum` has the same limitation that `np.einsum` has: The number of contractions is severely limited. Specifically, `sparse.einsum` chooses edge labels in a contraction from `np.core.einsumfunc.einsum_symbols` (check [`sparse._common.parse_einsum_input`](https://github.com/pydata/sparse/blob/main/sparse/numba_backend/_common.py#L1163)). For now I'll simply throw an error if I encounter a graph with too many edges; in the future, Feynman cuts could be used.
+    * `sparse.einsum` does not seem to do any optimization - let's hope this does not become a problem.
+  * **ToDo**: `PEPS` instances do not require a leg ordering on the underlying graph, but `PEPO` instances do; there is no reason why PEPOs should require a leg ordering. (except if a typical workflow is to generate a PEPS first and use it's graph to generate a PEPO; the leg ordering in PEPO intialisation should be optional)
+  * **ToDo**: Overhaul PEPO initialisation. The current method defines site tensors without site-to-site coupling, then reshapes them such that the leg ordering is correct with respect to the graph. Site-to-site coupling is added afterwards. This, then, is very illegibile since I need to keep track of the leg ordering and since case distinctions are necessary. This could be done more elegantly by defining a tree along which coupling flows[^2]. The goal would be to define the site tensors without having to refer to the leg ordering of the graph, and re-shape afterwards.
+  * **ToDo** Complete implementation of `PEPO.__add__`.
+    * **ToDo** This necessitates handling the tree traversal; so far (5th of February), I had to disable the tree traversal tests in `PEPO.intact`, since the way I implemented summation of PEPOs is not compatible with the check I had so far. I don't think this would be hard to implement, it just requires some bookkeeping.
+  * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues. Tested against Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master).
+* **`PEPS.py`** PEPS on arbitrary graphs.
+  * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
+* **`braket.py`** Stacks of combinations of PEPS and PEPO on arbitrary graphs.
+  * **ToDo** Accelerate the mesage uodate somehow
+    * Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
+    * Pancotti & Gray stack all the tensors and the messages s.t. the BP algorithm becomes a vector iteration ([arxiv:2306.15004](https://arxiv.org/abs/2306.15004))
+    * :arrows_counterclockwise: parallelize using [Ray](https://docs.ray.io/en/latest/ray-overview/getting-started.html) - What I have done so far is actually slower than the straightforward implementation. The overhead seems to be too large, maybe I should think this through a little more thoroughly.
+  * :white_check_mark: Progress bar using [tqdm](https://tqdm.github.io)
+  * **ToDo** Smarter discrimination between cases in `Braket.contract`.
+  * **ToDo** Optimize local updates; Lanczos algorithm? (In python implemented, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/))
+  * **ToDo** The implementation of the DMRG class is wildly inefficient (at least in terms of memory) because the overlap $\braket{\psi|\psi}$ and the expectation value $\braket{\psi|H|\psi}$ are both stored as full `Braket` objects, although they contain essentially the same data
+  * **ToDo** Normalize states after DMRG algorithm
 
-[^1]: Having two different ways of saving the leg indices and two kinds of legs seems convoluted, but this is necessary because `network_tools.contract_edge` needs to know if a given edge is a trace edge or not. The `indices`-values are sets as opposed to tuples or lists because the trace is symmetric with respect to the order of the legs.
-
-# The `contract_edge` function
-
-This function - defined in `networks.py` - does the heavy lifting of tensor network contraction. Given an edge `(node1,node2,key)`, it executes the respective contraction in the tensor network `G` in-place. This procedure is comparably easy if the edge in question is a trace edge. we take the respective trace, and save the resulting tensor in the node. Afterwards, the incident edges' `legs` or `indices` values need to be updated to reflect the changed indices of the tensor.
-
-It gets a little more convoluted if we are contracting a default edge, because there are more cases. Each node might have trace indices attached. Furthermore, there could be multiple edges between `node1` and `node2`, and upon contraction of one of them the other ones turn into trace edges. See the image below for different scenarios.
-
-<p align="center">
-  <img width="300" height="300" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/imgs/contraction_cases.jpeg">
-</p>
-
-Contracting the two tensors is easy, and afterwards, the edge `(node1,node2,key)` is removed. `contract_edges` then devotes a substantial amount of attention to
-
-* re-labeling the legs that are incident to `node1`,
-* re-labeling the legs that are incident to `node2`, and
-* connecting any nodes to `node1` that were previously connected to `node2`.
-
-Each step requires distinguishing whether the edge under consideration is a trace edge or not.
-
-The function `contract_edge` is used in `contract_network`, which has been tested against test cases (`utils.dummynet1` through `utils.dummynet5`) and against the plaquette code (`networks.grid_net`).
-
-# Belief propagation in `BP.py`
-
-each edge `(node1,node2)` has a key `msg`, that contains the messages on this edge.
-
-```
-    edge["msg"] = {
-        node1:message_to_node_1,
-        node2:message_to_node_2
-    }
-```
-
-The message `G[node1][node2][0]["msg"][node1]` is thus the message from `node2` to `node1`. It is a vector which connects to leg `G[node1][node2][0]["legs"][node1]` of the tensor `G.nodes[node1]["T"]`.
-
-# Belief propagation in `loopyNBP.py`
-
-The loopy Neighborhood Belief Propagation (loopyNBP) algorithm is inspired by Kirkley et Al, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211)). It considers the effect of small loops by explicitly contracting them. This is achieved through neighborhoods; let $N_i^{(r)}$ be the neighborhood around node $i$. $N_i^{(r)}$ contains all loops (i.e. nodes and edges) of length $r+2$ and shorter. For $r=0$, this implies $N_i^{(0)}={i}$, in which case the algorithm reduces to normal Belief Propagation. For $r=1$, the neighborhoods contain loops with length 3, i.e. triangles, and so forth.
-
-Such loops render the BP algorithm inaccurate. The loopyNBP incorporates loops with length $r+2$ by passing messages not between individual nodes, but between neighborhoods. When calculating a new message iteratively, a network receives inbound messages at it's border. These entire neighborhood is contracted explicitly with it's inbound messages, and one outbound message emerges.
-
-The function `loopyNBP.neighborhood` returns the neighborhood $N_i^{(r)}$ as two tuples: One contains the edges in the neighborhood, and the other one the nodes. During the message passing iterations, in this neighborhood, edges within the neighborhood are contracted while inbound messages are identified as messages to nodes in $N_i^{(r)}$, which live in edges that are not in $N_i^{(r)}$.
+[^2]: This other tree should be called `coupling_tree`, in contrast to the existing tree (`automaton_tree`, in the following). The automaton tree is contained in the coupling tree. This also necessitates a re-interpretation of inbound, passive and outbound legs: Inbound legs are upstream in the automaton tree, outbond legs are downstream in the coupling tree. Passive legs are upstream in the coupling tree, but are not contained in the automaton tree. Coupling goes out of every node along all outbound edges. This does not lead to double coupling along some edges because the coupling tree is directed; coupling flows downstream in the coupling tree.
