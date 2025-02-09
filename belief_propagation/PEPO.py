@@ -196,7 +196,7 @@ class PEPO:
 
         return out
 
-    def traversal_tensor(self,N_pas:int,N_out:int) -> np.ndarray:
+    def traversal_tensor(self,N_pas:int,N_out:int,dtype=np.complex128) -> np.ndarray:
         """
         Returns the minimum tensor for PEPOs, that is, a tensor
         that ensures correct tree traversal.
@@ -209,7 +209,7 @@ class PEPO:
         assert N_out >= 0
         assert hasattr(self,"chi")
 
-        T = np.zeros(shape=[self.chi for _ in range(1 + N_pas + N_out)] + [self.D,self.D])
+        T = np.zeros(shape=[self.chi for _ in range(1 + N_pas + N_out)] + [self.D,self.D],dtype=dtype)
 
         # particle index
         for i_out in range(N_out):
@@ -581,32 +581,6 @@ class PEPO:
 
             if not np.allclose(T[index],0):
                 print(index[:-2],":\n",T[index],"\n")
-
-    @classmethod
-    def Identity(cls,G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False):
-        """
-        Returns the identity PEPO on graph `G`.
-        Physical dimension `D`.
-        """
-        Id = cls(D)
-        Id.chi = 1
-        Id.G = Id.prepare_graph(G)
-
-        # root node is node with smallest degree
-        Id.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
-
-        # depth-first search tree
-        Id.tree = nx.dfs_tree(G,Id.root)
-
-        # adding physical dimensions, putting identities in the physical dimensions
-        for node in Id.G.nodes():
-            T = np.zeros(shape = tuple(Id.chi for _ in range(len(G.adj[node]))) + (Id.D,Id.D),dtype=dtype)
-            T[...,:,:] = Id.I
-            Id.G.nodes[node]["T"] = T
-
-        if sanity_check: assert Id.intact
-
-        return Id
 
     def __init__(self,D:int) -> None:
         self.D = D

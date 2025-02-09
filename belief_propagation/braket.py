@@ -18,6 +18,7 @@ import itertools
 import tqdm
 
 from belief_propagation.utils import network_message_check,crandn
+from belief_propagation.hamiltonians import Identity
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
 
@@ -155,17 +156,17 @@ class Braket:
                 # messages in both directions
                 if len(self.G.adj[sending_node]) > 1:
                     # ket and bra leg indices, and sizes
-                    bra_size = self.bra.G[sending_node][receiving_node][0]["size"]
-                    ket_size = self.ket.G[sending_node][receiving_node][0]["size"]
+                    bra_size = self._bra.G[sending_node][receiving_node][0]["size"]
+                    ket_size = self._ket.G[sending_node][receiving_node][0]["size"]
                     # calculating the message
-                    msg = get_new_message(bra_size,self.op.chi,ket_size)
+                    msg = get_new_message(bra_size,self._op.chi,ket_size)
                 else:
                     # sending node is leaf node
                     msg = ctg.einsum(
                         "ij,kjl,rl->ikr",
-                        self.bra.G.nodes[sending_node]["T"],
-                        self.op.G.nodes[sending_node]["T"],
-                        self.ket.G.nodes[sending_node]["T"]
+                        self._bra.G.nodes[sending_node]["T"],
+                        self._op.G.nodes[sending_node]["T"],
+                        self._ket.G.nodes[sending_node]["T"]
                     )
 
                 if normalize: msg /= np.sum(msg)
@@ -192,24 +193,24 @@ class Braket:
             args += (
                 self.msg[neighbor][sending_node],
                 (
-                    self.bra.G[sending_node][neighbor][0]["legs"][sending_node], # bra leg
-                    nLegs + self.op.G[sending_node][neighbor][0]["legs"][sending_node], # operator leg
-                    2 * nLegs + self.ket.G[sending_node][neighbor][0]["legs"][sending_node], # ket leg
+                    self._bra.G[sending_node][neighbor][0]["legs"][sending_node], # bra leg
+                    nLegs + self._op.G[sending_node][neighbor][0]["legs"][sending_node], # operator leg
+                    2 * nLegs + self._ket.G[sending_node][neighbor][0]["legs"][sending_node], # ket leg
                 )
             )
-            out_legs.remove(self.bra.G[sending_node][neighbor][0]["legs"][sending_node])
-            out_legs.remove(nLegs + self.op.G[sending_node][neighbor][0]["legs"][sending_node])
-            out_legs.remove(2 * nLegs + self.ket.G[sending_node][neighbor][0]["legs"][sending_node])
+            out_legs.remove(self._bra.G[sending_node][neighbor][0]["legs"][sending_node])
+            out_legs.remove(nLegs + self._op.G[sending_node][neighbor][0]["legs"][sending_node])
+            out_legs.remove(2 * nLegs + self._ket.G[sending_node][neighbor][0]["legs"][sending_node])
 
         args += (
             # bra tensor
-            self.bra.G.nodes[sending_node]["T"],
+            self._bra.G.nodes[sending_node]["T"],
             tuple(range(nLegs)) + (3 * nLegs,),
             # operator tensor
-            self.op.G.nodes[sending_node]["T"],
+            self._op.G.nodes[sending_node]["T"],
             tuple(nLegs + iLeg for iLeg in range(nLegs)) + (3 * nLegs,3 * nLegs + 1),
             # ket tensor
-            self.ket.G.nodes[sending_node]["T"],
+            self._ket.G.nodes[sending_node]["T"],
             tuple(2 * nLegs + iLeg for iLeg in range(nLegs)) + (3 * nLegs + 1,),
         )
 
@@ -328,7 +329,7 @@ class Braket:
         if sanity_check: assert self.intact
 
         # contract messages into tensors first to obtain tensor values, if necessary
-        if not "cntr" in self.G.nodes[self.op.root].keys(): self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
+        if not "cntr" in self.G.nodes[self._op.root].keys(): self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
 
         for node in self.G.nodes():
             norm = np.real_if_close((self.cntr / self.G.nodes[node]["cntr"]) ** (1 / len(self.G.adj[node])))
@@ -365,21 +366,21 @@ class Braket:
                 args += (
                     self.msg[neighbor][node],
                     (
-                        self.bra.G[node][neighbor][0]["legs"][node], # bra leg
-                        nLegs + self.op.G[node][neighbor][0]["legs"][node], # operator leg
-                        2 * nLegs + self.ket.G[node][neighbor][0]["legs"][node], # ket leg
+                        self._bra.G[node][neighbor][0]["legs"][node], # bra leg
+                        nLegs + self._op.G[node][neighbor][0]["legs"][node], # operator leg
+                        2 * nLegs + self._ket.G[node][neighbor][0]["legs"][node], # ket leg
                     )
                 )
 
             args += (
                 # bra tensor
-                self.bra.G.nodes[node]["T"],
+                self._bra.G.nodes[node]["T"],
                 tuple(range(nLegs)) + (3 * nLegs,),
                 # operator tensor
-                self.op.G.nodes[node]["T"],
+                self._op.G.nodes[node]["T"],
                 tuple(nLegs + iLeg for iLeg in range(nLegs)) + (3 * nLegs,3 * nLegs + 1),
                 # ket tensor
-                self.ket.G.nodes[node]["T"],
+                self._ket.G.nodes[node]["T"],
                 tuple(2 * nLegs + iLeg for iLeg in range(nLegs)) + (3 * nLegs + 1,),
             )
 
@@ -419,7 +420,7 @@ class Braket:
         if trials == 0: warnings.warn(f"Braket.BP received trials = 0. This results in no BP iteration attempt.")
 
         # initially, the messages are not converged
-        self.converged = False
+        self._converged = False
 
         iTrial = 0
         while iTrial < trials:
@@ -439,7 +440,7 @@ class Braket:
             iTrial += 1
 
             if eps_list[-1] < threshold:
-                self.converged = True
+                self._converged = True
                 break
 
         # contract tensors and messages, opposite messages
@@ -456,7 +457,7 @@ class Braket:
             self.__normalize_messages(sanity_check=sanity_check)
         else:
             # each node carries the network value
-            self.cntr = self.G.nodes[self.op.root]["cntr"]
+            self.cntr = self.G.nodes[self._op.root]["cntr"]
 
         return
 
@@ -469,30 +470,30 @@ class Braket:
 
         if self.G.number_of_nodes() == 1:
             # the network is trivial
-            bra = tuple(self.bra.G.nodes(data="T"))[0][1]
-            op = tuple(self.op.G.nodes(data="T"))[0][1]
-            ket = tuple(self.ket.G.nodes(data="T"))[0][1]
+            bra = tuple(self._bra.G.nodes(data="T"))[0][1]
+            op = tuple(self._op.G.nodes(data="T"))[0][1]
+            ket = tuple(self._ket.G.nodes(data="T"))[0][1]
 
             return np.einsum("i,ij,j->",bra,op,ket)
 
         N = 0
         # enumerating the virtual edges in the network
         for node1,node2 in self.G.edges():
-            self.bra.G[node1][node2][0]["label"] = N
-            self.op.G[node1][node2][0]["label"] = N + 1
-            self.ket.G[node1][node2][0]["label"] = N + 2
+            self._bra.G[node1][node2][0]["label"] = N
+            self._op.G[node1][node2][0]["label"] = N + 1
+            self._ket.G[node1][node2][0]["label"] = N + 2
             N += 3
         # enumerating the physical edges in the network
         for node in self.G.nodes():
-            self.bra.G.nodes[node]["label"] = [N,]
-            self.op.G.nodes[node]["label"] = [N,N+1]
-            self.ket.G.nodes[node]["label"] = [N+1,]
+            self._bra.G.nodes[node]["label"] = [N,]
+            self._op.G.nodes[node]["label"] = [N,N+1]
+            self._ket.G.nodes[node]["label"] = [N+1,]
             N += 2
 
         args = ()
         # extracting the einsum arguments
         for node in self.G.nodes():
-            for layer in (self.bra.G,self.op.G,self.ket.G):
+            for layer in (self._bra.G,self._op.G,self._ket.G):
                 args += (layer.nodes[node]["T"],)
                 # virtual edges
                 legs = [None for _ in range(len(layer.adj[node]))]
@@ -518,9 +519,9 @@ class Braket:
 
         if self.nsites == 1:
             # the network is trivial
-            bra = tuple(self.bra.G.nodes(data="T"))[0][1]
-            op = tuple(self.op.G.nodes(data="T"))[0][1]
-            ket = tuple(self.ket.G.nodes(data="T"))[0][1]
+            bra = tuple(self._bra.G.nodes(data="T"))[0][1]
+            op = tuple(self._op.G.nodes(data="T"))[0][1]
+            ket = tuple(self._ket.G.nodes(data="T"))[0][1]
 
             return np.einsum("i,ij,j->",bra,op,ket)
 
@@ -533,27 +534,27 @@ class Braket:
         # enumerating the virtual edges in the network, extracting the size of every edge
         for node1,node2 in self.G.edges():
             # bra
-            self.bra.G[node1][node2][0]["label"] = ctg.get_symbol(N)
-            size_dict[ctg.get_symbol(N)] = self.bra.G[node1][node2][0]["size"]
+            self._bra.G[node1][node2][0]["label"] = ctg.get_symbol(N)
+            size_dict[ctg.get_symbol(N)] = self._bra.G[node1][node2][0]["size"]
             # operator
-            self.op.G[node1][node2][0]["label"] = ctg.get_symbol(N+1)
-            size_dict[ctg.get_symbol(N+1)] = self.op.chi
+            self._op.G[node1][node2][0]["label"] = ctg.get_symbol(N+1)
+            size_dict[ctg.get_symbol(N+1)] = self._op.chi
             # ket
-            self.ket.G[node1][node2][0]["label"] = ctg.get_symbol(N+2)
-            size_dict[ctg.get_symbol(N+2)] = self.ket.G[node1][node2][0]["size"]
+            self._ket.G[node1][node2][0]["label"] = ctg.get_symbol(N+2)
+            size_dict[ctg.get_symbol(N+2)] = self._ket.G[node1][node2][0]["size"]
             N += 3
         # enumerating the physical edges in the network, extracting the size of every edge
         for node in self.G.nodes():
-            self.bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
-            self.op.G.nodes[node]["label"] = [ctg.get_symbol(N),ctg.get_symbol(N+1)]
-            self.ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
+            self._bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
+            self._op.G.nodes[node]["label"] = [ctg.get_symbol(N),ctg.get_symbol(N+1)]
+            self._ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
             size_dict[ctg.get_symbol(N)] = self.D
             size_dict[ctg.get_symbol(N+1)] = self.D
             N += 2
 
         # extracting the einsum arguments
         for node in self.G.nodes():
-            for layer in (self.bra.G,self.op.G,self.ket.G):
+            for layer in (self._bra.G,self._op.G,self._ket.G):
                 arrays += (layer.nodes[node]["T"],)
                 # virtual edges
                 legs = [None for _ in range(len(layer.adj[node]))]
@@ -596,12 +597,12 @@ class Braket:
             msg = {neighbor:self.msg[neighbor][sending_node] for neighbor in self.G.adj[sending_node]},
             sending_node = sending_node,
             receiving_node = receiving_node,
-            bra_legs = self.bra.legs_dict(sending_node),
-            op_legs = self.op.legs_dict(sending_node),
-            ket_legs = self.ket.legs_dict(sending_node),
-            bra_T = self.bra.G.nodes[sending_node]["T"],
-            op_T = self.op.G.nodes[sending_node]["T"],
-            ket_T = self.ket.G.nodes[sending_node]["T"]
+            bra_legs = self._bra.legs_dict(sending_node),
+            op_legs = self._op.legs_dict(sending_node),
+            ket_legs = self._ket.legs_dict(sending_node),
+            bra_T = self._bra.G.nodes[sending_node]["T"],
+            op_T = self._op.G.nodes[sending_node]["T"],
+            ket_T = self._ket.G.nodes[sending_node]["T"]
         )
 
     @property
@@ -609,7 +610,7 @@ class Braket:
         """
         Number of sites on which the braket is defined.
         """
-        return self.op.nsites
+        return self._op.nsites
 
     @property
     def intact(self) -> bool:
@@ -620,19 +621,19 @@ class Braket:
         * Do the physical dimensions match?
         * Do all the messages contain finite values?
         """
-        assert hasattr(self,"bra")
-        assert hasattr(self,"op")
-        assert hasattr(self,"ket")
+        assert hasattr(self,"_bra")
+        assert hasattr(self,"_op")
+        assert hasattr(self,"_ket")
         assert hasattr(self,"D")
 
         if not network_message_check(self.G): return False
 
-        if not self.bra.intact: return False
-        if not self.op.intact: return False
-        if not self.ket.intact: return False
+        if not self._bra.intact: return False
+        if not self._op.intact: return False
+        if not self._ket.intact: return False
 
         # do the physical dimensions match?
-        if not self.bra.D == self.D and self.ket.D == self.D and self.op.D == self.D:
+        if not self._bra.D == self.D and self._ket.D == self.D and self._op.D == self.D:
             warnings.warn("Physical dimensions in braket do not match.")
             return False
 
@@ -645,6 +646,65 @@ class Braket:
                         return False
 
         return True
+
+    @property
+    def converged(self) -> bool:
+        """Whether the messages in `self.msg` are converged."""
+        return self._converged
+
+    @property
+    def ket(self) -> PEPS:
+        """
+        The ket-state in the braket `bra @ op @ ket`.
+        """
+        return self._ket
+
+    @ket.setter
+    def ket(self,ket:PEPS) -> None:
+        # sanity check
+        assert self.graph_compatible(self.G,ket.G)
+        self._ket = ket
+
+        # it is no longer guaranteed that the messages are converged
+        self._converged = False
+
+        return
+
+    @property
+    def bra(self) -> PEPS:
+        """
+        The bra-state in the braket `bra @ op @ ket`.
+        """
+        return self._bra
+
+    @bra.setter
+    def bra(self,bra:PEPS) -> None:
+        # sanity check
+        assert self.graph_compatible(self.G,bra.G)
+        self._bra = bra
+
+        # it is no longer guaranteed that the messages are converged
+        self._converged = False
+
+        return
+
+    @property
+    def op(self) -> PEPO:
+        """
+        The operator in the braket `bra @ op @ ket`.
+        """
+        return self._op
+
+    @op.setter
+    def op(self,op:PEPO) -> None:
+        # sanity check
+        assert self.graph_compatible(self.G,op.G)
+        self._op = op
+
+        # it is no longer guaranteed that the messages are converged
+        self._converged = False
+
+        return
 
     @staticmethod
     def graph_compatible(G1:nx.MultiGraph,G2:nx.MultiGraph) -> bool:
@@ -690,7 +750,7 @@ class Braket:
         """
         return cls(
             bra = PEPS.Dummy(G,sanity_check=sanity_check),
-            op = PEPO.Identity(G=G,D=1,sanity_check=sanity_check),
+            op = Identity(G=G,D=1,sanity_check=sanity_check),
             ket = PEPS.init_from_TN(G,sanity_check=sanity_check),
             sanity_check = sanity_check
         )
@@ -702,7 +762,7 @@ class Braket:
         """
         return cls(
             bra = psi1.conj(sanity_check=sanity_check),
-            op = PEPO.Identity(G=psi1.G,D=psi1.D,sanity_check=sanity_check),
+            op = Identity(G=psi1.G,D=psi1.D,sanity_check=sanity_check),
             ket = psi2,
             sanity_check = sanity_check
         )
@@ -722,16 +782,16 @@ class Braket:
             assert bra.D == op.D and ket.D == op.D
 
         self.G:nx.MultiGraph = self.prepare_graph(ket.G,True)
-        self.bra:PEPS = bra
-        self.op:PEPO = op
-        self.ket:PEPS = ket
+        self._bra:PEPS = bra
+        self._op:PEPO = op
+        self._ket:PEPS = ket
         self.D:int = op.D
         """Physical dimension."""
 
         self.msg:dict[int,dict[int,np.ndarray]] = None
         """First key sending node, second key receiving node."""
 
-        self.converged:bool = False
+        self._converged:bool = False
         """Whether the messages in `self.msg` are converged."""
         self.cntr:float = np.nan
         """Value of the network, calculated by BP."""
@@ -744,7 +804,7 @@ class Braket:
         """
         Subscripting with a node gives the tensor stack `(bra[node],op[node],ket[node])` at that node.
         """
-        return (self.bra[node],self.op[node],self.ket[node])
+        return (self._bra[node],self._op[node],self._ket[node])
 
     def __setitem__(self,node:int,Tstack:tuple[np.ndarray]) -> None:
         """
@@ -752,9 +812,12 @@ class Braket:
         """
         if not len(Tstack) == 3: raise ValueError(f"Tensor stacks must consist of three tensors. received {len(Tstack)} tensors.")
 
-        self.bra[node] = Tstack[0]
-        self.op[node] = Tstack[1]
-        self.ket[node] = Tstack[2]
+        self._bra[node] = Tstack[0]
+        self._op[node] = Tstack[1]
+        self._ket[node] = Tstack[2]
+
+        # it is no longer guaranteed that the messages are converged
+        self._converged = False
 
         return
 

@@ -368,6 +368,31 @@ class Heisenberg(PauliPEPO):
 
         return
 
+def Identity(G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False) -> PEPO:
+        """
+        Returns the identity PEPO on graph `G`.
+        Physical dimension `D`.
+        """
+        Id = PEPO(D=D)
+        Id.chi = 1
+        Id.G = Id.prepare_graph(G)
+
+        # root node is node with smallest degree
+        Id.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
+
+        # depth-first search tree
+        Id.tree = nx.dfs_tree(G,Id.root)
+
+        # adding physical dimensions, putting identities in the physical dimensions
+        for node in Id.G.nodes():
+            T = np.zeros(shape = tuple(Id.chi for _ in range(len(G.adj[node]))) + (Id.D,Id.D),dtype=dtype)
+            T[...,:,:] = Id.I
+            Id.G.nodes[node]["T"] = T
+
+        if sanity_check: assert Id.intact
+
+        return Id
+
 def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> tuple[PEPO,PEPO]:
     """
     Constructs two PEPOs, where one contains the positive-semidefinite part of the TFI
@@ -502,7 +527,7 @@ def operator_chain(G:nx.MultiGraph,ops:dict[int,np.ndarray],sanity_check:bool=Fa
     # extracting physical dimension
     D = tuple(ops.values())[0].shape[0]
 
-    H = PEPO.Identity(G=G,D=D,sanity_check=sanity_check)
+    H = Identity(G=G,D=D,sanity_check=sanity_check)
 
     for node,op in ops.items():
         # sanity check

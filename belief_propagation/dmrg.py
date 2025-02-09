@@ -203,9 +203,6 @@ class DMRG:
         self.BP(sanity_check=sanity_check,**kwargs)
         Eprev = self.E0
 
-        # we'll update tensors and matrices, so as a precaution, we'll set the convergence markers to False
-        self.converged = False
-
         for node in nx.dfs_postorder_nodes(self.expvals[0].op.tree,source=self.expvals[0].op.root):
             H = self.local_H(node,sanity_check=sanity_check)
             N = self.local_env(node,sanity_check=sanity_check)
@@ -317,15 +314,6 @@ class DMRG:
         """Whether the messages are converged."""
         return self.overlap.converged and all(expval.converged for expval in self.expvals)
 
-    @converged.setter
-    def converged(self,value:bool) -> None:
-        """
-        Set `converged` in all `Braket`-objects to `False`.
-        """
-        if value: warnings.warn("It is heavily discouraged to set converged to True manually, since `self.converged` automatically keeps track of whether the messages are converged. Setting `self.converged` to True may lead to unexpected behavior.")
-        self.overlap.converged = value
-        for i in range(len(self.expvals)): self.expvals[i].converged = value
-
     @property
     def ket(self) -> PEPS:
         """The current state of the system."""
@@ -335,14 +323,13 @@ class DMRG:
     def ket(self,newket:PEPS) -> None:
         """
         Changing the state of the system requires inserting a new PEPS in all `Braket` objects.
+        Convergence markers will be set to `False`.
         """
         self.overlap.ket = newket
         self.overlap.bra = newket.conj()
         for expval in self.expvals:
             expval.ket = newket
             expval.bra = newket.conj()
-
-        self.converged = False
 
         return
 
@@ -453,15 +440,12 @@ class DMRG:
     def __setitem__(self,node:int,T:np.ndarray) -> None:
         """
         Changing local tensors in the state directly.
+        Convergence markers will be set to `False`.
         """
-        self.overlap.ket[node] = T
-        self.overlap.bra[node] = T.conj()
+        # updating the tensor stacks in all braket objects
+        self.overlap[node] = (T.conj(),self.overlap[node][1],T)
         for i in range(len(self.expvals)):
-            self.expvals[i].ket[node] = T
-            self.expvals[i].bra[node] = T.conj()
-
-        # messages are not necessarily converged any more
-        self.converged = False
+            self.expvals[i][node] = (T.conj(),self.expvals[i][node][1],T)
 
         return
 
