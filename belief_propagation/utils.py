@@ -170,6 +170,24 @@ def multi_tensor_rank(T:np.ndarray,threshold:float=1e-8) -> tuple[int]:
 
     return rank
 
+def entropy(p:np.ndarray,alpha:int=1) -> float:
+    """
+    Entanglement entropy of the distribution `p`. Returns Shannon
+    entropy for `alpha = 1` (default), and Rényi-entropy
+    otherwise.
+    """
+    if not alpha > 0: raise ValueError(f"Value {alpha} illegal; expected larger than zero.")
+    if not p.ndim == 1 or not np.isclose(np.sum(p),1): raise ValueError("p must be a probability distribution.")
+
+    # dropping zeros
+    p = p[p != 0]
+
+    if alpha == 1:
+        # shannon entropy
+        return (-1) * np.sum(p * np.log2(p))
+
+    return np.sum(p**alpha) / (1 - alpha)
+
 # -------------------------------------------------------------------------------
 #                   graph routines
 # -------------------------------------------------------------------------------
@@ -263,6 +281,9 @@ def network_intact_check(G:nx.MultiGraph) -> bool:
     """
     Checks if the given tensor network `G` is intact.
     """
+    # this library only works with nx.MultiGraph
+    if not isinstance(G,nx.MultiGraph): raise TypeError("G must be a MultiGraph.")
+
     # two legs in every edge's legs attribute?
     for node1,node2,key in G.edges(keys=True):
         if G[node1][node2][key]["trace"]:

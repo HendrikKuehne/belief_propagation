@@ -38,6 +38,9 @@ class PEPO:
     respectively. The initial state ("particle state") is only passed along
     the tree, while intermediate states ("decay states") can be passed along
     any edge. The final state ("vacuum state") is passed along every edge.
+    The physical legs are the last two dimensions if the PEPO tensors. All
+    other legs are virtual bond dimensions. The correspondence between legs
+    and neighbors is determined by the `legs` attribute on each edge.
 
     During initialisation, the root and each leaf are equipped with an
     additional leg. These legs connect to the initial and final states of
@@ -159,7 +162,7 @@ class PEPO:
 
         return
 
-    def prepare_graph(self,G:nx.MultiGraph) -> nx.MultiGraph:
+    def prepare_graph(self,G:nx.MultiGraph,sanity_check:bool=False) -> nx.MultiGraph:
         """
         Creates a shallow copy of G, and adds the keys `legs`, `trace`, `indices`
         and `size` to the edges.
@@ -172,12 +175,20 @@ class PEPO:
         """
         # shallow copy of G
         newG = nx.MultiGraph(G.edges())
-        # adding legs attribute to each edge
-        for node1,node2,legs in G.edges(data="legs",keys=False):
-            newG[node1][node2][0]["legs"] = legs
+
+        # adding additional information to every edge
+        for node1,node2,legs in newG.edges(data="legs",keys=False):
             newG[node1][node2][0]["trace"] = False
             newG[node1][node2][0]["indices"] = None
             newG[node1][node2][0]["size"] = self.chi
+            newG[node1][node2][0]["legs"] = {}
+
+        for node in newG.nodes:
+            # adding to the adjacent edges which index they correspond to
+            for i,neighbor in enumerate(newG.adj[node]):
+                newG[node][neighbor][0]["legs"][node] = i
+
+        if sanity_check: assert network_message_check(newG)
 
         return newG
 
@@ -582,6 +593,30 @@ class PEPO:
             if not np.allclose(T[index],0):
                 print(index[:-2],":\n",T[index],"\n")
 
+    @classmethod
+    def from_graphs(cls,G:nx.MultiGraph,tree:nx.DiGraph,check_tree:bool=True,sanity_check:bool=False):
+        """
+        Initialisation from a graph `G` that contains PEPO tensors, and a tree `tree` that
+        determines the graph traversal of the finite state automaton.
+        """
+        # inferring physical dimension
+        D = tuple(T.shape[-1] for node,T in G.nodes(data="T"))[0]
+        # inferring root node
+        root = sorted(tuple(tree.nodes),key=lambda x:len(tree.pred[x]))[0]
+        # inferring virtual dimension
+        chi = tuple(T.shape[0] for node,T in G.nodes(data="T"))[0]
+
+        # initialising the new PEPO
+        op = cls(D=D)
+        op.G = G
+        op.tree = tree
+        op.root = root
+        op.chi = chi
+        op.check_tree = check_tree
+
+        if sanity_check: assert op.intact
+        return op
+
     def __init__(self,D:int) -> None:
         self.D = D
         """Physical dimension."""
@@ -630,6 +665,10 @@ class PEPO:
         """
         Action of the operator on the state `psi`.
         """
+
+        if isinstance(psi,self.__class__):
+            # TODO: implement; what I should do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024) (https://doi.org/10.1126/sciadv.adk4321)
+            raise NotImplementedError("PEPO action on PEPO is not yet implemented.")
 
         if isinstance(psi,PEPS):
             # TODO: implement; what I should do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024) (https://doi.org/10.1126/sciadv.adk4321)
@@ -690,7 +729,7 @@ class PEPO:
         res.chi = lhs.chi + rhs.chi
         res.root = lhs.root
         res.tree = lhs.tree
-        res.check_tree = False
+        res.check_tree = False # TODO: this is unelegant, and could be (more or less) easily avoided; see TODO in README
 
         # graph for the result with correct legs and sizes
         res.G = res.prepare_graph(lhs.G)

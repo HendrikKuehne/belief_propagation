@@ -7,7 +7,7 @@ import copy
 import cotengra as ctg
 
 from belief_propagation.utils import network_intact_check,network_message_check
-from belief_propagation.networks import contract_edge,merge_edges,construct_initial_messages
+from belief_propagation.old.networks_old import contract_edge,merge_edges,construct_initial_messages
 
 def block_bp(G:nx.MultiGraph,width:int,height:int,blocksize:int=3,sanity_check:bool=False) -> None:
     """

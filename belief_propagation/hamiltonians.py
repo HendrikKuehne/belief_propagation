@@ -97,9 +97,6 @@ class TFI(PauliPEPO):
 
         Ordering of legs in the PEPO virtual dimensions is inherited from `G`. The last two dimensions of every PEPO tensor are the physical dimensions.
         """
-        # sanity check
-        if sanity_check: assert network_message_check(G)
-
         super().__init__()
 
         self.chi = 3
@@ -108,7 +105,7 @@ class TFI(PauliPEPO):
         0 is the moving particle state, 1 the decay state, and 2 is the vacuum state.
         """
 
-        self.G = super().prepare_graph(G)
+        self.G = super().prepare_graph(G,sanity_check=sanity_check)
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
@@ -315,9 +312,6 @@ class Heisenberg(PauliPEPO):
 
         Ordering of legs in the PEPO virtual dimensions is inherited from `G`. The last two dimensions of every PEPO tensor are the physical dimensions.
         """
-        # sanity check
-        if sanity_check: assert network_message_check(G)
-
         super().__init__()
 
         self.chi = 5
@@ -326,7 +320,7 @@ class Heisenberg(PauliPEPO):
         0 is the moving particle state, 1/2/3 the decay state in x/y/z, and 4 is the vacuum state.
         """
 
-        self.G = super().prepare_graph(G)
+        self.G = super().prepare_graph(G,sanity_check=sanity_check)
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
@@ -398,9 +392,6 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
     Constructs two PEPOs, where one contains the positive-semidefinite part of the TFI
     and the other contains the negative-semidefinite part.
     """
-    # sanity check
-    if sanity_check: assert network_message_check(G)
-
     # spectral decompositions of X and Z
     X_pos = np.ones(shape=(2,2)) / 2
     X_neg = np.array([[-1,1],[1,-1]]) / 2
@@ -422,7 +413,7 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
     pos_op.chi = chi
     neg_op.chi = chi
 
-    G = pos_op.prepare_graph(G)
+    G = pos_op.prepare_graph(G,sanity_check=sanity_check)
     pos_op.G = copy.deepcopy(G)
     neg_op.G = copy.deepcopy(G)
 
@@ -524,6 +515,9 @@ def operator_chain(G:nx.MultiGraph,ops:dict[int,np.ndarray],sanity_check:bool=Fa
     contains the operators as values, and the sites on which they act
     as keys.
     """
+    if ops == {}:
+        raise ValueError("operator_chain() received empty operator chain.")
+
     # extracting physical dimension
     D = tuple(ops.values())[0].shape[0]
 

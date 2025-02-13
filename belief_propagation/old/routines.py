@@ -3,7 +3,7 @@ All the different algorithms that are implemented, contained in single functions
 """
 import networkx as nx
 
-from belief_propagation import BP,loopyNBP,networks,plaquette
+from belief_propagation.old import BP,loopyNBP,networks_old,plaquette
 
 def BP_routine(G:nx.MultiGraph,num_iter:int=30) -> float:
     """
@@ -57,7 +57,7 @@ def loopyNBP_feynman_routine(G:nx.MultiGraph,r:int=2,num_iter:int=30) -> float:
 
     # feynman cut of the largest edge
     node1,node2 = sorted_edge_list[0]
-    cut_graphs = networks.feynman_cut(G,node1,node2)
+    cut_graphs = networks_old.feynman_cut(G,node1,node2)
 
     cntr = 0
     for Gcut in cut_graphs:

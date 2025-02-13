@@ -176,9 +176,9 @@ class DMRG:
         BP iteration on the overlap and all expvals. Total messages
         and local PEPO tensors are formed, if BP converged.
         """
-        if not self.overlap.converged: self.overlap.BP(sanity_check=sanity_check,**kwargs)
+        if not self.overlap.converged: self.overlap.BP(normalize_after=True,sanity_check=sanity_check,**kwargs)
         for i in range(len(self.expvals)):
-            if not self.expvals[i].converged: self.expvals[i].BP(sanity_check=sanity_check,**kwargs)
+            if not self.expvals[i].converged: self.expvals[i].BP(normalize_after=True,sanity_check=sanity_check,**kwargs)
 
         if self.converged:
             self.__assemble_messages(sanity_check=sanity_check)

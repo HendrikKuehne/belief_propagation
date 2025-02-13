@@ -33,6 +33,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
     * Assume that we construct neighborhoods $N_a^{(r)}$, i.e. neighborhoods that contain loops up to length $r+2$. If the network contains loops that are only a little bit longer than $r+2$, say $r+2+\epsilon$, the neighborhood decomposition transforms these neighborhoods into loops of length $\epsilon$. The neighborhood decomposition (using the heuristic I have implemented) is only to be used if there is a gap in the loop length spectrum.
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
+    * I should clean up my code anyways, a good guide might be the [PEP 8 style guide](https://peps.python.org/pep-0008/).
 * Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
@@ -69,6 +70,7 @@ This will be updated continuously, as questions come to mind.
 * Some iterations of the Belief Propagation algorithm take many orders of magnitude longer than others; do these still converge?
 * What happens when we try Christian's idea of Orthogonal Belief Propagation?
     * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of PEPS networks that Arad (2021) introduces?
+* Do different gauges have a (strong) effect on BPDMRG performance?
 
 [^4]: In the code contained herein, only nodes contain values. The emphasis is here on *associate*; the $1/Z$ that we could associate with an edge is factorized, it's factors being distributed in the adjacent nodes.
 
@@ -125,7 +127,7 @@ This will be updated continuously, as questions come to mind.
     * Johnnie Gray, Garnet Kin-Lic Chan  
       Hyper-optimized approximate contraction of tensor networks with arbitrary geometry  
       [Phys. Rev. X 14, 011009](https://doi.org/10.1103/PhysRevX.14.011009) ([arXiv:2206.07044](https://arxiv.org/abs/2206.07044))
-* IBM kicked Ising experiment
+* IBM kicked Ising experiment & TFI more generally
   * Youngseok Kim, Andrew Eddins, Sajant Anand, Ken Xuan Wei, Ewout van den Berg, Sami Rosenblatt, Hasan Nayfeh, Yantao Wu, Michael Zaletel, Kristan Temme, Abhinav Kandala  
     Evidence for the utility of quantum computing before fault tolerance  
     [Nature 618, 500 - 505 (2023)](https://doi.org/10.1038/s41586-023-06096-3)
@@ -134,6 +136,9 @@ This will be updated continuously, as questions come to mind.
     [PRX Quantum 5, 010308 (2024)](https://doi.org/10.1103/PRXQuantum.5.010308) ([arXiv:2306.14887](https://arxiv.org/abs/2306.14887))
   * Tomislav Begusic, Johnnie Gray, Garnet Kin-Lic Chan  
     Fast and converged classical simulations of evidence for the utility of quantum
+  * Geoffrey R. Grimmett, Tobias J. Osborne & Petra F. Scudo  
+    Bounded Entanglement Entropy in the Quantum Ising Model  
+    [J Stat Phys 178, 281–296 (2020)](https://doi.org/10.1007/s10955-019-02432-y) ([arXiv:1906.11954](https://arxiv.org/abs/1906.11954))
 computing before fault tolerance  
     [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321) ([arXiv:2308.05077](https://arxiv.org/abs/2308.05077))
 * Mathematics / Numerics

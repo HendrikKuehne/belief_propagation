@@ -199,7 +199,7 @@ class PEPS:
         """
         Returns a dummy PEPS on graph `G` with physical dimension one.
         """
-        G = cls.prepare_graph(G=G,keep_legs=True)
+        G = cls.prepare_graph(G=G)
         # adding tensors
         for node in G.nodes:
             G.nodes[node]["T"] = np.ones(shape = [1 for _ in range(len(G.adj[node])+1)])
@@ -210,7 +210,7 @@ class PEPS:
         return cls(G=G,sanity_check=sanity_check)
 
     @staticmethod
-    def prepare_graph(G:nx.MultiGraph,keep_legs:bool=False,keep_size:bool=False) -> nx.MultiGraph:
+    def prepare_graph(G:nx.MultiGraph,keep_legs:bool=False,keep_size:bool=False,sanity_check:bool=False) -> nx.MultiGraph:
         """
         Creates a shallow copy of G, and adds the keys `legs`, `trace` and `indices` to the edges.
 
@@ -219,6 +219,7 @@ class PEPS:
         """
         # shallow copy of G
         newG = nx.MultiGraph(G.edges())
+
         # adding legs attribute to each edge
         for node1,node2,legs in G.edges(data="legs",keys=False):
             newG[node1][node2][0]["legs"] = legs if keep_legs else {}
@@ -227,6 +228,14 @@ class PEPS:
 
             if "size" in G[node1][node2][0].keys() and keep_size:
                 newG[node1][node2][0]["size"] = G[node1][node2][0]["size"]
+
+        if not keep_legs:
+            for node in newG.nodes:
+                # adding to the adjacent edges which index they correspond to
+                for i,neighbor in enumerate(newG.adj[node]):
+                    newG[node][neighbor][0]["legs"][node] = i
+
+        if sanity_check: assert network_message_check(newG)
 
         return newG
 
@@ -270,6 +279,7 @@ class PEPS:
         """
         # sanity check
         if sanity_check: assert network_message_check(G)
+        if not isinstance(G,nx.MultiGraph): raise TypeError("G must be a MultiGraph.")
 
         # inferring physical dimension
         self.D:int = tuple(T.shape[-1] for _,T in G.nodes(data="T"))[0]
@@ -303,11 +313,11 @@ class PEPS:
     def __repr__(self) -> str:
         out = ""
         digits = int(np.log10(self.nsites))
-        out += f"PEPS with {self.nsites} sites.\n  Bond dimensions:"
-        for node1,node2,size in self.G.edges(data="size"): out += "\n    (" + str(node1).zfill(digits) + "," + str(node2).zfill(digits) + f") : size = {size}"
-
-        out += "\n  Multilinear tensor ranks:"
-        for node in self.G.nodes(): out += "\n    " + str(node).zfill(digits) + f" : {multi_tensor_rank(self[node])}"
+        out += f"PEPS with {self.nsites} sites."
+        #out += "\n  Bond dimensions:"
+        #for node1,node2,size in self.G.edges(data="size"): out += "\n    (" + str(node1).zfill(digits) + "," + str(node2).zfill(digits) + f") : size = {size}"
+        #out += "\n  Multilinear tensor ranks:"
+        #for node in self.G.nodes(): out += "\n    " + str(node).zfill(digits) + f" : {multi_tensor_rank(self[node])}"
 
         out += "\n  PEPS is " + "intact." if self.intact else "not intact."
 
