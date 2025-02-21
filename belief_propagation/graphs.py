@@ -156,40 +156,51 @@ def loop_capped_graph(nNodes:int,maxlength:int,p:float=.5,rng:np.random.Generato
 
 def global_loop(global_cycle_length:int,nNodes:int,maxlength:int,p:float=.5,rng:np.random.Generator=None) -> nx.MultiGraph:
     """
-    Generates a graph that is globally tree-like. This is achieved by constructing a tree composed of
-    clusters of nodes, where each cluster obeys the cycle maximum length.
+    Generates a graph that is globally tree-like. This is achieved by constructing
+    clusters of nodes, where each cluster obeys the cycle maximum length. The clusters
+    are attached to a global loop.
     """
     # initialization
     if rng is None: rng = np.random.default_rng()
     clusters = [[(i,(i+1) % global_cycle_length) for i in range(global_cycle_length)],]
     iNode = global_cycle_length
 
-    nodes = {i for i in range(global_cycle_length)}
-    # generating clusters
-    while len(nodes) < nNodes + global_cycle_length:
-        cluster = [(iNode + i,iNode + j) for i,j in itertools.combinations(range(maxlength),r=2) if rng.uniform() <= p]
-        if len(cluster) == 0: continue
-        nodes = nodes.union(*[set(edge) for edge in cluster])
-        iNode += maxlength
-        clusters += [cluster,]
+    if maxlength > 2:
+        nodes = {i for i in range(global_cycle_length)}
+        # generating clusters
+        while len(nodes) < nNodes + global_cycle_length:
+            cluster = [(iNode + i,iNode + j) for i,j in itertools.combinations(range(maxlength),r=2) if rng.uniform() <= p]
+            if len(cluster) == 0: continue
+            nodes = nodes.union(*[set(edge) for edge in cluster])
+            iNode += maxlength
+            clusters += [cluster,]
 
-    # adding all clusters to a graph and connecting them tree-like
-    G = nx.MultiGraph()
-    G.add_edges_from(clusters.pop(0))
+        # adding all clusters to a graph and connecting them tree-like
+        G = nx.MultiGraph()
+        G.add_edges_from(clusters.pop(0))
 
-    for cluster in clusters:
-        old_docking_node = rng.choice(np.array(G.nodes()))
-        new_docking_node = rng.choice(list(set().union(*[set(edge) for edge in cluster])))
-        G.add_edges_from(cluster + [(old_docking_node,new_docking_node,)])
+        for cluster in clusters:
+            old_docking_node = rng.choice(np.array(G.nodes()))
+            new_docking_node = rng.choice(list(set().union(*[set(edge) for edge in cluster])))
+            G.add_edges_from(cluster + [(old_docking_node,new_docking_node),])
 
-        # do we add a new edge or simply merge an existing node and a new one?
-        if rng.uniform() < .5: G = nx.contracted_edge(G,(old_docking_node,new_docking_node),self_loops=False)
+            # do we add a new edge or simply merge an existing node and a new one?
+            if rng.uniform() < .5: G = nx.contracted_edge(G,(old_docking_node,new_docking_node),self_loops=False)
 
-    # extracting the largest connected component
-    largest_cc = max(nx.connected_components(G), key=len)
+        # extracting the largest connected component
+        largest_cc = max(nx.connected_components(G), key=len)
 
-    return G.subgraph(largest_cc).copy()
-    # we need to copy because this removes the freeze of the subgraph
+        return G.subgraph(largest_cc).copy()
+        # we need to copy because this removes the freeze of the subgraph
+
+    else:
+        G = nx.MultiGraph(clusters[0])
+        # adding nodes in a tree-like fashion
+        while G.number_of_nodes() < nNodes + global_cycle_length:
+            docking_node = rng.choice(np.array(G.nodes()))
+            G.add_edge(docking_node,G.number_of_nodes())
+
+        return G
 
 def tree(nNodes:int,rng:np.random.Generator=None) -> nx.MultiGraph:
     """
@@ -301,14 +312,4 @@ def plot_loop_hist(G:nx.MultiGraph,show_plot=True) -> plt.Figure:
     return plt.gcf()
 
 if __name__ == "__main__":
-    G = tree(10)
-    G = line(10)
-    #G = short_loop_graph(30,3,0.6)
-    #G = heavyhex(m=3,n=2)
-    print("Network created")
-
-    # drawing the network
-    plt.figure("G")
-    nx.draw(G,with_labels=True,font_weight="bold")
-    plt.show()
-    plt.close()
+    pass

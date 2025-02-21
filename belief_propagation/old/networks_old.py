@@ -286,65 +286,6 @@ def feynman_cut(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> 
 #                   Network creation
 # -------------------------------------------------------------------------------
 
-def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.random.default_rng(),real:bool=False,psd:bool=True,tensors:bool=False) -> dict:
-    """
-    Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
-    The graph `G` is manipulated in-place. Tensors are only added if `tensors=True` (default: `True`).
-    Returns the tensors in a dictionary where the nodes are keys, and the tensors are the values.
-    """
-    # sanity check
-    if tensors and chi == None: raise ValueError("No virtual bond dimension given.")
-
-    # random number generation
-    if real:
-        randn = lambda size: rng.standard_normal(size)
-    else:
-        randn = lambda size: crandn(size,rng)
-
-    for edge in G.edges:
-        # each edge has a "legs" key, whose value is itself a dictionary. The keys are the labels of the adjacent nodes, and their values are the indices of the tensor legs this edge connects
-        G[edge[0]][edge[1]][0]["legs"] = {}
-        # each ede has a "trace" key, which is true if this edge corresponds to the trace of a tensor (i.e. if this edge connects a node to itself)
-        G[edge[0]][edge[1]][0]["trace"] = False
-        # each edge has an "indices" key, which holds the legs that the adjacent tensors are summed over as a set (only used for edges that represent a trace)
-        G[edge[0]][edge[1]][0]["indices"] = None
-
-    tensor_list = {}
-
-    for node in G.nodes:
-        # adding to the adjacent edges which index they correspond to
-        for i,neighbor in enumerate(G.adj[node]):
-            G[node][neighbor][0]["legs"][node] = i
-
-        if not tensors: continue
-
-        nLegs = len(G.adj[node])
-        dim = nLegs * [chi]
-        # constructing a new tensor
-        if psd:
-            h = int(np.sqrt(chi))
-            assert h**2 == chi, "if psd=True, chi must have an integer root."
-            s = randn(size = nLegs * [h,] + [chi,]) # last dimension is physical leg
-            T = np.einsum(
-                s, [2*i for i in range(nLegs)] + [2*nLegs,],
-                s.conj(), [2*i+1 for i in range(nLegs)] + [2*nLegs,],
-                np.arange(2*nLegs)
-            ).reshape(dim) / chi**(3/4)
-
-            # saving the physical tensor
-            tensor_list[node] = s
-
-        else:
-            T = randn(size = dim) / chi**(3/4)
-
-            # saving the physical tensor
-            tensor_list[node] = T
-
-        # adding the tensor to this node
-        G.nodes[node]["T"] = T
-
-    return tensor_list
-
 def construct_initial_messages(G:nx.MultiGraph,normalize:bool=True,sanity_check:bool=False) -> None:
     """
     Initializes messages one the edges of `G`. Random initialisation except for leaf nodes, where the initial value
@@ -370,32 +311,6 @@ def construct_initial_messages(G:nx.MultiGraph,normalize:bool=True,sanity_check:
                 #msg = np.ones(shape=(chi,))
                 msg = np.random.normal(size=(chi,))
                 G[node1][node2][0]["msg"][receiving_node] = msg / np.sum(msg) if normalize else msg
-
-    return
-
-def delta_network(G:nx.MultiGraph,chi:int,) -> None:
-    """
-    Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
-    Each tensor is a delta-tensor, or a unit vector with only one non-zero entry. The graph `G` is manipulated in-place.
-    """
-    for edge in G.edges:
-        # each edge has a "legs" key, whose value is itself a dictionary. The keys are the labels of the adjacent nodes, and their values are the indices of the tensor legs this edge connects
-        G[edge[0]][edge[1]][0]["legs"] = {}
-        # each ede has a "trace" key, which is true if this edge corresponds to the trace of a tensor (i.e. if this edge connects a node to itself)
-        G[edge[0]][edge[1]][0]["trace"] = False
-        # each edge has an "indices" key, which holds the legs that the adjacent tensors are summed over as a set (only used for edges that represent a trace)
-        G[edge[0]][edge[1]][0]["indices"] = None
-
-    for node in G.nodes:
-        nLegs = len(G.adj[node])
-        dim = nLegs * [chi]
-
-        # adding the tensor to this node
-        G.nodes[node]["T"] = delta_tensor(nLegs,chi)
-
-        # adding to the adjacent edges which index they correspond to
-        for i,neighbor in enumerate(G.adj[node]):
-            G[node][neighbor][0]["legs"][node] = i
 
     return
 

@@ -94,9 +94,8 @@ def is_hermitian(A,threshold:float=1e-8,verbose:bool=False):
 
 def rel_err(ref:float,approx:float) -> float:
     """
-    Relative error `||ref - approx|| / ||ref||`. For vectors,
-    euclidean distance is used. For matrices, the Frobenius
-    norm is used.
+    Relative error `||ref - approx|| / ||ref||`.
+    Calls `np.linalg.norm` Internally.
     """
     return np.linalg.norm(ref - approx) / np.linalg.norm(ref)
 
@@ -272,6 +271,48 @@ def divide_graph(G:nx.MultiGraph) -> frozenset[frozenset[int]]:
             cuts = cuts.union(frozenset((cut,)))
 
     return cuts
+
+# -------------------------------------------------------------------------------
+#                   ranking edges in graphs
+# -------------------------------------------------------------------------------
+
+def cycle_cutnumber_ranking(G:nx.Graph,noisy:bool=True) -> list[tuple[int]]:
+    """
+    Returns a ranking of the edges in `G` based on the number of simple
+    cycles that they appear in. Edges, that are present in many cycles,
+    are sorted to the beginning. If `noisy = True`, gaussian noise is
+    added to the scores s.t. the same graph can produce different orderings
+    where scores are otherwise equal.
+    """
+    cycles = nx.cycle_basis(G)
+    cycle_graphs = [
+        nx.Graph(incoming_graph_data=[(cycle[i],cycle[i+1]) for i in range(len(cycle)-1)])
+        for cycle in cycles
+    ]
+
+    edge_score = lambda edge: sum(tuple(cycle_graph.has_edge(*edge) for cycle_graph in cycle_graphs))
+    edges_ranked = sorted(G.edges(),key=lambda x:edge_score(x) + (np.random.normal(loc=0,scale=.1) if noisy else 0),reverse=True)
+
+    return edges_ranked
+
+def cycle_length_ranking(G:nx.Graph,noisy:bool=True) -> list[tuple[int]]:
+    """
+    Returns a ranking of the edges in `G` based on the length of the simple
+    cycles that they appear in. The edges that belong to the shortest loops
+    are sorted to the front. If `noisy = True`, gaussian noise is
+    added to the scores s.t. the same graph can produce different orderings
+    where scores are otherwise equal.
+    """
+    cycles = nx.cycle_basis(G)
+    cycle_graphs = [
+        nx.Graph(incoming_graph_data=[(cycle[i],cycle[i+1]) for i in range(len(cycle)-1)])
+        for cycle in cycles
+    ]
+
+    edge_score = lambda edge: min(tuple(cycle_graph.number_of_edges() if cycle_graph.has_edge(*edge) else np.inf for cycle_graph in cycle_graphs))
+    edges_ranked = sorted(G.edges(),key=lambda x:edge_score(x) + (np.random.normal(loc=0,scale=.1) if noisy else 0),reverse=False)
+
+    return edges_ranked
 
 # -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis

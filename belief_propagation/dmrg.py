@@ -13,7 +13,8 @@ import copy
 from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err,same_legs
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
-from belief_propagation.braket import Braket,L2BP_compression,QR_gauging
+from belief_propagation.braket import Braket
+from belief_propagation.truncate import L2BP_compression,QR_gauging
 
 class DMRG:
     """
@@ -278,9 +279,7 @@ class DMRG:
         """
 
         if method == "QR":
-            ket_gauged = copy.deepcopy(self.ket)
-            QR_gauging(ket_gauged,sanity_check=sanity_check,**kwargs)
-            self.ket = ket_gauged
+            self.ket = QR_gauging(self.ket,sanity_check=sanity_check,**kwargs)
 
             return
 
@@ -292,9 +291,7 @@ class DMRG:
         """
 
         if method == "L2BP":
-            ket_cmpr = copy.deepcopy(self.ket)
-            L2BP_compression(ket_cmpr,sanity_check=sanity_check,**kwargs)
-            self.ket = ket_cmpr
+            self.ket = L2BP_compression(self.ket,return_singvals=False,sanity_check=sanity_check,**kwargs)
 
             return
 

@@ -34,7 +34,7 @@ def expose_edge(G:nx.MultiGraph,node1:int,node2:int,sanity_check:bool=False) -> 
 
     # adding physical dimensions, which will not be permuted
     while len(axes1) < G.nodes[node1]["T"].ndim: axes1 += [len(axes1),]
-    while len(axes2) < G.nodes[node1]["T"].ndim: axes2 += [len(axes2),]
+    while len(axes2) < G.nodes[node2]["T"].ndim: axes2 += [len(axes2),]
 
     for neighbor in G.adj[node1]:
         if neighbor == node2: continue
@@ -71,7 +71,8 @@ def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.ra
     """
     Constructs a tensor network with bond dimension `chi`, where the topology is taken from the graph `G`.
     The graph `G` is manipulated in-place. Tensors are only added if `tensors=True` (default: `True`).
-    Returns the tensors in a dictionary where the nodes are keys, and the tensors are the values.
+    If tensors were added, returns the tensors in a dictionary where the nodes are keys, and the tensors
+    are the values.
     """
     # sanity check
     if tensors and chi == None: raise ValueError("No virtual bond dimension given.")
@@ -124,35 +125,7 @@ def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.ra
         # adding the tensor to this node
         G.nodes[node]["T"] = T
 
-    return tensor_list
-
-def construct_initial_messages(G:nx.MultiGraph,normalize:bool=True,sanity_check:bool=False) -> None:
-    """
-    Initializes messages one the edges of `G`. Random initialisation except for leaf nodes, where the initial value
-    is the tensor of the leaf node. `G` is modified in-place.
-    """
-    # sanity check
-    if sanity_check: assert network_message_check(G)
-
-    for node1,node2 in G.edges():
-        # add messages to every edge, in both directions
-        G[node1][node2][0]["msg"] = {}
-
-        for receiving_node in (node1,node2):
-            sending_node = node2 if receiving_node == node1 else node1
-            if len(G.adj[sending_node]) == 1:
-                # message from leaf node
-                G[node1][node2][0]["msg"][receiving_node] = G.nodes[sending_node]["T"] / np.sum(G.nodes[sending_node]["T"]) if normalize else G.nodes[sending_node]["T"]
-            else:
-                iLeg = G[node1][node2][0]["legs"][receiving_node]
-                # bond dimension
-                chi = G.nodes[receiving_node]["T"].shape[iLeg]
-                # initialization with normalized vector
-                #msg = np.ones(shape=(chi,))
-                msg = np.random.normal(size=(chi,))
-                G[node1][node2][0]["msg"][receiving_node] = msg / np.sum(msg) if normalize else msg
-
-    return
+    return tensor_list if tensors else None
 
 def delta_network(G:nx.MultiGraph,chi:int,) -> None:
     """
@@ -169,7 +142,7 @@ def delta_network(G:nx.MultiGraph,chi:int,) -> None:
 
     for node in G.nodes:
         nLegs = len(G.adj[node])
-        dim = nLegs * [chi]
+        dim = nLegs * (chi,)
 
         # adding the tensor to this node
         G.nodes[node]["T"] = delta_tensor(nLegs,chi)

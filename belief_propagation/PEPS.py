@@ -7,6 +7,7 @@ import networkx as nx
 import cotengra as ctg
 import warnings
 import copy
+from typing import Union
 
 from belief_propagation.utils import network_message_check,crandn,write_exp_bonddim_to_graph,multi_tensor_rank
 
@@ -71,16 +72,6 @@ class PEPS:
             val[neighbor] = self.G[node][neighbor][0]["legs"]
 
         return val
-
-    def multiply(self,x:float,sanity_check:bool=False) -> None:
-        """
-        Multiplies all tensors in the PEPS by `x`.
-        """
-        if sanity_check: assert self.intact
-
-        for node in self.G.nodes(): self.G.nodes[node]["T"] *= x
-
-        return
 
     @property
     def nsites(self) -> int:
@@ -309,6 +300,20 @@ class PEPS:
         self.G.nodes[node]["T"] = T
 
         return
+
+    def __mul__(self,x:float):
+        """
+        Multiplication of the whole PEPS with a scalar.
+        """
+        if not np.isscalar(x): raise ValueError("x must be a scalar.")
+        newPEPS = copy.deepcopy(self)
+
+        N = newPEPS.nsites
+        for node in newPEPS.G.nodes(): newPEPS.G.nodes[node]["T"] = newPEPS.G.nodes[node]["T"] * (x**(1/N))
+
+        return newPEPS
+
+    def __rmul__(self,x:float): return self.__mul__(x)
 
     def __repr__(self) -> str:
         out = ""

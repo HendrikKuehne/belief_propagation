@@ -62,7 +62,7 @@ This will be updated continuously, as questions come to mind.
 * Why are long loops negligible?
     * Many runs of the BP algorithm give exact results when only long loops are present, which is what Kirkley et Al claim in their paper; they do not give a source though.
     * :arrow_right: Loops behave like vector iterations, which is not how Kirkleys algorithm works; it is in fact detrimental to the accuracy. Vector iterations require many iterations, however, and the longer the loop the more iterations one needs to reach vector iteration territory. Long loops will (probably - this is what I expect) introduce larger errors, when one does more iterations in the BP algorithm.
-    * :arrow_right: Actually not! The eigenvalue spectra of long loops tend to feature one dominant eigenvalue, while all others are neglectable in magnitude. See [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#spectra-of-a-matrix-chain) for details.
+    * :arrow_right: Actually not! The eigenvalue spectra of long loops tend to feature one dominant eigenvalue, while all others are neglectable in magnitude. See [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#spectra-of-a-matrix-chain) for details.[^6]
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
@@ -76,7 +76,7 @@ This will be updated continuously, as questions come to mind.
 
 [^5]: I can imagine this going two ways: Either we add projectors to the edges, always projecting out the part that is collinear to the previous messages; or we directly project out the previous messages from the tensors that are adjacent to that edge.
 
-[^6]: The data is not contained herein since it does not belong to the codebase, and it is too much anyways. It can, of course, be generated from this code however.
+[^6]: This was, independently, also found by [Cao, Vontobel, 2017](10.1109/ITW.2017.8277985).
 
 ## References
 
@@ -117,6 +117,12 @@ This will be updated continuously, as questions come to mind.
     * David Tellenbach  
       Canonicalization of Loop-free Tensor Networks  
       [MediaTUM](https://mediatum.ub.tum.de/node?id=1654468)
+    * Michael X. Cao, Pascal O. Vontobel  
+      Double-Edge Factor Graphs: Definition, Properties and Examples  
+      [2017 IEEE Information Theory Workshop (ITW)](10.1109/ITW.2017.8277985)
+    * Jonathan S. Yedidia, William T. Freeman, Yair Weiss  
+      Constructing Free-Energy Approximations and Generalized Belief Propagation Algorithms  
+      [IEEE Trans. Inf. Theory, vol. 51, no. 7, pp. 2282–2312, Jul. 2005.](10.1109/TIT.2005.850085)
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  

@@ -11,12 +11,11 @@ algorithm.
 import numpy as np
 import networkx as nx
 import cotengra as ctg
-import scipy.linalg as scialg
+import scipy.stats as scistats
 import ray
 import warnings
 import itertools
 import tqdm
-from typing import Union
 import copy
 
 from belief_propagation.utils import network_message_check,crandn
@@ -333,9 +332,6 @@ class BaseBraket:
             newG[node1][node2][0]["indices"] = None
             newG[node1][node2][0]["msg"] = {}
 
-            # default: no transformation on any edge
-            newG[node1][node2][0]["T"] = np.full(shape=(1,),fill_value=np.nan)
-
         return newG
 
     def __init__(self,bra:PEPS,op:PEPO,ket:PEPS,sanity_check:bool=False) -> None:
@@ -384,12 +380,15 @@ class BaseBraket:
 
         return
 
+    def __repr__(self) -> str:
+        return f"Braket on {self.nsites} sites. Physical dimension {self.D}. Bond dimension {self.op.chi} of PEPO. Braket is " + ("intact." if self.intact else "not intact.")
+
 class Braket(BaseBraket):
     """
     Code for belief propagation.
     """
 
-    def __construct_initial_messages(self,real:bool,normalize_during:bool,sanity_check:bool,rng:np.random.Generator=np.random.default_rng()) -> None:
+    def __construct_initial_messages(self,real:bool,normalize_during:bool,msg_init:str,sanity_check:bool,rng:np.random.Generator=np.random.default_rng()) -> None:
         """
         Initial messages for BP iteration. Saved in the dictionary
         `self.msg`.
@@ -407,48 +406,60 @@ class Braket(BaseBraket):
         else:
             randn = lambda size: crandn(size,rng)
 
-        def get_new_message(bra_size:int,op_size:int,ket_size:int) -> np.ndarray:
+        # random matrix generation
+        if real:
+            matrixgen = lambda N: scistats.ortho_group.rvs(dim=N,size=1)
+        else:
+            matrixgen = lambda N: scistats.unitary_group.rvs(dim=N,size=1)
+
+        def get_new_message(bra_size:int,op_size:int,ket_size:int,method:str) -> np.ndarray:
             """
             Generates a new message with shape `[bra_size,op_size,ket_size]`.
-
-            If `bra_size=ket_size`, then `msg[:,i,:]` is, for all `i`,
-            positive-semidefinite and hermitian.
             """
             if bra_size == ket_size:
-                msg = np.zeros(shape=(bra_size,op_size,ket_size)) if real else np.zeros(shape=(bra_size,op_size,ket_size)) + 0j
-                for i in range(op_size):
-                    A = randn(size=(bra_size,bra_size))
-                    msg[:,i,:] = A.T.conj() @ A
+                if method == "normal":
+                    # positive-semidefinite and hermitian
+                    msg = np.zeros(shape=(bra_size,op_size,ket_size)) if real else (np.zeros(shape=(bra_size,op_size,ket_size)) + 0j)
+                    for i in range(op_size):
+                        A = randn(size=(bra_size,bra_size))
+                        msg[:,i,:] = A.T.conj() @ A
 
-                return msg
-            else:
-                # TODO psd-analogous matrices using scipy.stats.ortho_group / scipy.stats.unitary_group?
-                pass
+                    return msg
+
+                if method == "unitary":
+                    # positive-semidefinite and hermitian
+                    msg = np.zeros(shape=(bra_size,op_size,ket_size)) if real else (np.zeros(shape=(bra_size,op_size,ket_size)) + 0j)
+                    for i in range(op_size):
+                        eigvals = rng.uniform(low=0,high=1,size=bra_size)
+                        U = matrixgen(bra_size)
+                        msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
+
+                    return msg
+
+                raise ValueError("Message initialisation method " + method + " not implemented.")
 
             return randn(size=(bra_size,op_size,ket_size))
 
         self.msg = {node:{} for node in self.G.nodes()}
 
         for node1,node2 in self.G.edges():
-            for sending_node,receiving_node in itertools.permutations((node1,node2)):
-                # messages in both directions
+            for sending_node,receiving_node in itertools.permutations((node1,node2)): # messages in both directions
                 if len(self.G.adj[sending_node]) > 1:
                     # ket and bra leg indices, and sizes
                     bra_size = self._bra.G[sending_node][receiving_node][0]["size"]
                     ket_size = self._ket.G[sending_node][receiving_node][0]["size"]
-                    # calculating the message
-                    msg = get_new_message(bra_size,self._op.chi,ket_size)
+                    # new message
+                    self.msg[sending_node][receiving_node] = get_new_message(bra_size,self._op.chi,ket_size,method=msg_init)
                 else:
                     # sending node is leaf node
-                    msg = ctg.einsum(
+                    self.msg[sending_node][receiving_node] = ctg.einsum(
                         "ij,kjl,rl->ikr",
                         self._bra.G.nodes[sending_node]["T"],
                         self._op.G.nodes[sending_node]["T"],
                         self._ket.G.nodes[sending_node]["T"]
                     )
 
-                if normalize_during: msg /= np.sum(msg)
-                self.msg[sending_node][receiving_node] = msg
+        if normalize_during: self.__normalize_messages(normalize_to="unity",sanity_check=sanity_check)
 
         return
 
@@ -504,16 +515,20 @@ class Braket(BaseBraket):
         # sanity check
         if sanity_check: assert self.intact
 
-        for node1,node2,T in self.G.edges(data="T"):
-            if np.isnan(T).any():
-                # no transformation on this edge
-                continue
+        for node1,node2 in self.G.edges():
+            for sending_node,receiving_node in itertools.permutations((node1,node2)):
+                if np.isnan(self._edge_T[sending_node][receiving_node]).any():
+                    # no transformation on this edge
+                    continue
 
-            sending_node = min(node1,node2)
-            receiving_node = max(node1,node2)
+                # applying the transformation
+                self.msg[sending_node][receiving_node] = np.einsum(
+                    "ijkabc,abc->ijk",
+                    self._edge_T[sending_node][receiving_node],
+                    self.msg[sending_node][receiving_node]
+                )
 
-            self.msg[sending_node][receiving_node] = np.einsum("ijkabc,abc->ijk",T,self.msg[sending_node][receiving_node])
-            self.msg[receiving_node][sending_node] = np.einsum("abcijk,abc->ijk",T,self.msg[receiving_node][sending_node])
+        return
 
     def __message_passing_step(self,normalize_during:bool,parallel:bool,sanity_check:bool) -> float:
         """
@@ -530,7 +545,7 @@ class Braket(BaseBraket):
             # there are only leaf nodes in the graph; we don't need to do anything
             return 0
 
-        eps = ()
+        old_msg = copy.deepcopy(self.msg)
 
         if not parallel: # non-parallel version of the code
             new_msg = {node:{} for node in self.G.nodes()}
@@ -548,8 +563,6 @@ class Braket(BaseBraket):
 
                     # saving the new message
                     new_msg[sending_node][receiving_node] = msg
-                    # change in message norm
-                    eps += (np.linalg.norm(self.msg[sending_node][receiving_node] - (msg / np.sum(msg) if normalize_during else msg)),)
 
             # put new messages in the graph
             self.msg = new_msg
@@ -568,7 +581,7 @@ class Braket(BaseBraket):
                         # leaf node; no action necessary
                         continue
 
-                    ray_refs += [contract_tensor_msg.remote(**self.neighborhood(sending_node,receiving_node,sanity_check)),]
+                    ray_refs += [contract_tensor_msg.remote(**self.__neighborhood(sending_node,receiving_node,sanity_check)),]
                     msg_ids += ((sending_node,receiving_node),)
 
             # get new messages
@@ -576,8 +589,6 @@ class Braket(BaseBraket):
 
             for msg_id,msg in zip(msg_ids,new_msg):
                 sending_node,receiving_node = msg_id
-                # change in message norm
-                eps += (np.linalg.norm(self.msg[sending_node][receiving_node] - msg / np.sum(msg) if normalize_during else msg),)
                 # saving the new message
                 self.msg[sending_node][receiving_node] = msg
 
@@ -588,9 +599,15 @@ class Braket(BaseBraket):
             # normalize messages to unity
             self.__normalize_messages(normalize_to="unity",sanity_check=sanity_check)
 
+        eps = ()
+        # change in message norm
+        for node1,node2 in self.G.edges():
+            for sending_node,receiving_node in itertools.permutations((node1,node2)):
+                eps += (np.linalg.norm(self.msg[sending_node][receiving_node] - old_msg[sending_node][receiving_node]),)
+
         return max(eps)
 
-    def __message_passing_iteration(self,numiter:int,real:bool,normalize_during:bool,threshold:float,parallel:bool,iterator_desc_prefix:str,verbose:bool,new_messages:bool,sanity_check:bool) -> tuple[float]:
+    def __message_passing_iteration(self,numiter:int,real:bool,normalize_during:bool,threshold:float,parallel:bool,iterator_desc_prefix:str,verbose:bool,new_messages:bool,msg_init:str,sanity_check:bool) -> tuple[float]:
         """
         Performs a message passing iteration. Returns the change `eps` in maximum
         message norm for every iteration.
@@ -602,7 +619,7 @@ class Braket(BaseBraket):
 
         eps_list = ()
         # message initialization
-        if new_messages: self.__construct_initial_messages(real=real,normalize_during=normalize_during,sanity_check=sanity_check)
+        if new_messages: self.__construct_initial_messages(real=real,normalize_during=normalize_during,msg_init=msg_init,sanity_check=sanity_check)
 
         for i in iterator:
             eps = self.__message_passing_step(normalize_during=normalize_during,parallel=parallel,sanity_check=sanity_check)
@@ -632,11 +649,22 @@ class Braket(BaseBraket):
         if normalize_to == "unity":
             for sending_node in self.msg.keys():
                 for receiving_node in self.msg[sending_node].keys():
+                    # vanishing messages will be blown up by normalization, which is something we do not want
+                    if np.allclose(self.msg[sending_node][receiving_node],0):
+                        # why not set them to zero? Because we incur a divide-by-zero during cntr calculation at the
+                        # end of BP. How I handle this instead is I set node.cntr = 0 for zero-messages in
+                        # self.__contract_tensors_inbound_messages
+                        continue
+
                     self.msg[sending_node][receiving_node] /= np.sum(self.msg[sending_node][receiving_node])
 
             return
 
         if normalize_to == "cntr":
+            if self.cntr == 0:
+                warnings.warn("When the network value is zero, normalizing messages to the contraction value will not work. Skipping.",RuntimeWarning)
+                return
+
             # contract messages into tensors first to obtain tensor values, if necessary
             if not "cntr" in self.G.nodes[self._op.root].keys(): self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
 
@@ -695,11 +723,33 @@ class Braket(BaseBraket):
                 tuple(2 * nLegs + iLeg for iLeg in range(nLegs)) + (3 * nLegs + 1,),
             )
 
-            self.G.nodes[node]["cntr"] = ctg.einsum(*args,optimize="greedy")
+            node_cntr = ctg.einsum(*args,optimize="greedy")
+            self.G.nodes[node]["cntr"] = 0 if np.isclose(node_cntr,0) else node_cntr
 
         return
 
-    def BP(self,numiter:int=500,trials:int=10,real:bool=False,normalize_during:bool=True,normalize_after:bool=True,threshold:float=1e-10,parallel:bool=False,verbose:bool=True,new_messages:bool=True,sanity_check:bool=False,**kwargs) -> None:
+    def __neighborhood(self,sending_node:int,receiving_node:int,sanity_check:bool=False) -> dict:
+        """
+        Returns the signature of `contract_tensor_msg` as a dictionary.
+        """
+        # sanity check
+        if sanity_check:
+            assert self.intact
+            assert self.G.has_node(sending_node) and self.G.has_node(receiving_node)
+
+        return dict(
+            msg = {neighbor:self.msg[neighbor][sending_node] for neighbor in self.G.adj[sending_node]},
+            sending_node = sending_node,
+            receiving_node = receiving_node,
+            bra_legs = self._bra.legs_dict(sending_node),
+            op_legs = self._op.legs_dict(sending_node),
+            ket_legs = self._ket.legs_dict(sending_node),
+            bra_T = self._bra.G.nodes[sending_node]["T"],
+            op_T = self._op.G.nodes[sending_node]["T"],
+            ket_T = self._ket.G.nodes[sending_node]["T"]
+        )
+
+    def BP(self,numiter:int=500,trials:int=10,real:bool=False,normalize_during:bool=True,normalize_after:bool=True,threshold:float=1e-10,parallel:bool=False,verbose:bool=False,new_messages:bool=True,msg_init:str="normal",sanity_check:bool=False,**kwargs) -> None:
         """
         Layz BP algorithm from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321). Parameters:
         * `numiter`: Number of iterations.
@@ -710,11 +760,12 @@ class Braket(BaseBraket):
         this function implements the BP algorithm from
         [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211). Otherwise,
         the algorithm becomes Belief Propagation on trees.
-        * `normalize_after`: Normalization of messages after each the complete BP iteration.
+        * `normalize_after`: Normalization of messages after the completed BP iteration.
         If `True`, contraction of a node with it's incoming messages yields the complete network
         value. Only relevant if `normalize_during = True`.
         * `threshold`: When to abort the BP iteration.
         * `new_messages`: Whether or not to initialize new messages.
+        * `msg_init`: Method used for message initialization.
 
         Writes the network contraction value to `self.cntr`. Converged messages are normalized
         such that the contraction of a tensor with it's inbound messages gives the complete network
@@ -748,6 +799,7 @@ class Braket(BaseBraket):
                 iterator_desc_prefix=kwargs["iterator_desc_prefix"] + f"trial {iTrial+1} | ",
                 verbose=verbose,
                 new_messages=new_messages,
+                msg_init=msg_init,
                 sanity_check=sanity_check,
             )
 
@@ -775,26 +827,29 @@ class Braket(BaseBraket):
 
         return
 
-    def neighborhood(self,sending_node:int,receiving_node:int,sanity_check:bool=False) -> dict:
+    def insert_edge_T(self,T:np.ndarray,sending_node:int,receiving_node:int,sanity_check:bool=False) -> None:
         """
-        Returns the signature of `contract_tensor_msg` as a dictionary.
+        Adds the transformation `T` to messages that are sent from `sending_node` to `receiving_node`.
         """
         # sanity check
-        if sanity_check:
-            assert self.intact
-            assert self.G.has_node(sending_node) and self.G.has_node(receiving_node)
-
-        return dict(
-            msg = {neighbor:self.msg[neighbor][sending_node] for neighbor in self.G.adj[sending_node]},
-            sending_node = sending_node,
-            receiving_node = receiving_node,
-            bra_legs = self._bra.legs_dict(sending_node),
-            op_legs = self._op.legs_dict(sending_node),
-            ket_legs = self._ket.legs_dict(sending_node),
-            bra_T = self._bra.G.nodes[sending_node]["T"],
-            op_T = self._op.G.nodes[sending_node]["T"],
-            ket_T = self._ket.G.nodes[sending_node]["T"]
+        if sanity_check: assert self.intact
+        if not self.G.has_edge(sending_node,receiving_node,0): raise ValueError(f"Edge ({sending_node},{receiving_node}) not present in graph.")
+        vec_size = (
+            self._bra.G[sending_node][receiving_node][0]["size"],
+            self._op.G[sending_node][receiving_node][0]["size"],
+            self._ket.G[sending_node][receiving_node][0]["size"]
         )
+        if not T.shape == 2*vec_size: raise ValueError("Transformation T as wrong shape. Expected " + str(2*vec_size) + ", got " + str(T.shape) + ".")
+
+        # inserting T
+        if np.isnan(self._edge_T[sending_node][receiving_node]).any():
+            # no transformation on this edge so far
+            self._edge_T[sending_node][receiving_node] = T
+        else:
+            # transformations are executed successively
+            self._edge_T[sending_node][receiving_node] = np.einsum("abcijk,ijklmn->abclmn",T,self._edge_T[sending_node][receiving_node])
+
+        return
 
     @property
     def intact(self) -> bool:
@@ -817,27 +872,34 @@ class Braket(BaseBraket):
                         warnings.warn(f"Non-finite message sent from {sending_node} to {receiving_node}.")
                         return False
 
-        for node1,node2,T in self.G.edges(data="T"):
-            if np.isnan(T).any():
-                # no transformation on this edge
-                continue
+        for node1,node2 in self.G.edges():
+            for sending_node,receiving_node in itertools.permutations((node1,node2)):
+                if np.isnan(self._edge_T[sending_node][receiving_node]).any():
+                    # no transformation on this edge
+                    continue
 
-            if not T.shape == (
-                self._bra.G[node1][node2][0]["size"],
-                self._op.G[node1][node2][0]["size"],
-                self._ket.G[node1][node2][0]["size"],
-                self._bra.G[node1][node2][0]["size"],
-                self._op.G[node1][node2][0]["size"],
-                self._ket.G[node1][node2][0]["size"],
-            ):
-                return False
+                if not self._edge_T[sending_node][receiving_node].shape == (
+                    self._bra.G[node1][node2][0]["size"],
+                    self._op.G[node1][node2][0]["size"],
+                    self._ket.G[node1][node2][0]["size"],
+                    self._bra.G[node1][node2][0]["size"],
+                    self._op.G[node1][node2][0]["size"],
+                    self._ket.G[node1][node2][0]["size"],
+                ):
+                    return False
 
         return True
+
+    @property
+    def edge_T(self) -> dict[int,dict[int,np.ndarray]]:
+        """Transformations on edges. First key sending node, second key receiving node."""
+        return self._edge_T
 
     @classmethod
     def Cntr(cls,G:nx.MultiGraph,sanity_check:bool=False):
         """
-        Contraction of the tensor network contained in `G`.
+        Contraction of the tensor network contained in `G`. The TN will
+        be contained in `self.ket`.
         """
         return cls(
             bra = PEPS.Dummy(G,sanity_check=sanity_check),
@@ -870,7 +932,16 @@ class Braket(BaseBraket):
         super().__init__(bra=bra,op=op,ket=ket,sanity_check=False)
 
         self.msg:dict[int,dict[int,np.ndarray]] = None
-        """First key sending node, second key receiving node."""
+        """Messages. First key sending node, second key receiving node."""
+
+        self._edge_T:dict[int,dict[int,np.ndarray]] = {
+            sending_node:{
+                receiving_node:np.full(shape=(1,),fill_value=np.nan)
+                for receiving_node in self.G.adj[sending_node]
+            }
+            for sending_node in self.G.nodes
+        }
+        """Transformations on edges. First key sending node, second key receiving node."""
 
         self.cntr:float = np.nan
         """Value of the network, calculated by BP."""
@@ -879,206 +950,8 @@ class Braket(BaseBraket):
 
         return
 
-def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,sanity_check:bool=False,**kwargs) -> None:
-    """
-    L2BP compression from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321).
-    Singular values below `singval_threshold` are discarded. `kwargs` are passed to
-    `Braket.BP`. `psi` is manipulated in-place.
-    """
-    if sanity_check: assert psi.intact
-
-    # handling kwargs
-    kwargs["iterator_desc_prefix"] = kwargs["iterator_desc_prefix"] + " | L2BP compression" if "iterator_desc_prefix" in kwargs.keys() else "L2BP compression"
-    kwargs["sanity_check"] = sanity_check
-
-    # BP iteration
-    overlap = Braket.Overlap(psi,psi,sanity_check=sanity_check)
-    overlap.BP(**kwargs)
-
-    # compressing every edge
-    for node1,node2 in psi.G.edges():
-        size = overlap.ket.G[node1][node2][0]["size"]
-        ndim1 = psi.G.nodes[node1]["T"].ndim
-        ndim2 = psi.G.nodes[node2]["T"].ndim
-
-        # get messages
-        msg_12 = np.reshape(overlap.msg[node1][node2][:,0,:],newshape=(size,size))
-        msg_21 = np.reshape(overlap.msg[node2][node1][:,0,:],newshape=(size,size))
-
-        # splitting the messages
-        eigvals1,W1 = scialg.eig(msg_12,overwrite_a=True)
-        eigvals2,W2 = scialg.eig(msg_21,overwrite_a=True)
-        R1 = np.diag(np.sqrt(eigvals1)) @ W1.conj().T
-        R2 = np.diag(np.sqrt(eigvals2)) @ W2.conj().T
-
-        # SVD over the bond, and truncation
-        U,singvals,Vh = scialg.svd(R1 @ R2,full_matrices=False,overwrite_a=True)
-        nonzero_mask = np.logical_not(np.isclose(singvals,0,atol=singval_threshold))
-
-        if np.sum(nonzero_mask) == 0:
-            warnings.warn(f"Threshold {singval_threshold:.3e} cuts edge ({node1},{node2}). Setting bond dimension to one.")
-            nonzero_mask[0] = True
-
-        U = U[:,nonzero_mask]
-        Vh = Vh[nonzero_mask,:]
-        singvals = singvals[nonzero_mask]
-
-        # projectors
-        P1 = np.einsum("ij,jk,kl->il",R2,Vh.conj().T,np.diag(1 / np.sqrt(singvals)),optimize=True)
-        P2 = np.einsum("ij,jk,kl->il",np.diag(1 / np.sqrt(singvals)),U.conj().T,R1,optimize=True)
-
-        # absorbing projector 1 into node 1
-        Tlegs = tuple(range(ndim1))
-        Plegs = (overlap.ket.G[node1][node2][0]["legs"][node1],ndim1)
-        outlegs = list(range(ndim1))
-        outlegs[overlap.ket.G[node1][node2][0]["legs"][node1]] = ndim1
-        psi[node1] = np.einsum(
-            psi[node1],Tlegs,
-            P1,Plegs,
-            outlegs,
-            optimize=True
-        )
-
-        # absorbing projector 2 into node 2
-        Tlegs = tuple(range(ndim2))
-        Plegs = (ndim2,overlap.ket.G[node1][node2][0]["legs"][node2])
-        outlegs = list(range(ndim2))
-        outlegs[overlap.ket.G[node1][node2][0]["legs"][node2]] = ndim2
-        psi[node2] = np.einsum(
-            P2,Plegs,
-            psi[node2],Tlegs,
-            outlegs,
-            optimize=True
-        )
-
-        # updating size of edge
-        psi.G[node1][node2][0]["size"] = P1.shape[1]
-
-    if sanity_check: assert psi.intact
-
-    return
-
-def QR_gauging(psi:PEPS,tree:nx.DiGraph=None,nodes:tuple[int]=None,sanity_check:bool=False,**kwargs) -> None:
-    """
-    Gauging of a state using QR decompositions. The root node of `tree` is
-    the orthogonality center; if `tree` is not given, a breadth-first search spanning
-    tree will be used. If given, only the nodes in `nodes` will be gauged.
-    """
-    if sanity_check: assert psi.intact
-
-    if tree == None:
-        # orthogonality center will be the node with the largest number of neighborhoods
-        ortho_center = 0
-        max_degree = 0
-        for node in psi.G.nodes():
-            if len(psi.G.adj[node]) > max_degree:
-                ortho_center = node
-                max_degree = len(psi.G.adj[node])
-        tree = nx.bfs_tree(G=psi.G,source=ortho_center)
-    else:
-        if not isinstance(tree,nx.DiGraph): raise ValueError("tree must be an oriented graph.")
-        if not nx.is_tree(tree): raise ValueError("Given spanning tree is not actually a tree.")
-        # finding the orthogonality center
-        ortho_center = None
-        for node in tree.nodes():
-            if tree.in_degree(node) == 0:
-                ortho_center = node
-                break
-
-    if nodes == None: nodes = tuple(psi.G.nodes())
-
-    # QR decompositions in upstream direction of the tree
-    for node in nx.dfs_postorder_nodes(tree,source=ortho_center):
-        if node not in nodes: continue
-
-        if node == ortho_center:
-            # we have reached the source
-            continue
-
-        # finding the upstream neighbor
-        assert tree.in_degree(node) == 1
-        pred = [_ for _ in tree.pred[node]][0]
-
-        # exposing the upstream leg of the site tensor, and re-shaping
-        T_exposed = np.moveaxis(psi[node],source=psi.G[pred][node][0]["legs"][node],destination=-1)
-        oldshape = T_exposed.shape
-        T_exposed = np.reshape(T_exposed,newshape=(-1,psi.G[pred][node][0]["size"]))
-
-        # QR decomposition
-        Q,R = np.linalg.qr(T_exposed,mode="reduced")
-
-        # re-shaping Q, and inserting into the state
-        Q = np.reshape(Q,newshape=oldshape)
-        Q = np.moveaxis(Q,source=-1,destination=psi.G[pred][node][0]["legs"][node])
-        psi[node] = Q
-
-        # absorbing R into upstream node
-        upstream_legs = tuple(range(psi[pred].ndim))
-        out_legs = tuple(psi[pred].ndim if i == psi.G[pred][node][0]["legs"][pred] else i for i in range(psi[pred].ndim))
-        psi[pred] = np.einsum(
-            psi[pred],upstream_legs,
-            R,(psi[pred].ndim,psi.G[pred][node][0]["legs"][pred]),
-            out_legs,
-        )
-
-    return
-
-def feynman_cut(obj:Union[PEPS,PEPO,Braket],node1:int,node2:int,sanity_check:bool=False) -> Union[tuple[PEPS],tuple[PEPO],tuple[Braket]]:
-    """
-    Cuts the edge `(node1,node2)`, and returns all resulting objects.
-    """
-    # sanity check
-    assert obj.G.has_edge(node1,node2,0)
-    if sanity_check: assert obj.intact
-
-    if isinstance(obj,PEPS):
-        oldG = copy.deepcopy(obj.G)
-        expose_edge(oldG,node1=node1,node2=node2,sanity_check=sanity_check)
-        leg1 = oldG[node1][node2][0]["legs"][node1]
-        leg2 = oldG[node1][node2][0]["legs"][node2]
-        idx1 = lambda i: tuple(i if _ == leg1 else slice(0,obj.G.nodes[node1]["T"].shape[_]) for _ in range(obj.G.nodes[node1]["T"].ndim))
-        idx2 = lambda i: tuple(i if _ == leg2 else slice(0,obj.G.nodes[node2]["T"].shape[_]) for _ in range(obj.G.nodes[node2]["T"].ndim))
-
-        res_objs = ()
-        for i in range(obj.G[node1][node2][0]["size"]):
-            newG = copy.deepcopy(oldG)
-            newG.remove_edge(node1,node2,key=0)
-            newG.nodes[node1]["T"] = oldG.nodes[node1]["T"][idx1(i)]
-            newG.nodes[node2]["T"] = oldG.nodes[node2]["T"][idx2(i)]
-            res_objs += (PEPS(newG,sanity_check=sanity_check),)
-
-        return res_objs
-
-    if isinstance(obj,PEPO):
-        oldG = copy.deepcopy(obj.G)
-        expose_edge(oldG,node1=node1,node2=node2,sanity_check=sanity_check)
-        leg1 = oldG[node1][node2][0]["legs"][node1]
-        leg2 = oldG[node1][node2][0]["legs"][node2]
-        idx1 = lambda i: tuple(i if _ == leg1 else slice(0,obj.G.nodes[node1]["T"].shape[_]) for _ in range(obj.G.nodes[node1]["T"].ndim))
-        idx2 = lambda i: tuple(i if _ == leg2 else slice(0,obj.G.nodes[node2]["T"].shape[_]) for _ in range(obj.G.nodes[node2]["T"].ndim))
-
-        res_objs = ()
-        for i in range(obj.G[node1][node2][0]["size"]):
-            newG = copy.deepcopy(oldG)
-            newG.remove_edge(node1,node2,key=0)
-            newG.nodes[node1]["T"] = oldG.nodes[node1]["T"][idx1(i)]
-            newG.nodes[node2]["T"] = oldG.nodes[node2]["T"][idx2(i)]
-            res_objs += (PEPO.from_graphs(newG,obj.tree,check_tree=False,sanity_check=sanity_check),)
-
-        return res_objs
-
-    if isinstance(obj,Braket):
-        bra_cuts = feynman_cut(obj.bra,node1,node2,sanity_check=sanity_check)
-        op_cuts = feynman_cut(obj.op,node1,node2,sanity_check=sanity_check)
-        ket_cuts = feynman_cut(obj.ket,node1,node2,sanity_check=sanity_check)
-
-        res_objs = ()
-        for bra,op,ket in itertools.product(bra_cuts,op_cuts,ket_cuts):
-            res_objs += (Braket(bra,op,ket,sanity_check=sanity_check),)
-
-        return res_objs
-
-    raise NotImplementedError("feynman_cut not implemented for object of type " + str(type(obj)) + ".")
+    def __repr__(self):
+        return super().__repr__() + " Messages are " + ("converged." if self.converged else "not converged.")
 
 if __name__ == "__main__":
     pass
