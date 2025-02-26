@@ -95,8 +95,11 @@ def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.ra
 
     for node in G.nodes:
         # adding to the adjacent edges which index they correspond to
-        for i,neighbor in enumerate(G.adj[node]):
-            G[node][neighbor][0]["legs"][node] = i
+        stumps = list(range(len(G.adj[node])))
+        for neighbor in G.adj[node]:
+            stump = rng.choice(stumps)
+            G[node][neighbor][0]["legs"][node] = stump
+            stumps.remove(stump)
 
         if not tensors: continue
 
@@ -105,7 +108,7 @@ def construct_network(G:nx.MultiGraph,chi:int=None,rng:np.random.Generator=np.ra
         # constructing a new tensor
         if psd:
             h = int(np.sqrt(chi))
-            assert h**2 == chi, "if psd=True, chi must have an integer root."
+            if not h**2 == chi: raise ValueError("if psd=True, chi must have an integer root.")
             s = randn(size = nLegs * [h,] + [chi,]) # last dimension is physical leg
             T = np.einsum(
                 s, [2*i for i in range(nLegs)] + [2*nLegs,],

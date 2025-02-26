@@ -18,7 +18,7 @@ import itertools
 import tqdm
 import copy
 
-from belief_propagation.utils import network_message_check,crandn
+from belief_propagation.utils import network_message_check,crandn,graph_compatible
 from belief_propagation.networks import expose_edge
 from belief_propagation.hamiltonians import Identity
 from belief_propagation.PEPO import PEPO
@@ -233,7 +233,7 @@ class BaseBraket:
 
         # do the physical dimensions match?
         if not self._bra.D == self.D and self._ket.D == self.D and self._op.D == self.D:
-            warnings.warn("Physical dimensions in braket do not match.")
+            warnings.warn("Physical dimensions in braket do not match.",RuntimeWarning)
             return False
 
         return True
@@ -253,7 +253,7 @@ class BaseBraket:
     @ket.setter
     def ket(self,ket:PEPS) -> None:
         # sanity check
-        assert self.graph_compatible(self.G,ket.G)
+        assert graph_compatible(self.G,ket.G)
         self._ket = ket
 
         # it is no longer guaranteed that the messages are converged
@@ -271,7 +271,7 @@ class BaseBraket:
     @bra.setter
     def bra(self,bra:PEPS) -> None:
         # sanity check
-        assert self.graph_compatible(self.G,bra.G)
+        assert graph_compatible(self.G,bra.G)
         self._bra = bra
 
         # it is no longer guaranteed that the messages are converged
@@ -289,31 +289,13 @@ class BaseBraket:
     @op.setter
     def op(self,op:PEPO) -> None:
         # sanity check
-        assert self.graph_compatible(self.G,op.G)
+        assert graph_compatible(self.G,op.G)
         self._op = op
 
         # it is no longer guaranteed that the messages are converged
         self._converged = False
 
         return
-
-    @staticmethod
-    def graph_compatible(G1:nx.MultiGraph,G2:nx.MultiGraph) -> bool:
-        """
-        Tests if `G1` and `G2` can be combined into a sandwich, that is
-        if their geometry is the same. This amounts to checking if every edge in `G1` is
-        contained in `G2`.
-
-        Throws `ValueError` if there are two edges between any two
-        nodes in `G1` or `G2`.
-        """
-        # sanity check
-        assert network_message_check(G1)
-        assert network_message_check(G2)
-        assert nx.utils.nodes_equal(G1.nodes(),G2.nodes())
-        assert nx.utils.edges_equal(G1.edges(),G2.edges())
-
-        return True
 
     @staticmethod
     def prepare_graph(G:nx.MultiGraph,keep_legs:bool=False) -> nx.MultiGraph:
@@ -337,8 +319,8 @@ class BaseBraket:
     def __init__(self,bra:PEPS,op:PEPO,ket:PEPS,sanity_check:bool=False) -> None:
         # sanity check
         if sanity_check:
-            assert self.graph_compatible(bra.G,ket.G)
-            assert self.graph_compatible(bra.G,op.G)
+            assert graph_compatible(bra.G,ket.G)
+            assert graph_compatible(bra.G,op.G)
             assert bra.D == op.D and ket.D == op.D
 
         self.G:nx.MultiGraph = self.prepare_graph(ket.G,True)
@@ -352,8 +334,8 @@ class BaseBraket:
         """Whether the messages in `self.msg` are converged."""
         # this attribute does not really belong in BaseBraket, of course;
         # I included it here to be able to have the property setters in
-        # this base class. The whole point of the base class was to avoid
-        # clutter in the BP code
+        # this base class. After all, the whole point of this base class
+        # was to avoid clutter in the BP code
 
         if sanity_check: assert self.intact
 
@@ -388,7 +370,7 @@ class Braket(BaseBraket):
     Code for belief propagation.
     """
 
-    def __construct_initial_messages(self,real:bool,normalize_during:bool,msg_init:str,sanity_check:bool,rng:np.random.Generator=np.random.default_rng()) -> None:
+    def construct_initial_messages(self,real:bool=False,normalize_during:bool=True,msg_init:str="normal",sanity_check:bool=False,rng:np.random.Generator=np.random.default_rng(),**kwargs) -> None:
         """
         Initial messages for BP iteration. Saved in the dictionary
         `self.msg`.
@@ -400,46 +382,6 @@ class Braket(BaseBraket):
         # sanity check
         if sanity_check: assert self.intact
 
-        # random number generation
-        if real:
-            randn = lambda size: rng.standard_normal(size)
-        else:
-            randn = lambda size: crandn(size,rng)
-
-        # random matrix generation
-        if real:
-            matrixgen = lambda N: scistats.ortho_group.rvs(dim=N,size=1)
-        else:
-            matrixgen = lambda N: scistats.unitary_group.rvs(dim=N,size=1)
-
-        def get_new_message(bra_size:int,op_size:int,ket_size:int,method:str) -> np.ndarray:
-            """
-            Generates a new message with shape `[bra_size,op_size,ket_size]`.
-            """
-            if bra_size == ket_size:
-                if method == "normal":
-                    # positive-semidefinite and hermitian
-                    msg = np.zeros(shape=(bra_size,op_size,ket_size)) if real else (np.zeros(shape=(bra_size,op_size,ket_size)) + 0j)
-                    for i in range(op_size):
-                        A = randn(size=(bra_size,bra_size))
-                        msg[:,i,:] = A.T.conj() @ A
-
-                    return msg
-
-                if method == "unitary":
-                    # positive-semidefinite and hermitian
-                    msg = np.zeros(shape=(bra_size,op_size,ket_size)) if real else (np.zeros(shape=(bra_size,op_size,ket_size)) + 0j)
-                    for i in range(op_size):
-                        eigvals = rng.uniform(low=0,high=1,size=bra_size)
-                        U = matrixgen(bra_size)
-                        msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
-
-                    return msg
-
-                raise ValueError("Message initialisation method " + method + " not implemented.")
-
-            return randn(size=(bra_size,op_size,ket_size))
-
         self.msg = {node:{} for node in self.G.nodes()}
 
         for node1,node2 in self.G.edges():
@@ -449,7 +391,7 @@ class Braket(BaseBraket):
                     bra_size = self._bra.G[sending_node][receiving_node][0]["size"]
                     ket_size = self._ket.G[sending_node][receiving_node][0]["size"]
                     # new message
-                    self.msg[sending_node][receiving_node] = get_new_message(bra_size,self._op.chi,ket_size,method=msg_init)
+                    self.msg[sending_node][receiving_node] = self.get_new_message(bra_size=bra_size,op_size=self._op.chi,ket_size=ket_size,real=real,method=msg_init,rng=rng)
                 else:
                     # sending node is leaf node
                     self.msg[sending_node][receiving_node] = ctg.einsum(
@@ -619,7 +561,7 @@ class Braket(BaseBraket):
 
         eps_list = ()
         # message initialization
-        if new_messages: self.__construct_initial_messages(real=real,normalize_during=normalize_during,msg_init=msg_init,sanity_check=sanity_check)
+        if new_messages: self.construct_initial_messages(real=real,normalize_during=normalize_during,msg_init=msg_init,sanity_check=sanity_check)
 
         for i in iterator:
             eps = self.__message_passing_step(normalize_during=normalize_during,parallel=parallel,sanity_check=sanity_check)
@@ -851,6 +793,28 @@ class Braket(BaseBraket):
 
         return
 
+    def perturb_messages(self,real:bool=False,d:float=1e-3,msg_init:str="zero-normal",sanity_check:bool=False,rng:np.random.Generator=np.random.default_rng()) -> None:
+        """
+        Perturbs all messages in the braket. `d` is the magnitude
+        of the perturbation relative to the unperturbed message.
+        """
+        # sanity check
+        if sanity_check: assert self.intact
+
+        if self.msg == None:
+            warnings.warn("Message are not initialized. Skipping.",RuntimeWarning)
+
+        for node1,node2 in self.G.edges():
+            for sending_node,receiving_node in itertools.permutations((node1,node2)):
+                norm = np.sum(self.msg[sending_node][receiving_node])
+                delta_msg = self.get_new_message(*self.msg[sending_node][receiving_node].shape,real=real,method=msg_init,rng=rng)
+                self.msg[sending_node][receiving_node] += delta_msg * norm * d / np.max(np.abs(delta_msg))
+
+        # convergence cannot be guaranteed anymore
+        self._converged = False
+
+        return
+
     @property
     def intact(self) -> bool:
         """
@@ -869,7 +833,7 @@ class Braket(BaseBraket):
             for sending_node in self.msg.keys():
                 for receiving_node in self.msg[sending_node].keys():
                     if not np.isfinite(self.msg[sending_node][receiving_node]).all():
-                        warnings.warn(f"Non-finite message sent from {sending_node} to {receiving_node}.")
+                        warnings.warn(f"Non-finite message sent from {sending_node} to {receiving_node}.",RuntimeWarning)
                         return False
 
         for node1,node2 in self.G.edges():
@@ -886,6 +850,7 @@ class Braket(BaseBraket):
                     self._op.G[node1][node2][0]["size"],
                     self._ket.G[node1][node2][0]["size"],
                 ):
+                    warnings.warn(f"Transformation for message pass {sending_node} -> {receiving_node} ash wrong shape.",RuntimeWarning)
                     return False
 
         return True
@@ -894,6 +859,52 @@ class Braket(BaseBraket):
     def edge_T(self) -> dict[int,dict[int,np.ndarray]]:
         """Transformations on edges. First key sending node, second key receiving node."""
         return self._edge_T
+
+    @staticmethod
+    def get_new_message(bra_size:int,op_size:int,ket_size:int,real:bool=False,method:str="normal",rng:np.random.Generator=np.random.default_rng()) -> np.ndarray:
+        """
+        Generates a new message with shape `[bra_size,op_size,ket_size]`.
+        """
+        # random number generation
+        if real:
+            randn = lambda size: rng.standard_normal(size)
+        else:
+            randn = lambda size: crandn(size,rng)
+
+        # random matrix generation
+        if real:
+            matrixgen = lambda N: scistats.ortho_group.rvs(dim=N,size=1)
+        else:
+            matrixgen = lambda N: scistats.unitary_group.rvs(dim=N,size=1)
+
+        if bra_size == ket_size:
+            if method == "normal":
+                # positive-semidefinite and hermitian
+                msg = np.zeros(shape=(bra_size,op_size,ket_size),dtype=np.float128) if real else np.zeros(shape=(bra_size,op_size,ket_size),dtype=np.complex128)
+                for i in range(op_size):
+                    A = randn(size=(bra_size,bra_size))
+                    msg[:,i,:] = A.T.conj() @ A
+
+                return msg
+
+            if method == "unitary":
+                # positive-semidefinite and hermitian
+                msg = np.zeros(shape=(bra_size,op_size,ket_size),dtype=np.float128) if real else np.zeros(shape=(bra_size,op_size,ket_size),dtype=np.complex128)
+                for i in range(op_size):
+                    eigvals = rng.uniform(low=0,high=1,size=bra_size)
+                    U = matrixgen(bra_size)
+                    msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
+
+                return msg
+
+            if method == "zero-normal":
+                # positive-semidefinite, hermitian, sums to zero
+                msg = Braket.get_new_message(bra_size=bra_size,op_size=op_size,ket_size=ket_size,real=real,method="normal",rng=rng)
+                return msg - np.sum(msg)
+
+            raise ValueError("Message initialisation method " + method + " not implemented.")
+
+        return randn(size=(bra_size,op_size,ket_size))
 
     @classmethod
     def Cntr(cls,G:nx.MultiGraph,sanity_check:bool=False):

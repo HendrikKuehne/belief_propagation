@@ -12,7 +12,7 @@ import itertools
 import copy
 from typing import Union
 
-from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian,same_legs
+from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian,same_legs,graph_compatible
 from belief_propagation.PEPS import PEPS
 
 class PEPO:
@@ -53,54 +53,6 @@ class PEPO:
     component.
     """
 
-    def permute_PEPO(self,T:np.ndarray,node:int) -> np.ndarray:
-        """
-        Re-shapes the PEPO-tensor `T` at node `node` such that it fits into
-        the graph `self.G`.
-
-        It is assumed that the dimensions of `T` are in the canonical
-        order: First the virtual dimensions, followed by two physical legs.
-        The leading virtual dimension is the incoming leg, which is
-        followed by the passive legs and, finally, the outgoing legs.
-
-        For a node in `G` with N neighbors, `T` must have at least N+2 legs.
-        The last two legs are assumed to be the physical legs, and the first N
-        legs are the virtual bonds. Legs that are neither among the first N or
-        the last 2 remain untouched; these are boundary legs that connect to
-        the initial and final states of the finite state automaton. This
-        function thus permutes only the first N dimensions.
-        """
-        # sanity check
-        assert node in self.G
-        assert node in self.tree
-
-        N_in = len(self.tree.pred[node])
-        N_out = len(self.tree.succ[node])
-        N_pas = len(self.G.adj[node]) - N_out - N_in
-
-        # sanity check
-        assert T.ndim - N_in - N_pas - N_out - 2 in (0,1), "Tensor may have up to one boundary leg."
-
-        newshape = [np.nan for _ in self.G.adj[node]]
-        out_counter = 0
-        pas_counter = 0
-        for neighbor in self.G.adj[node]:
-            if neighbor in self.tree.pred[node]:
-                # the incoming edge
-                newshape[self.G[node][neighbor][0]["legs"][node]] = 0
-                continue
-            if neighbor in self.tree.succ[node]:
-                # outgoing edge
-                newshape[self.G[node][neighbor][0]["legs"][node]] = N_in + N_pas + out_counter
-                out_counter += 1
-                continue
-
-            # passive edge
-            newshape[self.G[node][neighbor][0]["legs"][node]] = N_in + pas_counter
-            pas_counter += 1
-
-        return np.transpose(T,newshape + [_ for _ in range(len(newshape),T.ndim)])
-
     def contract_boundaries(self):
         """
         Contracts boundary legs. Boundary legs are assumed to be located
@@ -138,6 +90,153 @@ class PEPO:
         if create_using == "sparse": return self.__to_sparse(create_using="sparse",sanity_check=sanity_check)
 
         raise ValueError("toarray not implemented for method " + create_using + ".")
+
+    def __to_dense(self,sanity_check:bool) -> np.ndarray:
+        """
+        Constructs the operator using `ctg.einsum`.
+        """
+        if sanity_check: assert self.intact
+
+        if self.nsites == 1:
+            # the network is trivial
+            return tuple(self.G.nodes(data="T"))[0][1]
+
+        inputs = ()
+        tensors = ()
+
+        # enumerating the edges in the graph
+        for i,nodes in enumerate(self.G.edges()):
+            node1,node2 = nodes
+            self.G[node1][node2][0]["label"] = ctg.get_symbol(i)
+
+        N_edges = self.G.number_of_edges()
+        # assembling the einsum arguments
+        for i,nodeT in enumerate(self.G.nodes(data="T")):
+            node,T = nodeT
+            legs = [None for _ in range(T.ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
+            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+
+            inputs += (legs,)
+            tensors += (T,)
+
+        # output ordering
+        output = tuple(ctg.get_symbol(i) for i in range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
+
+        # getting the einsum expression, and contracting
+        expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
+        H = ctg.einsum(expr,*tensors)
+        H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+
+        if sanity_check: assert is_hermitian(H)
+
+        return H
+
+        inputs = ()
+        arrays = ()
+        size_dict = {}
+
+        # enumerating the edges in the graph
+        for i,nodes in enumerate(self.G.edges()):
+            node1,node2 = nodes
+            self.G[node1][node2][0]["label"] = i
+            size_dict[i] = self.G[node1][node2][0]["size"]
+
+        N_edges = self.G.number_of_edges()
+        # assembling the einsum arguments
+        for i,nodeT in enumerate(self.G.nodes(data="T")):
+            node,T = nodeT
+            legs = [None for _ in range(T.ndim-2)] + [N_edges + i,N_edges + self.G.number_of_nodes() + i] # last two indices are the physical legs
+            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+
+            inputs += (legs,)
+            arrays += (T,)
+
+        # output ordering
+        output = tuple(_ for _ in range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
+
+        H = ctg.array_contract(arrays=arrays,inputs=inputs,output=output,size_dict=size_dict)
+        H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+
+        if sanity_check: assert is_hermitian(H)
+
+        return H
+
+    def __to_sparse(self,create_using:str,sanity_check:bool) -> Union[scisparse.csr_array,scisparse.csr_matrix]:
+        """
+        Constructs the operator using sparse operations.
+        """
+        if sanity_check: assert self.intact
+
+        if self.nsites == 1:
+            # the network is trivial
+            return tuple(self.G.nodes(data="T"))[0][1]
+
+        if create_using == "scipy.csr":
+            # H will be constructed by summing the contributions from all operator chains.
+            # array construction is fastest using the coo format, but I'm returning csr
+            # because this is optimal for matrix-vector multiplication; an operation that
+            # the Lanczos algorithm heavily relies on
+            chains = self.operator_chains(sanity_check=sanity_check)
+
+            H = scisparse.csr_array((self.D**self.nsites,self.D**self.nsites))
+            nodes = tuple(self.G.nodes())
+
+            for chain in chains:
+                ops = tuple(
+                    scisparse.coo_array(self[node][chain[node]]) if node in chain.keys()
+                    else scisparse.eye_array(self.D,format="coo")
+                    for node in nodes[::-1]
+                )
+                H += multi_kron(*ops,create_using="scipy.coo")
+
+            return H.tocsr()
+
+        if create_using == "sparse":
+            #if self.G.number_of_edges() > len(np.core.einsumfunc.einsum_symbols):
+            #    raise RuntimeError(f"The sparse package allows einsum contractions with up to {len(np.core.einsumfunc.einsum_symbols)} indices. The operator has too many edges ({self.G.number_of_edges()} edges).")
+
+            inputs = ()
+            tensors = ()
+
+            # enumerating the edges in the graph
+            for i,nodes in enumerate(self.G.edges()):
+                node1,node2 = nodes
+                self.G[node1][node2][0]["label"] = ctg.get_symbol(i)#np.core.einsumfunc.einsum_symbols[i]
+
+            N_edges = self.G.number_of_edges()
+            output = tuple(ctg.get_symbol(N_edges + i) for i in range(2 * self.nsites))
+
+            # assembling the einsum arguments
+            for i,node in enumerate(self.G.nodes()):
+                legs = [None for _ in range(self[node].ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
+                for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
+                    legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
+
+                inputs += (tuple(legs),)
+                tensors += (sparse.GCXS(self[node]),)
+
+            # einsum expression, with all physical dimensions contained in ellipsis
+            einsum_expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
+            # contraction using einsum
+            H = sparse.einsum(einsum_expr,*tensors)
+            H = sparse.reshape(H,shape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
+
+            return H.to_scipy_sparse()
+
+        raise ValueError("__to_sparse not implemented for method " + create_using + ".")
+
+    def conj(self,sanity_check:bool=False):
+        """
+        Adjoint operator.
+        """
+        if sanity_check: assert self.intact
+
+        newPEPO = copy.deepcopy(self)
+        for node in self.G.nodes(): newPEPO[node] = self[node].conj()
+
+        return newPEPO
 
     def view_site(self,node:int):
         """
@@ -310,141 +409,78 @@ class PEPO:
 
             self.__chain_construction_recursion(node=child,i_upstream=i_downstream,chain=nextchain,chains=chains)
 
-    def __to_dense(self,sanity_check:bool) -> np.ndarray:
+    def _canonical_to_correct_legs(self,T:np.ndarray,node:int) -> np.ndarray:
         """
-        Constructs the operator using `ctg.einsum`.
+        Re-shapes the PEPO-tensor `T` at node `node` such that it fits into
+        the graph `self.G`.
+
+        It is assumed that the dimensions of `T` are in the canonical
+        order: First the virtual dimensions, followed by two physical legs.
+        The leading virtual dimension is the incoming leg, which is
+        followed by the passive legs and, finally, the outgoing legs.
+
+        For a node in `G` with N neighbors, `T` must have at least N+2 legs.
+        The last two legs are assumed to be the physical legs, and the first N
+        legs are the virtual bonds. Legs that are neither among the first N or
+        the last 2 remain untouched; these are boundary legs that connect to
+        the initial and final states of the finite state automaton. This
+        function thus permutes only the first N dimensions.
         """
+        # sanity check
+        assert node in self.G
+        assert node in self.tree
+
+        N_in = len(self.tree.pred[node])
+        N_out = len(self.tree.succ[node])
+        N_pas = len(self.G.adj[node]) - N_out - N_in
+
+        # sanity check
+        assert T.ndim - N_in - N_pas - N_out - 2 in (0,1), "Tensor may have up to one boundary leg."
+
+        newshape = [np.nan for _ in self.G.adj[node]]
+        out_counter = 0
+        pas_counter = 0
+        for neighbor in self.G.adj[node]:
+            if neighbor in self.tree.pred[node]:
+                # the incoming edge
+                newshape[self.G[node][neighbor][0]["legs"][node]] = 0
+                continue
+            if neighbor in self.tree.succ[node]:
+                # outgoing edge
+                newshape[self.G[node][neighbor][0]["legs"][node]] = N_in + N_pas + out_counter
+                out_counter += 1
+                continue
+
+            # passive edge
+            newshape[self.G[node][neighbor][0]["legs"][node]] = N_in + pas_counter
+            pas_counter += 1
+
+        return np.transpose(T,newshape + [_ for _ in range(len(newshape),T.ndim)])
+
+    def __permute_virtual_dimensions(self,G:nx.MultiGraph,sanity_check:bool=False) -> None:
+        """
+        Changes the leg ordering to the one given in `G`.
+        """
+        # sanity check
+        if not network_message_check(G): raise ValueError("Given graph does not contain a valid leg ordering.")
+        if not graph_compatible(self.G,G): raise ValueError("Given graph is not compatible with self.G.")
+
+        # transposing site tensors
+        for node in self.G.nodes():
+            # assembling axis for transpose
+            N_neighbors = len(self.G.adj[node])
+            axes = [None for _ in range(N_neighbors)] + [N_neighbors,N_neighbors+1]
+            for neighbor in self.G.adj[node]:
+                axes[G[node][neighbor][0]["legs"][node]] = self.G[node][neighbor][0]["legs"][node]
+
+            self[node] = np.transpose(self[node],axes=axes)
+
+        # updating leg orderings
+        for node1,node2 in self.G.edges(): self.G[node1][node2][0]["legs"] = G[node1][node2][0]["legs"]
+
         if sanity_check: assert self.intact
 
-        if self.nsites == 1:
-            # the network is trivial
-            return tuple(self.G.nodes(data="T"))[0][1]
-
-        inputs = ()
-        tensors = ()
-
-        # enumerating the edges in the graph
-        for i,nodes in enumerate(self.G.edges()):
-            node1,node2 = nodes
-            self.G[node1][node2][0]["label"] = ctg.get_symbol(i)
-
-        N_edges = self.G.number_of_edges()
-        # assembling the einsum arguments
-        for i,nodeT in enumerate(self.G.nodes(data="T")):
-            node,T = nodeT
-            legs = [None for _ in range(T.ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
-            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
-                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
-
-            inputs += (legs,)
-            tensors += (T,)
-
-        # output ordering
-        output = tuple(ctg.get_symbol(i) for i in range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
-
-        # getting the einsum expression, and contracting
-        expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
-        H = ctg.einsum(expr,*tensors)
-        H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
-
-        if sanity_check: assert is_hermitian(H)
-
-        return H
-
-        inputs = ()
-        arrays = ()
-        size_dict = {}
-
-        # enumerating the edges in the graph
-        for i,nodes in enumerate(self.G.edges()):
-            node1,node2 = nodes
-            self.G[node1][node2][0]["label"] = i
-            size_dict[i] = self.G[node1][node2][0]["size"]
-
-        N_edges = self.G.number_of_edges()
-        # assembling the einsum arguments
-        for i,nodeT in enumerate(self.G.nodes(data="T")):
-            node,T = nodeT
-            legs = [None for _ in range(T.ndim-2)] + [N_edges + i,N_edges + self.G.number_of_nodes() + i] # last two indices are the physical legs
-            for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
-                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
-
-            inputs += (legs,)
-            arrays += (T,)
-
-        # output ordering
-        output = tuple(_ for _ in range(N_edges,N_edges + 2 * self.G.number_of_nodes()))
-
-        H = ctg.array_contract(arrays=arrays,inputs=inputs,output=output,size_dict=size_dict)
-        H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
-
-        if sanity_check: assert is_hermitian(H)
-
-        return H
-
-    def __to_sparse(self,create_using:str,sanity_check:bool) -> Union[scisparse.csr_array,scisparse.csr_matrix]:
-        """
-        Constructs the operator using sparse operations.
-        """
-        if sanity_check: assert self.intact
-
-        if self.nsites == 1:
-            # the network is trivial
-            return tuple(self.G.nodes(data="T"))[0][1]
-
-        if create_using == "scipy.csr":
-            # H will be constructed by summing the contributions from all operator chains.
-            # array construction is fastest using the coo format, but I'm returning csr
-            # because this is optimal for matrix-vector multiplication; an operation that
-            # the Lanczos algorithm heavily relies on
-            chains = self.operator_chains(sanity_check=sanity_check)
-
-            H = scisparse.csr_array((self.D**self.nsites,self.D**self.nsites))
-            nodes = tuple(self.G.nodes())
-
-            for chain in chains:
-                ops = tuple(
-                    scisparse.coo_array(self[node][chain[node]]) if node in chain.keys()
-                    else scisparse.eye_array(self.D,format="coo")
-                    for node in nodes[::-1]
-                )
-                H += multi_kron(*ops,create_using="scipy.coo")
-
-            return H.tocsr()
-
-        if create_using == "sparse":
-            #if self.G.number_of_edges() > len(np.core.einsumfunc.einsum_symbols):
-            #    raise RuntimeError(f"The sparse package allows einsum contractions with up to {len(np.core.einsumfunc.einsum_symbols)} indices. The operator has too many edges ({self.G.number_of_edges()} edges).")
-
-            inputs = ()
-            tensors = ()
-
-            # enumerating the edges in the graph
-            for i,nodes in enumerate(self.G.edges()):
-                node1,node2 = nodes
-                self.G[node1][node2][0]["label"] = ctg.get_symbol(i)#np.core.einsumfunc.einsum_symbols[i]
-
-            N_edges = self.G.number_of_edges()
-            output = tuple(ctg.get_symbol(N_edges + i) for i in range(2 * self.nsites))
-
-            # assembling the einsum arguments
-            for i,node in enumerate(self.G.nodes()):
-                legs = [None for _ in range(self[node].ndim-2)] + [ctg.get_symbol(N_edges + i),ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)] # last two indices are the physical legs
-                for _,neighbor,edge_label in self.G.edges(nbunch=node,data="label"):
-                    legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
-
-                inputs += (tuple(legs),)
-                tensors += (sparse.GCXS(self[node]),)
-
-            # einsum expression, with all physical dimensions contained in ellipsis
-            einsum_expr = ctg.utils.inputs_output_to_eq(inputs=inputs,output=output)
-            # contraction using einsum
-            H = sparse.einsum(einsum_expr,*tensors)
-            H = sparse.reshape(H,shape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
-
-            return H.to_scipy_sparse()
-
-        raise ValueError("__to_sparse not implemented for method " + create_using + ".")
+        return
 
     @property
     def I(self) -> np.ndarray:
@@ -478,16 +514,16 @@ class PEPO:
 
         # is the underlying network message-ready?
         if not network_message_check(self.G):
-            warnings.warn("Network not intact.")
+            warnings.warn("Network not intact.",RuntimeWarning)
             return False
 
         # size attribute given on every edge?
         for node1,node2,data in self.G.edges(data=True):
             if not "size" in data.keys():
-                warnings.warn(f"No size saved in edge ({node1},{node2}).")
+                warnings.warn(f"No size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
             if data["size"] != self.chi:
-                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
+                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
 
         # are the physical legs the last dimension in each tensor?
@@ -504,25 +540,16 @@ class PEPO:
                         legs.remove(i1)
                         legs.remove(i2)
                 except ValueError:
-                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).",RuntimeWarning)
                     return False
 
             if not legs == [T.ndim - 2,T.ndim - 1]:
-                warnings.warn(f"Physical legs are not the last two dimensions in node {node}.")
+                warnings.warn(f"Physical legs are not the last two dimensions in node {node}.",RuntimeWarning)
                 return False
 
             if not (T.shape[-2] == self.D and T.shape[-1] == self.D):
-                warnings.warn(f"Hilbert space at node {node} has wrong size.")
+                warnings.warn(f"Hilbert space at node {node} has wrong size.",RuntimeWarning)
                 return False
-
-        # local operators hermitian?
-        for node in self.G.nodes():
-            iterables = tuple(range(size) for size in self[node].shape[:-2])
-            for index in itertools.product(*iterables):
-                index += (slice(0,self.D),slice(0,self.D))
-                if not is_hermitian(self[node][index]):
-                    warnings.warn(f"Non-hermitian operator at node {node} in index " + str(index) + ".")
-                    return False
 
         if not self.check_tree:
             # the following tests fail if the PEPO is constructed using PEPO.__add__ (status on 5th of February)
@@ -546,13 +573,13 @@ class PEPO:
                         for _ in range(self[node].ndim - 2)
                     ) + (slice(0,self.D),slice(0,self.D))
                     if not np.allclose(self[node][index],self.I):
-                        warnings.warn(f"Wrong indices for particle state passthrough in node {node}.")
+                        warnings.warn(f"Wrong indices for particle state passthrough in node {node}.",RuntimeWarning)
                         return False
 
                 # checking if the vacuum state is passed along
                 index = tuple(-1 for _ in range(self[node].ndim - 2)) + (slice(0,self.D),slice(0,self.D))
                 if not np.allclose(self[node][index],self.I):
-                    warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.")
+                    warnings.warn(f"Wrong indices for vacuum state passthrough in node {node}.",RuntimeWarning)
                     return False
 
                 # checking if a particle state is passed along a passive edge
@@ -565,9 +592,25 @@ class PEPO:
                         for _ in range(self[node].ndim - 2)
                     ) + (slice(0,self.D),slice(0,self.D))
                     if np.allclose(self[node][index],self.I):
-                        warnings.warn(f"Particle state passed along passive edge ({node},{child}).")
+                        warnings.warn(f"Particle state passed along passive edge ({node},{child}).",RuntimeWarning)
                         return False
 
+        return True
+
+    @property
+    def hermitian(self) -> bool:
+        """
+        A PEPO is hermitian, if all it's local operators are hermitian.
+        """
+        # local operators hermitian?
+        for node in self.G.nodes():
+            iterables = tuple(range(size) for size in self[node].shape[:-2])
+            for index in itertools.product(*iterables):
+                index += (slice(0,self.D),slice(0,self.D))
+                if not is_hermitian(self[node][index]):
+                    print(self[node][index])
+                    #warnings.warn(f"Non-hermitian operator at node {node} in index " + str(index) + ".",RuntimeWarning)
+                    return False
         return True
 
     @staticmethod
@@ -667,12 +710,82 @@ class PEPO:
         """
 
         if isinstance(psi,self.__class__):
-            # TODO: implement; what I should do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024) (https://doi.org/10.1126/sciadv.adk4321)
-            raise NotImplementedError("PEPO action on PEPO is not yet implemented.")
+            # TODO: implement this using lazy belief propagation; what I should do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024) (https://doi.org/10.1126/sciadv.adk4321)
+
+            # returns newPEPO, where newPEPO = self @ psi
+
+            # sanity checks
+            if not graph_compatible(self.G,psi.G): raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
+
+            if not same_legs(self.G,psi.G):
+                # permute lhs virtual dimensions s.t. they match the leg ordering of the rhs
+                self.__permute_virtual_dimensions(psi.G)
+
+            newPEPO = copy.deepcopy(self)
+
+            # new sizes
+            newPEPO.chi *= psi.chi
+            for node1,node2 in newPEPO.G.edges():
+                newPEPO.G[node1][node2][0]["size"] *= psi.G[node1][node2][0]["size"]
+
+            # multiplying site tensors
+            for node in self.G.nodes():
+                N_neighbors = len(self.G.adj[node])
+
+                # multiplying site tensors
+                lhs_legs = tuple(range(N_neighbors)) + (2*N_neighbors+2,2*N_neighbors+1)
+                rhs_legs = tuple(range(N_neighbors,2*N_neighbors)) + (2*N_neighbors+1,2*N_neighbors)
+                out_legs = tuple(i + j*N_neighbors for i,j in itertools.product(range(N_neighbors),(0,1))) + (2*N_neighbors+2,2*N_neighbors)
+                T = np.einsum(self[node],lhs_legs,psi[node],rhs_legs,out_legs)
+
+                # preparing a re-shape
+                newshape = [None for _ in range(N_neighbors)] + [newPEPO.D,newPEPO.D]
+                for neighbor in newPEPO.G.adj[node]:
+                    newshape[newPEPO.G[node][neighbor][0]["legs"][node]] = newPEPO.chi
+
+                # inserting the re-shaped tensor
+                newPEPO[node] = np.reshape(T,newshape=newshape)
+
+            return newPEPO
 
         if isinstance(psi,PEPS):
-            # TODO: implement; what I should do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024) (https://doi.org/10.1126/sciadv.adk4321)
-            raise NotImplementedError("PEPO action on PEPS is not yet implemented.")
+            # TODO: implement this using lazy belief propagation; what I should do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024) (https://doi.org/10.1126/sciadv.adk4321)
+
+            # the action of self on psi is computed, and a new PEPS is
+            # returned. It will inherit the leg ordering from psi.
+
+            # sanity checks
+            if not graph_compatible(self.G,psi.G): raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
+
+            if not same_legs(self.G,psi.G):
+                # permute PEPO virtual dimensions s.t. they match the leg ordering of the PEPS
+                self.__permute_virtual_dimensions(psi.G)
+
+            newPEPS = copy.deepcopy(psi)
+
+            # new sizes
+            for node1,node2 in newPEPS.G.edges():
+                newPEPS.G[node1][node2][0]["size"] *= self.G[node1][node2][0]["size"]
+
+            # multiplying site tensors
+            for node in self.G.nodes():
+                N_neighbors = len(self.G.adj[node])
+
+                # multiplying site tensors
+                op_legs = tuple(range(N_neighbors)) + (2*N_neighbors+1,2*N_neighbors)
+                ket_legs = tuple(range(N_neighbors,2*N_neighbors+1))
+                out_legs = tuple(i + j*N_neighbors for i,j in itertools.product(range(N_neighbors),(0,1))) + (2*N_neighbors+1,)
+                T = np.einsum(self[node],op_legs,psi[node],ket_legs,out_legs)
+
+                # preparing a re-shape
+                newshape = [None for _ in range(N_neighbors)] + [newPEPS.D,]
+                for neighbor in newPEPS.G.adj[node]:
+                    newshape[newPEPS.G[node][neighbor][0]["legs"][node]] = newPEPS.G[node][neighbor][0]["size"]
+
+                # inserting the re-shaped tensor
+                newPEPS[node] = np.reshape(T,newshape=newshape)
+
+            return newPEPS
 
         if isinstance(psi,np.ndarray):
             # sanity check
@@ -713,7 +826,7 @@ class PEPO:
         Addition of two PEPOs. The bond dimension of the new operator
         is the sum of the two old bond dimensions.
         """
-        # notice that lhs == self !!!
+        # notice that lhs == self !!! I chose this variable name to keep track of what's going on
 
         # sanity check
         if not nx.utils.nodes_equal(lhs.G.nodes(),rhs.G.nodes()): raise ValueError(f"Operands have different geometries; nodes do not match.")
@@ -722,8 +835,8 @@ class PEPO:
         if not nx.utils.graphs_equal(lhs.tree,rhs.tree): warnings.warn("The trees of the operands are not the same. This is not a problem (as of 29th of January).")
 
         if not same_legs(lhs.G,rhs.G):
-            # permute dimensions of rhs to make both PEPOs compatible
-            raise NotImplementedError
+            # permute dimensions of lhs to make both PEPOs compatible
+            lhs.__permute_virtual_dimensions(rhs.G)
 
         res = PEPO(D=lhs.D)
         res.chi = lhs.chi + rhs.chi
@@ -774,7 +887,7 @@ class PauliPEPO(PEPO):
         if not super().intact: return False
 
         if not self.D == 2:
-            warnings.warn("Physical dimension unequal to two.")
+            warnings.warn("Physical dimension unequal to two.",RuntimeWarning)
             return False
 
         # Hamiltonian composed of pauli operators?
@@ -787,7 +900,7 @@ class PauliPEPO(PEPO):
                 closeness = [proportional(T[index],op,10) for op in (self.X,self.Y,self.Z,self.I)]
 
                 if not any(closeness):
-                    warnings.warn(f"Unknown operator in index {virtual_index} at node {node}.")
+                    warnings.warn(f"Unknown operator in index {virtual_index} at node {node}.",RuntimeWarning)
                     return False
 
         return True

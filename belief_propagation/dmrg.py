@@ -177,14 +177,14 @@ class DMRG:
         BP iteration on the overlap and all expvals. Total messages
         and local PEPO tensors are formed, if BP converged.
         """
-        if not self.overlap.converged: self.overlap.BP(normalize_after=True,sanity_check=sanity_check,**kwargs)
+        if not self.overlap.converged: self.overlap.BP(normalize_after=True,new_messages=True,sanity_check=sanity_check,**kwargs)
         for i in range(len(self.expvals)):
-            if not self.expvals[i].converged: self.expvals[i].BP(normalize_after=True,sanity_check=sanity_check,**kwargs)
+            if not self.expvals[i].converged: self.expvals[i].BP(normalize_after=True,new_messages=True,sanity_check=sanity_check,**kwargs)
 
         if self.converged:
             self.__assemble_messages(sanity_check=sanity_check)
         else:
-            warnings.warn("BP iteration not converged.")
+            warnings.warn("BP iteration not converged.",RuntimeWarning)
             self._msg = None
 
         return
@@ -280,7 +280,10 @@ class DMRG:
 
         if method == "QR":
             self.ket = QR_gauging(self.ket,sanity_check=sanity_check,**kwargs)
+            return
 
+        if method == "Schmidt":
+            self.ket = L2BP_compression(self.ket,singval_threshold=0,return_singvals=False,sanity_check=sanity_check,**kwargs)
             return
 
         raise NotImplementedError("Gauging method " + method + " not implemented.")
@@ -296,6 +299,16 @@ class DMRG:
             return
 
         raise NotImplementedError("Compression method " + method + " not implemented.")
+
+    def perturb_messages(self,d:float=1e-3,msg_init:str="zero-normal",sanity_check:bool=False,rng:np.random.Generator=np.random.default_rng()) -> None:
+        """
+        Perturbing messages on the overlap and all expvals.
+        """
+        self.overlap.perturb_messages(real=False,d=d,msg_init=msg_init,sanity_check=sanity_check,rng=rng)
+        for i in range(len(self.expvals)):
+            self.expvals[i].perturb_messages(real=False,d=d,msg_init=msg_init,sanity_check=sanity_check,rng=rng)
+
+        return
 
     @property
     def msg(self) -> dict[int,dict[int,np.ndarray]]:

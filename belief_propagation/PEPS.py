@@ -95,16 +95,16 @@ class PEPS:
 
         # is the underlying network message-ready?
         if not network_message_check(self.G):
-            warnings.warn("Network not intact.")
+            warnings.warn("Network not intact.",RuntimeWarning)
             return False
 
         # size attribute given on every edge?
         for node1,node2,data in self.G.edges(data=True):
             if not "size" in data.keys():
-                warnings.warn(f"No size saved in edge ({node1},{node2}).")
+                warnings.warn(f"No size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
             if data["size"] != self[node1].shape[data["legs"][node1]] or data["size"] != self[node2].shape[data["legs"][node2]]:
-                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).")
+                warnings.warn(f"Wrong size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
 
         # are the physical legs the last dimension in each tensor? Do the tensors have the correct physical dimensions?
@@ -120,16 +120,16 @@ class PEPS:
                         legs.remove(i1)
                         legs.remove(i2)
                 except ValueError:
-                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                    warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).",RuntimeWarning)
                     return False
 
             if not legs == [T.ndim - 1,]:
-                warnings.warn(f"Physical leg is not the last dimension in node {node}.")
+                warnings.warn(f"Physical leg is not the last dimension in node {node}.",RuntimeWarning)
                 return False
 
             # correct size of physical leg?
             if not T.shape[-1] == self.D:
-                warnings.warn(f"Hilbert space at node {node} has wrong size.")
+                warnings.warn(f"Hilbert space at node {node} has wrong size.",RuntimeWarning)
                 return False
 
         return True

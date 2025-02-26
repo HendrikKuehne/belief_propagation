@@ -132,7 +132,7 @@ class TFI(PauliPEPO):
                 T = np.moveaxis(T,0,-3)
 
             # re-shaping PEPO tensor to match the graph leg ordering
-            T = self.permute_PEPO(T,node)
+            T = self._canonical_to_correct_legs(T,node)
 
             self[node] = T
 
@@ -347,7 +347,7 @@ class Heisenberg(PauliPEPO):
                 T = np.moveaxis(T,0,-3)
 
             # re-shaping PEPO tensor to match the graph leg ordering
-            T = self.permute_PEPO(T,node)
+            T = self._canonical_to_correct_legs(T,node)
 
             self.G.nodes[node]["T"] = T
 
@@ -453,8 +453,8 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
             neg_T = np.moveaxis(neg_T,0,-3)
 
         # re-shaping PEPO tensor to match the graph leg ordering
-        pos_op[node] = pos_op.permute_PEPO(pos_T,node)
-        neg_op[node] = neg_op.permute_PEPO(neg_T,node)
+        pos_op[node] = pos_op._canonical_to_correct_legs(pos_T,node)
+        neg_op[node] = neg_op._canonical_to_correct_legs(neg_T,node)
 
     # adding incoming and outgoing coupling to every node but the root
     for node1,node2 in G.edges():

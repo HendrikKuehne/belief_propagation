@@ -187,6 +187,22 @@ def entropy(p:np.ndarray,alpha:int=1) -> float:
 
     return np.sum(p**alpha) / (1 - alpha)
 
+def fidelity(psi:np.ndarray,subspace:tuple[np.ndarray]) -> float:
+    """
+    Projective measurement of the projector on the subspace.
+    The subspace is defined by the tuple `subspace`, containing
+    the basis states. States are normalized during computation.
+    """
+    subspace_ = np.array(subspace)
+    if not psi.ndim == 1: raise ValueError("psi must be a vector.")
+    if not subspace_.shape[1] == psi.shape[0]: raise ValueError("Vectors in subspace do not match psi.")
+
+    F = np.sum(np.abs(subspace_ @ psi)**2 / np.diag(subspace_ @ subspace_.T.conj())) / np.dot(psi,psi.conj())
+    # sanity check
+    if not np.isclose(np.imag(F),0): raise RuntimeError("Complex Fidelity; something went wrong.")
+
+    return np.real_if_close(F)
+
 # -------------------------------------------------------------------------------
 #                   graph routines
 # -------------------------------------------------------------------------------
@@ -391,6 +407,23 @@ def same_legs(G1:nx.MultiGraph,G2:nx.MultiGraph) -> bool:
 
     for node1,node2,legs in G1.edges(data="legs"):
         if G2[node1][node2][0]["legs"] != legs: return False
+
+    return True
+
+def graph_compatible(G1:nx.MultiGraph,G2:nx.MultiGraph) -> bool:
+    """
+    Tests if `G1` and `G2` can be combined into a sandwich, that is
+    if their geometry is the same. This amounts to checking if every edge in `G1` is
+    contained in `G2`.
+
+    Throws `ValueError` if there are two edges between any two
+    nodes in `G1` or `G2`.
+    """
+    # sanity check
+    assert network_message_check(G1)
+    assert network_message_check(G2)
+    assert nx.utils.nodes_equal(G1.nodes(),G2.nodes())
+    assert nx.utils.edges_equal(G1.edges(),G2.edges())
 
     return True
 
