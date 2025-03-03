@@ -304,7 +304,7 @@ def QR_gauging(psi:PEPS,tree:nx.DiGraph=None,nodes:tuple[int]=None,sanity_check:
 
 def feynman_cut(obj:Union[PEPS,PEPO,Braket],node1:int,node2:int,sanity_check:bool=False) -> Union[tuple[PEPS],tuple[PEPO],tuple[Braket]]:
     """
-    Cuts the edge `(node1,node2)`, and returns all resulting objects.
+    Cuts the edge `(node1,node2)` in `obj`, and returns all resulting objects.
     """
     # sanity check
     assert obj.G.has_edge(node1,node2,0)

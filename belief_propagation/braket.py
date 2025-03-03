@@ -158,7 +158,7 @@ class BaseBraket:
             size_dict[ctg.get_symbol(N)] = self._bra.G[node1][node2][0]["size"]
             # operator
             self._op.G[node1][node2][0]["label"] = ctg.get_symbol(N+1)
-            size_dict[ctg.get_symbol(N+1)] = self._op.chi
+            size_dict[ctg.get_symbol(N+1)] = self._op.G[node1][node2][0]["size"]
             # ket
             self._ket.G[node1][node2][0]["label"] = ctg.get_symbol(N+2)
             size_dict[ctg.get_symbol(N+2)] = self._ket.G[node1][node2][0]["size"]
@@ -363,7 +363,7 @@ class BaseBraket:
         return
 
     def __repr__(self) -> str:
-        return f"Braket on {self.nsites} sites. Physical dimension {self.D}. Bond dimension {self.op.chi} of PEPO. Braket is " + ("intact." if self.intact else "not intact.")
+        return f"Braket on {self.nsites} sites. Physical dimension {self.D}. Braket is " + ("intact." if self.intact else "not intact.")
 
 class Braket(BaseBraket):
     """
@@ -389,9 +389,10 @@ class Braket(BaseBraket):
                 if len(self.G.adj[sending_node]) > 1:
                     # ket and bra leg indices, and sizes
                     bra_size = self._bra.G[sending_node][receiving_node][0]["size"]
+                    op_size = self._op.G[sending_node][receiving_node][0]["size"]
                     ket_size = self._ket.G[sending_node][receiving_node][0]["size"]
                     # new message
-                    self.msg[sending_node][receiving_node] = self.get_new_message(bra_size=bra_size,op_size=self._op.chi,ket_size=ket_size,real=real,method=msg_init,rng=rng)
+                    self.msg[sending_node][receiving_node] = self.get_new_message(bra_size=bra_size,op_size=op_size,ket_size=ket_size,real=real,method=msg_init,rng=rng)
                 else:
                     # sending node is leaf node
                     self.msg[sending_node][receiving_node] = ctg.einsum(
@@ -410,7 +411,8 @@ class Braket(BaseBraket):
         Contracts tensor and messages at `sending_node`, and returns the message
         that flows from `sending_node` to `receiving_node`.
         """
-        if sanity_check: assert self.G.has_node(sending_node) and self.G.has_node(receiving_node)
+        if sanity_check: assert self.intact
+        if not self.G.has_edge(sending_node,receiving_node,key=0): raise ValueError(f"Edge ({sending_node},{receiving_node}) not present in graph.")
 
         # The outcoming message on one edge is the result of absorbing all incoming messages on all other edges into the tensor sandwich
         nLegs = len(self.G.adj[sending_node])
@@ -719,12 +721,12 @@ class Braket(BaseBraket):
         if sanity_check: assert self.intact
 
         if self.G.number_of_nodes() == 1:
-            warnings.warn("The network is trivial.")
+            warnings.warn("The network consists of one node only. Exiting.",UserWarning)
             return
 
         # handling kwargs
         kwargs["iterator_desc_prefix"] = kwargs["iterator_desc_prefix"] + " | " if "iterator_desc_prefix" in kwargs.keys() else ""
-        if trials == 0: warnings.warn(f"Braket.BP received trials = 0. This results in no BP iteration attempt.")
+        if trials == 0: warnings.warn(f"Braket.BP received trials = 0. This results in no BP iteration attempt.",UserWarning)
 
         # initially, the messages are not converged
         self._converged = False
@@ -749,6 +751,7 @@ class Braket(BaseBraket):
 
             if eps_list[-1] < threshold:
                 self._converged = True
+                self.iter_until_conv = len(eps_list)
                 break
 
         # contract tensors and messages, opposite messages
@@ -956,6 +959,9 @@ class Braket(BaseBraket):
 
         self.cntr:float = np.nan
         """Value of the network, calculated by BP."""
+
+        self.iter_until_conv:int = np.nan
+        """Iterations necessary until convergence."""
 
         if sanity_check: assert self.intact
 

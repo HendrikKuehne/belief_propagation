@@ -21,7 +21,6 @@ class PEPO:
     mathematically as sums of operator chains. Subclasses must provide `__init__`. Therein,
     the following attributes must be defined:
     * `self.G`: Graph on which the Hamiltonian is defined.
-    * `self.chi`: Virtual bond dimension.
     * `self.D`: Physical dimension.
     * `self.tree`: Tree that determines the traversal of `G`, along which the PEPO is oriented.
     * `self.root`: The root node of the tree.
@@ -253,7 +252,7 @@ class PEPO:
             f"legs {legs_in} incoming" + "\n    " +
             f"legs {legs_out} outgoing" + "\n"
         )
-        for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
+        for virtual_index in itertools.product(*[range(self[node].shape[i]) for i in range(self[node].ndim-2)]):
             index = virtual_index + (slice(0,self.D),slice(0,self.D))
 
             if not np.allclose(self.G.nodes[node]["T"][index],0):
@@ -261,14 +260,15 @@ class PEPO:
 
         return
 
-    def prepare_graph(self,G:nx.MultiGraph,sanity_check:bool=False) -> nx.MultiGraph:
+    def prepare_graph(self,G:nx.MultiGraph,chi:int=np.nan,sanity_check:bool=False) -> nx.MultiGraph:
         """
-        Creates a shallow copy of G, and adds the keys `legs`, `trace`, `indices`
-        and `size` to the edges.
-        
+        Creates a shallow copy of G, and adds the keys `legs`, `trace` and `indices`
+        to the edges. If `np.isnan(chi)` is False, the size `chi` will be added to
+        each edge.
+
         The leg ordering is preserved, `trace` is set to `False` and, accordingly,
-        `indices` to `None`. The size of each axis is set to `self.chi`.
-        
+        `indices` to `None`.
+
         To be used in `__init__` of subclasses of `PEPO`: `G` is the graph from which
         the operator inherits it's underlying graph.
         """
@@ -279,13 +279,17 @@ class PEPO:
         for node1,node2,legs in newG.edges(data="legs",keys=False):
             newG[node1][node2][0]["trace"] = False
             newG[node1][node2][0]["indices"] = None
-            newG[node1][node2][0]["size"] = self.chi
             newG[node1][node2][0]["legs"] = {}
 
         for node in newG.nodes:
             # adding to the adjacent edges which index they correspond to
             for i,neighbor in enumerate(newG.adj[node]):
                 newG[node][neighbor][0]["legs"][node] = i
+
+        if not np.isnan(chi):
+            if not np.isclose(int(chi),chi): raise ValueError("Size must be an integer.")
+            # writing size chi to each edge
+            for node1,node2 in newG.edges(keys=False): newG[node1][node2][0]["size"] = int(chi)
 
         if sanity_check: assert network_message_check(newG)
 
@@ -306,7 +310,7 @@ class PEPO:
 
         return out
 
-    def traversal_tensor(self,N_pas:int,N_out:int,dtype=np.complex128) -> np.ndarray:
+    def traversal_tensor(self,chi:int,N_pas:int,N_out:int,dtype=np.complex128) -> np.ndarray:
         """
         Returns the minimum tensor for PEPOs, that is, a tensor
         that ensures correct tree traversal.
@@ -317,31 +321,28 @@ class PEPO:
         # sanity check
         assert N_pas >= 0
         assert N_out >= 0
-        assert hasattr(self,"chi")
 
-        T = np.zeros(shape=[self.chi for _ in range(1 + N_pas + N_out)] + [self.D,self.D],dtype=dtype)
+        T = np.zeros(shape=[chi for _ in range(1 + N_pas + N_out)] + [self.D,self.D],dtype=dtype)
 
         # particle index
         for i_out in range(N_out):
-            index = (0,) + tuple(self.chi - 1 for _ in range(N_pas)) + tuple(0 if _ == i_out else self.chi - 1 for _ in range(N_out)) + (slice(0,self.D),slice(0,self.D))
+            index = (0,) + tuple(chi - 1 for _ in range(N_pas)) + tuple(0 if _ == i_out else chi - 1 for _ in range(N_out)) + (slice(0,self.D),slice(0,self.D))
             T[index] = self.I
 
         # vacuum index
-        index = tuple(self.chi - 1 for _ in range(1 + N_pas + N_out)) + (slice(0,self.D),slice(0,self.D))
+        index = tuple(chi - 1 for _ in range(1 + N_pas + N_out)) + (slice(0,self.D),slice(0,self.D))
         T[index] = self.I
 
         return T
 
-    def operator_chains(self,sanity_check:bool=False) -> tuple[dict[int:tuple]]:
+    def operator_chains(self,sanity_check:bool=False) -> tuple[dict[int:np.ndarray]]:
         """
         Returns all operator chains. An operator chain is a collection
         of operators. The summation of the tensor products of all operator chains
         gives the operator.
 
         Operator chains are returned as a dict, where nodes are keys
-        and indices are values. The index is an index for the node
-        tensor, s.t. `self[node][index]` is part of the respective
-        operator chain.
+        and operators are values.
         """
         # sanity checks
         if sanity_check: assert self.intact
@@ -349,9 +350,16 @@ class PEPO:
         # why a recursion? For large graphs, simply iterating through all
         # indices to find valid chains might take prohibitively long
 
-        operator_chains = []
+        operator_chains:list[dict] = []
 
         self.__chain_construction_recursion(node=self.root,i_upstream=np.nan,chain=dict(),chains=operator_chains)
+
+        # removing identity operators from the chain, substituting indices
+        # with operators
+        for chain in operator_chains:
+            keys = tuple(chain.keys())
+            for key in keys:
+                if np.allclose(chain[key],self.I): chain.pop(key,None)
 
         return tuple(operator_chains)
 
@@ -360,10 +368,10 @@ class PEPO:
         Traversing the PEPO either downstream along the tree, or hopping
         from one branch (of the tree) to another, collecting the operator
         chains. Chains are saved in the argument `chains`, which is
-        amnipulated in-place.
+        manipulated in-place.
         """
-        # this recursion breaks off eventually because the finite state automaton
-        # that defines the tree does not have feedback loops
+        # this recursion breaks off eventually because the finite state
+        # automaton that defines the tree does not have feedback loops
 
         if node != self.root:
             assert len(self.tree.pred[node]) == 1
@@ -376,38 +384,39 @@ class PEPO:
             upstream_leg = np.nan
 
         # checking if the operator chain that terminates in node is non-zero
-        terminal_index = tuple(i_upstream if _ == upstream_leg else self.chi - 1 for _ in range(self[node].ndim - 2)) + (slice(0,self.D),slice(0,self.D))
+        terminal_index = tuple(i_upstream if i_neighbor == upstream_leg else self.G[node][neighbor][0]["size"] - 1 for i_neighbor,neighbor in enumerate(self.G.adj[node])) + (slice(0,self.D),slice(0,self.D))
         if not np.allclose(self[node][terminal_index],0):
             chain = copy.deepcopy(chain)
-            chain[node] = terminal_index
+            chain[node] = self[node][terminal_index]
             chains.append(chain)
 
-        for child,i_downstream in itertools.product(self.G.adj[node],range(self.chi)):
-            if child == parent:
-                # this leg is the upstream leg in the PEPO tree; this is not where the operator chain continues
-                continue
+        for child in self.G.adj[node]:
+            for i_downstream in range(self.G[node][child][0]["size"]):
+                if child == parent:
+                    # this leg is the upstream leg in the PEPO tree; this is not where the operator chain continues
+                    continue
 
-            downstream_leg = self.G[node][child][0]["legs"][node]
-            # assembling an index that takes us downstream in the operator chain
-            index = tuple(
-                i_downstream if _ == downstream_leg else
-                i_upstream if _ == upstream_leg else
-                self.chi - 1
-                for _ in range(self[node].ndim-2)
-            ) + (slice(0,self.D),slice(0,self.D))
+                downstream_leg = self.G[node][child][0]["legs"][node]
+                # assembling an index that takes us downstream in the operator chain
+                index = tuple(
+                    i_downstream if _ == downstream_leg else
+                    i_upstream if _ == upstream_leg else
+                    self.G[node][child][0]["size"] - 1
+                    for _ in range(self[node].ndim-2)
+                ) + (slice(0,self.D),slice(0,self.D))
 
-            if np.allclose(self[node][index],0):
-                # not part of any operator chain
-                continue
+                if np.allclose(self[node][index],0):
+                    # not part of any operator chain
+                    continue
 
-            if index == terminal_index:
-                # this operator chain terminates here
-                continue
+                if index == terminal_index:
+                    # this operator chain terminates here
+                    continue
 
-            nextchain = copy.deepcopy(chain)
-            nextchain[node] = index
+                nextchain = copy.deepcopy(chain)
+                nextchain[node] = self[node][index]
 
-            self.__chain_construction_recursion(node=child,i_upstream=i_downstream,chain=nextchain,chains=chains)
+                self.__chain_construction_recursion(node=child,i_upstream=i_downstream,chain=nextchain,chains=chains)
 
     def _canonical_to_correct_legs(self,T:np.ndarray,node:int) -> np.ndarray:
         """
@@ -507,7 +516,6 @@ class PEPO:
         """
         # are all the necessary attributes defined?
         assert hasattr(self,"D")
-        assert hasattr(self,"chi")
         assert hasattr(self,"G")
         assert hasattr(self,"tree")
         assert hasattr(self,"root")
@@ -522,7 +530,7 @@ class PEPO:
             if not "size" in data.keys():
                 warnings.warn(f"No size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
-            if data["size"] != self.chi:
+            if data["size"] != self.G[node1][node2][0]["size"]:
                 warnings.warn(f"Wrong size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
 
@@ -553,11 +561,6 @@ class PEPO:
 
         if not self.check_tree:
             # the following tests fail if the PEPO is constructed using PEPO.__add__ (status on 5th of February)
-            return True
-
-        if self.chi == 1:
-            # PEPOs with bond dimension 1 are product operators, for which tree traversal checks are not necessary
-            # (one does not need a finite state automaton to write a product operator as a PEPO)
             return True
 
         # tree traversal correct?
@@ -600,17 +603,18 @@ class PEPO:
     @property
     def hermitian(self) -> bool:
         """
-        A PEPO is hermitian, if all it's local operators are hermitian.
+        A PEPO is hermitian, if all it's site tensors are hermitian.
         """
-        # local operators hermitian?
+        # this test fails when I multiply two TFI PEPOs using PEPO.__matmul__,
+        # although dense matrix of TFI @ TFI is hermitian; TODO revise this
+
+        # site tensors hermitian?
         for node in self.G.nodes():
-            iterables = tuple(range(size) for size in self[node].shape[:-2])
-            for index in itertools.product(*iterables):
-                index += (slice(0,self.D),slice(0,self.D))
-                if not is_hermitian(self[node][index]):
-                    print(self[node][index])
-                    #warnings.warn(f"Non-hermitian operator at node {node} in index " + str(index) + ".",RuntimeWarning)
-                    return False
+            axes = tuple(range(len(self.G.adj[node]))) + (len(self.G.adj[node])+1,len(self.G.adj[node]))
+            if not np.allclose(self[node],np.transpose(self[node],axes=axes)):
+                self.view_site(node)
+                return False
+
         return True
 
     @staticmethod
@@ -618,19 +622,14 @@ class PEPO:
         """
         Prints all extractable information from tensor `T`
         """
-        chi = T.shape[0]
         D = T.shape[-1]
         # sanity check
         for i in range(T.ndim):
-            if i < T.ndim - 2:
-                assert T.shape[i] == chi
-            else:
+            if i >= T.ndim - 2:
                 assert T.shape[i] == D
 
-        print(f"Bond dimension {chi}.\n")
-
         # printing cellular automaton components
-        for virtual_index in itertools.product(range(chi),repeat=T.ndim-2):
+        for virtual_index in itertools.product(*[range(T.shape[i]) for i in range(T.ndim-2)]):
             index = virtual_index + (slice(0,D),slice(0,D))
 
             if not np.allclose(T[index],0):
@@ -646,15 +645,12 @@ class PEPO:
         D = tuple(T.shape[-1] for node,T in G.nodes(data="T"))[0]
         # inferring root node
         root = sorted(tuple(tree.nodes),key=lambda x:len(tree.pred[x]))[0]
-        # inferring virtual dimension
-        chi = tuple(T.shape[0] for node,T in G.nodes(data="T"))[0]
 
         # initialising the new PEPO
         op = cls(D=D)
         op.G = G
         op.tree = tree
         op.root = root
-        op.chi = chi
         op.check_tree = check_tree
 
         if sanity_check: assert op.intact
@@ -668,8 +664,6 @@ class PEPO:
         """Spanning tree of the graph."""
         self.root:int
         """Root node of the spanning tree."""
-        self.chi:int
-        """Virtual bond dimension."""
         self.check_tree:bool=True
         """False if this PEPO is the result of a summation. Means that the tree traversal checks in `self.intact` are disabled."""
         # TODO: I don't like that I have to disable the tree traversal checks; maybe find a workaround?
@@ -704,7 +698,7 @@ class PEPO:
 
         return
 
-    def __matmul__(self,psi:Union[PEPS,np.ndarray]) -> Union[PEPS,np.ndarray]:
+    def __matmul__(self,psi:Union["PEPO",PEPS,np.ndarray]) -> Union["PEPO",PEPS,np.ndarray]:
         """
         Action of the operator on the state `psi`.
         """
@@ -724,7 +718,6 @@ class PEPO:
             newPEPO = copy.deepcopy(self)
 
             # new sizes
-            newPEPO.chi *= psi.chi
             for node1,node2 in newPEPO.G.edges():
                 newPEPO.G[node1][node2][0]["size"] *= psi.G[node1][node2][0]["size"]
 
@@ -741,7 +734,7 @@ class PEPO:
                 # preparing a re-shape
                 newshape = [None for _ in range(N_neighbors)] + [newPEPO.D,newPEPO.D]
                 for neighbor in newPEPO.G.adj[node]:
-                    newshape[newPEPO.G[node][neighbor][0]["legs"][node]] = newPEPO.chi
+                    newshape[newPEPO.G[node][neighbor][0]["legs"][node]] = newPEPO.G[node][neighbor][0]["size"]
 
                 # inserting the re-shaped tensor
                 newPEPO[node] = np.reshape(T,newshape=newshape)
@@ -821,7 +814,7 @@ class PEPO:
 
         raise ValueError("PEPO.__matmul__ not implemented for type " + str(type(psi)) + ".")
 
-    def __add__(lhs,rhs):
+    def __add__(lhs,rhs:"PEPO"):
         """
         Addition of two PEPOs. The bond dimension of the new operator
         is the sum of the two old bond dimensions.
@@ -839,7 +832,6 @@ class PEPO:
             lhs.__permute_virtual_dimensions(rhs.G)
 
         res = PEPO(D=lhs.D)
-        res.chi = lhs.chi + rhs.chi
         res.root = lhs.root
         res.tree = lhs.tree
         res.check_tree = False # TODO: this is unelegant, and could be (more or less) easily avoided; see TODO in README
@@ -847,11 +839,15 @@ class PEPO:
         # graph for the result with correct legs and sizes
         res.G = res.prepare_graph(lhs.G)
 
+        # saving new sizes in th edges
+        for node1,node2 in res.G.edges():
+            res.G[node1][node2][0]["size"] = lhs.G[node1][node2][0]["size"] + rhs.G[node1][node2][0]["size"]
+
         for node in res.G.nodes():
-            shape = tuple(res.chi for _ in res.G.adj[node]) + (res.D,res.D)
+            shape = tuple(lhs.G[node][neighbor][0]["size"]+rhs.G[node][neighbor][0]["size"] for neighbor in res.G.adj[node]) + (res.D,res.D)
             T = np.zeros(shape=shape,dtype=np.complex128)
-            index_lhs = tuple(slice(0,lhs.chi) for _ in res.G.adj[node]) + (slice(0,res.D),slice(0,res.D))
-            index_rhs = tuple(slice(lhs.chi,res.chi) for _ in res.G.adj[node]) + (slice(0,res.D),slice(0,res.D))
+            index_lhs = tuple(slice(0,lhs.G[node][neighbor][0]["size"]) for neighbor in res.G.adj[node]) + (slice(0,res.D),slice(0,res.D))
+            index_rhs = tuple(slice(lhs.G[node][neighbor][0]["size"],lhs.G[node][neighbor][0]["size"]+rhs.G[node][neighbor][0]["size"]) for neighbor in res.G.adj[node]) + (slice(0,res.D),slice(0,res.D))
             T[index_lhs] = lhs.G.nodes[node]["T"]
             T[index_rhs] = rhs.G.nodes[node]["T"]
             res.G.nodes[node]["T"] = T
@@ -862,7 +858,7 @@ class PEPO:
         return res
 
     def __repr__(self) -> str:
-        return f"Hamiltonian on {self.nsites} sites with Hilbert space of size {self.D} at each. Bond dimension {self.chi}. PEPO is " + ("intact." if self.intact else "not intact.")
+        return f"Hamiltonian on {self.nsites} sites with Hilbert space of size {self.D} at each. PEPO is " + ("intact." if self.intact else "not intact.")
 
 class PauliPEPO(PEPO):
     """
@@ -892,7 +888,7 @@ class PauliPEPO(PEPO):
 
         # Hamiltonian composed of pauli operators?
         for node,T in self.G.nodes(data="T"):
-            for virtual_index in itertools.product(range(self.chi),repeat=self.G.nodes[node]["T"].ndim-2):
+            for virtual_index in itertools.product(*[range(T.shape[i]) for i in range(T.ndim-2)]):
                 index = virtual_index + (slice(0,self.D),slice(0,self.D))
 
                 if np.allclose(T[index],0): continue
@@ -917,7 +913,7 @@ def print_operator_chain(op:PEPO,chain:dict[int:tuple],sanity_check:bool=False) 
     if sanity_check: assert op.intact
 
     for node in chain.keys():
-        print(f"op[{node}] : \n",op[node][chain[node]])
+        print(f"op[{node}] : \n",chain[node])
 
     return
 

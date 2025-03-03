@@ -24,9 +24,8 @@ class TFI(PauliPEPO):
         # sanity check
         assert N_pas >= 0
         assert N_out >= 0
-        assert hasattr(self,"chi")
 
-        T = self.traversal_tensor(N_pas=N_pas,N_out=N_out)
+        T = self.traversal_tensor(chi=3,N_pas=N_pas,N_out=N_out)
 
         # transverse field
         index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
@@ -99,13 +98,13 @@ class TFI(PauliPEPO):
         """
         super().__init__()
 
-        self.chi = 3
+        chi = 3
         """
         Virtual bond dimension.
         0 is the moving particle state, 1 the decay state, and 2 is the vacuum state.
         """
 
-        self.G = super().prepare_graph(G,sanity_check=sanity_check)
+        self.G = super().prepare_graph(G=G,chi=3,sanity_check=sanity_check)
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
@@ -217,9 +216,8 @@ class Heisenberg(PauliPEPO):
         # sanity check
         assert N_pas >= 0
         assert N_out >= 0
-        assert hasattr(self,"chi")
 
-        T = self.traversal_tensor(N_pas=N_pas,N_out=N_out)
+        T = self.traversal_tensor(chi=5,N_pas=N_pas,N_out=N_out)
 
         # transverse field
         index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
@@ -314,13 +312,13 @@ class Heisenberg(PauliPEPO):
         """
         super().__init__()
 
-        self.chi = 5
+        chi = 5
         """
         Virtual bond dimension.
         0 is the moving particle state, 1/2/3 the decay state in x/y/z, and 4 is the vacuum state.
         """
 
-        self.G = super().prepare_graph(G,sanity_check=sanity_check)
+        self.G = super().prepare_graph(G=G,chi=chi,sanity_check=sanity_check)
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
@@ -368,7 +366,6 @@ def Identity(G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False) 
         Physical dimension `D`.
         """
         Id = PEPO(D=D)
-        Id.chi = 1
         Id.G = Id.prepare_graph(G)
 
         # root node is node with smallest degree
@@ -379,7 +376,7 @@ def Identity(G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False) 
 
         # adding physical dimensions, putting identities in the physical dimensions
         for node in Id.G.nodes():
-            T = np.zeros(shape = tuple(Id.chi for _ in range(len(G.adj[node]))) + (Id.D,Id.D),dtype=dtype)
+            T = np.zeros(shape = tuple(1 for _ in range(len(G.adj[node]))) + (Id.D,Id.D),dtype=dtype)
             T[...,:,:] = Id.I
             Id.G.nodes[node]["T"] = T
 
@@ -410,10 +407,7 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
     0 is the moving particle state, 1 & 2 are decay states, and 3 is the vacuum state.
     """
 
-    pos_op.chi = chi
-    neg_op.chi = chi
-
-    G = pos_op.prepare_graph(G,sanity_check=sanity_check)
+    G = pos_op.prepare_graph(G=G,chi=chi,sanity_check=sanity_check)
     pos_op.G = copy.deepcopy(G)
     neg_op.G = copy.deepcopy(G)
 
@@ -439,8 +433,8 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
 
         # PEPO tensor, where the first dimension is the incoming leg, the passive legs
         # and the outgoing legs follow, and the last two dimensions are the physical legs
-        pos_T = pos_op.traversal_tensor(N_pas=N_pas,N_out=N_out)
-        neg_T = neg_op.traversal_tensor(N_pas=N_pas,N_out=N_out)
+        pos_T = pos_op.traversal_tensor(chi=chi,N_pas=N_pas,N_out=N_out)
+        neg_T = neg_op.traversal_tensor(chi=chi,N_pas=N_pas,N_out=N_out)
 
         # transverse field
         index = (0,) + tuple(-1 for _ in range(N_pas + N_out)) + (slice(0,2),slice(0,2))
@@ -527,12 +521,12 @@ def operator_chain(G:nx.MultiGraph,ops:dict[int,np.ndarray],sanity_check:bool=Fa
         # sanity check
         if not G.has_node(node): raise ValueError(f"Node {node} not contained in graph.")
         if not op.shape == (D,D): raise ValueError(f"Operator on node {node} has wrong shape: Expected ({D},{D}), got " + str(op.shape) + ".")
-        if not is_hermitian(op): raise ValueError(f"Operator at node {node} is not hermitian.")
 
         index = tuple(0 for _ in H.G.adj[node]) + (slice(0,D),slice(0,D))
         H.G.nodes[node]["T"][index] = op
 
     if sanity_check: assert H.intact
+
     return H
 
 if __name__ == "__main__":

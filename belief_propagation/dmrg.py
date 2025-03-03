@@ -10,7 +10,7 @@ import tqdm
 import itertools
 import copy
 
-from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err,same_legs
+from belief_propagation.utils import is_hermitian,gen_eigval_problem,rel_err,same_legs,graph_compatible
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
 from belief_propagation.braket import Braket
@@ -377,7 +377,7 @@ class DMRG:
 
         # are expval graphs and overlap graph compatible?
         for i,expval in enumerate(self.expvals):
-            if not Braket.graph_compatible(expval.G,self.overlap.G):
+            if not graph_compatible(expval.G,self.overlap.G):
                 warnings.warn(f"Graphs of overlap and expval {i} not compatible.")
                 return False
 
