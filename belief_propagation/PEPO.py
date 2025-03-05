@@ -10,10 +10,14 @@ import scipy.sparse as scisparse
 import warnings
 import itertools
 import copy
-from typing import Union
+from typing import Union,Iterable,Iterator
 
 from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian,same_legs,graph_compatible
 from belief_propagation.PEPS import PEPS
+
+__all__ = [
+    "PEPO","PauliPEPO"
+]
 
 class PEPO:
     """
@@ -310,30 +314,52 @@ class PEPO:
 
         return out
 
-    def traversal_tensor(self,chi:int,N_pas:int,N_out:int,dtype=np.complex128) -> np.ndarray:
+    def traversal_tensor(self,chi:Union[int,Iterable[int]],N_pas:int,N_out:int,dtype=np.complex128) -> np.ndarray:
         """
         Returns the minimum tensor for PEPOs, that is, a tensor
         that ensures correct tree traversal.
 
-        `T` has the canonical leg ordering: The first leg is the incoming leg, afterwards follow the
-        passive legs, and finally the outgoing legs.
+        `T` has the canonical leg ordering: The first leg is the incoming
+        leg, afterwards follow the passive legs, and finally the outgoing
+        legs.
+
+        If a tuple of integers is passed as `chi`, the contents determine
+        the bond dimension for every leg.        
         """
         # sanity check
         assert N_pas >= 0
         assert N_out >= 0
 
-        T = np.zeros(shape=[chi for _ in range(1 + N_pas + N_out)] + [self.D,self.D],dtype=dtype)
+        if isinstance(chi,int):
+            return self.traversal_tensor(
+                chi = tuple(chi for _ in range(1+N_pas+N_out)),
+                N_pas=N_pas,
+                N_out=N_out,
+                dtype=dtype
+            )
 
-        # particle index
-        for i_out in range(N_out):
-            index = (0,) + tuple(chi - 1 for _ in range(N_pas)) + tuple(0 if _ == i_out else chi - 1 for _ in range(N_out)) + (slice(0,self.D),slice(0,self.D))
+        if hasattr(chi,"__iter__"):
+            # sanity check
+            for i,chi_ in enumerate(chi):
+                if not isinstance(chi_,int): raise ValueError(f"chi[{i}] is not an integer.")
+            if not i + 1 == 1 + N_pas + N_out: raise ValueError("chi contains the wrong number of bond dimensions.")
+
+            T = np.zeros(shape=[chi_ for chi_ in chi] + [self.D,self.D],dtype=dtype)
+
+            # particle index
+            for i_out in range(N_out):
+                index = list(chi_ - 1 for chi_ in chi) + [slice(0,self.D),slice(0,self.D)]
+                index[0] = 0
+                index[1 + N_pas + i_out] = 0
+                T[tuple(index)] = self.I
+
+            # vacuum index
+            index = tuple(chi_ - 1 for chi_ in chi) + (slice(0,self.D),slice(0,self.D))
             T[index] = self.I
 
-        # vacuum index
-        index = tuple(chi - 1 for _ in range(1 + N_pas + N_out)) + (slice(0,self.D),slice(0,self.D))
-        T[index] = self.I
+            return T
 
-        return T
+        raise ValueError("chi must be an integer or an iterable of ints.")
 
     def operator_chains(self,sanity_check:bool=False) -> tuple[dict[int:np.ndarray]]:
         """
@@ -363,7 +389,7 @@ class PEPO:
 
         return tuple(operator_chains)
 
-    def __chain_construction_recursion(self,node:int,i_upstream:int,chain:dict[int,tuple],chains:list[dict[int,tuple]]) -> None:
+    def __chain_construction_recursion(self,node:int,i_upstream:int,chain:dict[int,np.ndarray],chains:list[dict[int,np.ndarray]]) -> None:
         """
         Traversing the PEPO either downstream along the tree, or hopping
         from one branch (of the tree) to another, collecting the operator
@@ -454,6 +480,7 @@ class PEPO:
                 # the incoming edge
                 newshape[self.G[node][neighbor][0]["legs"][node]] = 0
                 continue
+
             if neighbor in self.tree.succ[node]:
                 # outgoing edge
                 newshape[self.G[node][neighbor][0]["legs"][node]] = N_in + N_pas + out_counter
@@ -466,7 +493,7 @@ class PEPO:
 
         return np.transpose(T,newshape + [_ for _ in range(len(newshape),T.ndim)])
 
-    def __permute_virtual_dimensions(self,G:nx.MultiGraph,sanity_check:bool=False) -> None:
+    def _permute_virtual_dimensions(self,G:nx.MultiGraph,sanity_check:bool=False) -> None:
         """
         Changes the leg ordering to the one given in `G`.
         """
@@ -700,7 +727,7 @@ class PEPO:
 
     def __matmul__(self,psi:Union["PEPO",PEPS,np.ndarray]) -> Union["PEPO",PEPS,np.ndarray]:
         """
-        Action of the operator on the state `psi`.
+        Action of the operator on the object `psi`.
         """
 
         if isinstance(psi,self.__class__):
@@ -713,7 +740,7 @@ class PEPO:
 
             if not same_legs(self.G,psi.G):
                 # permute lhs virtual dimensions s.t. they match the leg ordering of the rhs
-                self.__permute_virtual_dimensions(psi.G)
+                self._permute_virtual_dimensions(psi.G)
 
             newPEPO = copy.deepcopy(self)
 
@@ -752,7 +779,7 @@ class PEPO:
 
             if not same_legs(self.G,psi.G):
                 # permute PEPO virtual dimensions s.t. they match the leg ordering of the PEPS
-                self.__permute_virtual_dimensions(psi.G)
+                self._permute_virtual_dimensions(psi.G)
 
             newPEPS = copy.deepcopy(psi)
 
@@ -825,11 +852,11 @@ class PEPO:
         if not nx.utils.nodes_equal(lhs.G.nodes(),rhs.G.nodes()): raise ValueError(f"Operands have different geometries; nodes do not match.")
         if not nx.utils.edges_equal(lhs.G.edges(),rhs.G.edges()): raise ValueError(f"Operands have different geometries; edges do not match.")
         if not lhs.D == rhs.D: raise ValueError("Operands must have the same physical dimensions.")
-        if not nx.utils.graphs_equal(lhs.tree,rhs.tree): warnings.warn("The trees of the operands are not the same. This is not a problem (as of 29th of January).")
+        if not nx.utils.graphs_equal(lhs.tree,rhs.tree): warnings.warn("The trees of the operands are not the same. This is not a problem (as of 29th of January).",UserWarning)
 
         if not same_legs(lhs.G,rhs.G):
             # permute dimensions of lhs to make both PEPOs compatible
-            lhs.__permute_virtual_dimensions(rhs.G)
+            lhs._permute_virtual_dimensions(rhs.G)
 
         res = PEPO(D=lhs.D)
         res.root = lhs.root
@@ -839,7 +866,7 @@ class PEPO:
         # graph for the result with correct legs and sizes
         res.G = res.prepare_graph(lhs.G)
 
-        # saving new sizes in th edges
+        # saving new sizes in the edges
         for node1,node2 in res.G.edges():
             res.G[node1][node2][0]["size"] = lhs.G[node1][node2][0]["size"] + rhs.G[node1][node2][0]["size"]
 
@@ -858,7 +885,15 @@ class PEPO:
         return res
 
     def __repr__(self) -> str:
-        return f"Hamiltonian on {self.nsites} sites with Hilbert space of size {self.D} at each. PEPO is " + ("intact." if self.intact else "not intact.")
+        return f"Operator on {self.nsites} sites with Hilbert space of size {self.D} at each. PEPO is " + ("intact." if self.intact else "not intact.")
+
+    def __len__(self) -> int: return self.nsites
+
+    def __iter__(self) -> Iterator[int]:
+        """
+        Iterator over the nodes in the graph `self.G`.
+        """
+        return iter(self.G.nodes(data=False))
 
 class PauliPEPO(PEPO):
     """
@@ -905,17 +940,6 @@ class PauliPEPO(PEPO):
         super().__init__(2)
 
         return
-
-def print_operator_chain(op:PEPO,chain:dict[int:tuple],sanity_check:bool=False) -> None:
-    """
-    Prints the given operator chain.
-    """
-    if sanity_check: assert op.intact
-
-    for node in chain.keys():
-        print(f"op[{node}] : \n",chain[node])
-
-    return
 
 if __name__ == "__main__":
     pass

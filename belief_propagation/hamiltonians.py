@@ -6,7 +6,7 @@ import numpy as np
 import networkx as nx
 import copy
 
-from belief_propagation.utils import network_message_check,multi_kron,is_hermitian
+from belief_propagation.utils import multi_kron,is_disjoint_layer,op_layer_intact_check
 from belief_propagation.PEPO import PEPO,PauliPEPO
 
 class TFI(PauliPEPO):
@@ -33,7 +33,7 @@ class TFI(PauliPEPO):
 
         return T
 
-    def __ising_coupling(self,node1:int,node2:int,Jz:float) -> None:
+    def __add_ising_coupling(self,node1:int,node2:int,Jz:float) -> None:
         """
         Adds Ising-type coupling to the edge `(node1,node2)`. This means that
         both decay stages (of the finite state automaton) are added to this
@@ -113,7 +113,7 @@ class TFI(PauliPEPO):
         self.tree = nx.dfs_tree(G,self.root)
 
         # adding PEPO tensors (without coupling)
-        for node in self.G.nodes():
+        for node in self:
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
             N_pas = len(self.G.adj[node]) - N_out - N_in
@@ -137,7 +137,7 @@ class TFI(PauliPEPO):
 
         # adding incoming and outgoing coupling to every node but the root
         for node1,node2 in self.G.edges():
-            self.__ising_coupling(node1,node2,Jz=J)
+            self.__add_ising_coupling(node1,node2,Jz=J)
 
         # contracting boundary legs
         self.contract_boundaries()
@@ -225,7 +225,7 @@ class Heisenberg(PauliPEPO):
 
         return T
 
-    def __heisenberg__coupling(self,node1:int,node2:int,Jx:float,Jy:float,Jz:float) -> None:
+    def __add_heisenberg_coupling(self,node1:int,node2:int,Jx:float,Jy:float,Jz:float) -> None:
         """
         Adds Heisenberg-type coupling to the edge `(node1,node2)`. This means that
         both decay stages (of the finite state automaton) are added to this
@@ -327,7 +327,7 @@ class Heisenberg(PauliPEPO):
         self.tree = nx.dfs_tree(G,self.root)
 
         # adding PEPO tensors (without coupling)
-        for node in self.G.nodes():
+        for node in self:
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
             N_pas = len(self.G.adj[node]) - N_out - N_in
@@ -351,7 +351,7 @@ class Heisenberg(PauliPEPO):
 
         # adding incoming and outgoing coupling to every node but the root
         for node1,node2 in self.G.edges():
-            self.__heisenberg__coupling(node1,node2,Jx,Jy,Jz)
+            self.__add_heisenberg_coupling(node1,node2,Jx,Jy,Jz)
 
         # contracting boundary legs
         self.contract_boundaries()
@@ -360,25 +360,42 @@ class Heisenberg(PauliPEPO):
 
         return
 
+def Zero(G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False) -> PEPO:
+        """
+        Returns a zero-valued PEPO on graph `G`.
+        Physical dimension `D`.
+        """
+        op = PEPO(D=D)
+        op.G = op.prepare_graph(G=G,chi=1)
+
+        # root node is node with smallest degree
+        op.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
+
+        # depth-first search tree
+        op.tree = nx.dfs_tree(G,op.root)
+
+        # since the PEPO contains only zeros, the tree traversal checks are not applicable
+        op.check_tree = False
+
+        # adding local operators
+        for node in op: op[node] = np.zeros(shape = tuple(1 for _ in range(len(G.adj[node]))) + (op.D,op.D),dtype=dtype)
+
+        if sanity_check: assert op.intact
+
+        return op
+
 def Identity(G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False) -> PEPO:
         """
         Returns the identity PEPO on graph `G`.
         Physical dimension `D`.
         """
-        Id = PEPO(D=D)
-        Id.G = Id.prepare_graph(G)
+        Id = Zero(G=G,D=D,dtype=dtype,sanity_check=sanity_check)
 
-        # root node is node with smallest degree
-        Id.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
+        # adding local identities
+        for node in Id: Id[node][...,:,:] = Id.I
 
-        # depth-first search tree
-        Id.tree = nx.dfs_tree(G,Id.root)
-
-        # adding physical dimensions, putting identities in the physical dimensions
-        for node in Id.G.nodes():
-            T = np.zeros(shape = tuple(1 for _ in range(len(G.adj[node]))) + (Id.D,Id.D),dtype=dtype)
-            T[...,:,:] = Id.I
-            Id.G.nodes[node]["T"] = T
+        # enabling tree traversal checks
+        Id.check_tree = True
 
         if sanity_check: assert Id.intact
 
@@ -523,11 +540,76 @@ def operator_chain(G:nx.MultiGraph,ops:dict[int,np.ndarray],sanity_check:bool=Fa
         if not op.shape == (D,D): raise ValueError(f"Operator on node {node} has wrong shape: Expected ({D},{D}), got " + str(op.shape) + ".")
 
         index = tuple(0 for _ in H.G.adj[node]) + (slice(0,D),slice(0,D))
-        H.G.nodes[node]["T"][index] = op
+        H[node][index] = op
+
+    # since we inserted non-identity operators, the tree traversal checks are not applicable
+    H.check_tree = False
 
     if sanity_check: assert H.intact
 
     return H
+
+def operator_layer(G:nx.MultiGraph,op_chains:tuple[dict[int,np.ndarray]],sanity_check:bool=False) -> PEPO:
+    """
+    A PEPO that contains disjoint operator chains. The operator chains are
+    contained in the `layers` argument.
+    """
+    # sanity check
+    assert op_layer_intact_check(G=G,op_chains=op_chains,test_same_length=True,test_disjoint=True)
+
+    # infering physical dimension and length of operator chains
+    first_key = tuple(op_chains[0].keys())[0]
+    D = op_chains[0][first_key].shape[-1]
+    op_chain_length = len(op_chains[0])
+
+    op = PEPO(D=D)
+
+    chi = op_chain_length + 1
+    """
+    Virtual bond dimension.
+    0 is the moving particle state, 1 the decay state, and 2 is the vacuum state.
+    We need the particle state, and one additional bond dimension for each increment in chain length.
+    """
+
+    op.G = op.prepare_graph(G=G,chi=3,sanity_check=sanity_check)
+
+    # root node is node with smallest degree
+    op.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
+
+    # depth-first search tree
+    op.tree = nx.dfs_tree(G,op.root)
+
+    # adding PEPO tensors (without coupling)
+    for node in op.G.nodes():
+        N_in = len(op.tree.pred[node])
+        N_out = len(op.tree.succ[node])
+        N_pas = len(op.G.adj[node]) - N_out - N_in
+
+        if N_out == 0:
+            # node is a leaf
+            N_out = 1
+
+        # PEPO tensor, where the first dimension is the incoming leg, the passive legs
+        # and the outgoing legs follow, and the last two dimensions are the physical legs
+        T = op.traversal_tensor(chi=3,N_pas=N_pas,N_out=N_out)
+
+        if node == op.root:
+            # root node; we need to put the (incoming) boundary leg between the virtual dimensions and the physical dimensions
+            T = np.moveaxis(T,0,-3)
+
+        # re-shaping PEPO tensor to match the graph leg ordering
+        T = op._canonical_to_correct_legs(T,node)
+
+        op[node] = T
+
+    # contracting boundary legs
+    op.contract_boundaries()
+
+    raise NotImplementedError("gotta finish this at some point")
+
+    assert op.intact
+
+    return op
 
 if __name__ == "__main__":
     pass

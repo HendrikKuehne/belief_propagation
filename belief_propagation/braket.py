@@ -17,6 +17,7 @@ import warnings
 import itertools
 import tqdm
 import copy
+from typing import Iterator
 
 from belief_propagation.utils import network_message_check,crandn,graph_compatible
 from belief_propagation.networks import expose_edge
@@ -104,7 +105,7 @@ class BaseBraket:
             self._ket.G[node1][node2][0]["label"] = N + 2
             N += 3
         # enumerating the physical edges in the network
-        for node in self.G.nodes():
+        for node in self:
             self._bra.G.nodes[node]["label"] = [N,]
             self._op.G.nodes[node]["label"] = [N,N+1]
             self._ket.G.nodes[node]["label"] = [N+1,]
@@ -112,7 +113,7 @@ class BaseBraket:
 
         args = ()
         # extracting the einsum arguments
-        for node in self.G.nodes():
+        for node in self:
             for layer in (self._bra.G,self._op.G,self._ket.G):
                 args += (layer.nodes[node]["T"],)
                 # virtual edges
@@ -164,7 +165,7 @@ class BaseBraket:
             size_dict[ctg.get_symbol(N+2)] = self._ket.G[node1][node2][0]["size"]
             N += 3
         # enumerating the physical edges in the network, extracting the size of every edge
-        for node in self.G.nodes():
+        for node in self:
             self._bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
             self._op.G.nodes[node]["label"] = [ctg.get_symbol(N),ctg.get_symbol(N+1)]
             self._ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
@@ -173,7 +174,7 @@ class BaseBraket:
             N += 2
 
         # extracting the einsum arguments
-        for node in self.G.nodes():
+        for node in self:
             for layer in (self._bra.G,self._op.G,self._ket.G):
                 arrays += (layer.nodes[node]["T"],)
                 # virtual edges
@@ -364,6 +365,14 @@ class BaseBraket:
 
     def __repr__(self) -> str:
         return f"Braket on {self.nsites} sites. Physical dimension {self.D}. Braket is " + ("intact." if self.intact else "not intact.")
+
+    def __len__(self) -> int: return self.nsites
+
+    def __iter__(self) -> Iterator[int]:
+        """
+        Iterator over the nodes in the graph `self.G`.
+        """
+        return iter(self.G.nodes(data=False))
 
 class Braket(BaseBraket):
     """
@@ -641,7 +650,7 @@ class Braket(BaseBraket):
         # sanity check
         if sanity_check: assert self.intact
 
-        for node in self.G.nodes():
+        for node in self:
             nLegs = len(self.G.adj[node])
             args = ()
 

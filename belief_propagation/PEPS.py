@@ -7,7 +7,7 @@ import networkx as nx
 import cotengra as ctg
 import warnings
 import copy
-from typing import Union
+from typing import Iterator
 
 from belief_propagation.utils import network_message_check,crandn,write_exp_bonddim_to_graph,multi_tensor_rank
 
@@ -316,17 +316,23 @@ class PEPS:
     def __rmul__(self,x:float): return self.__mul__(x)
 
     def __repr__(self) -> str:
-        out = ""
-        digits = int(np.log10(self.nsites))
-        out += f"PEPS with {self.nsites} sites."
-        #out += "\n  Bond dimensions:"
-        #for node1,node2,size in self.G.edges(data="size"): out += "\n    (" + str(node1).zfill(digits) + "," + str(node2).zfill(digits) + f") : size = {size}"
-        #out += "\n  Multilinear tensor ranks:"
-        #for node in self.G.nodes(): out += "\n    " + str(node).zfill(digits) + f" : {multi_tensor_rank(self[node])}"
-
-        out += "\n  PEPS is " + "intact." if self.intact else "not intact."
-
+        out = f"State on {self.nsites} sites. PEPS is " + ("intact." if self.intact else "not intact.")
         return out
+
+        # bond dimensions and multilinear tensor ranks
+        digits = int(np.log10(self.nsites))
+        out += "\n  Bond dimensions:"
+        for node1,node2,size in self.G.edges(data="size"): out += "\n    (" + str(node1).zfill(digits) + "," + str(node2).zfill(digits) + f") : size = {size}"
+        out += "\n  Multilinear tensor ranks:"
+        for node in self.G.nodes(): out += "\n    " + str(node).zfill(digits) + f" : {multi_tensor_rank(self[node])}"
+
+    def __len__(self) -> int: return self.nsites
+
+    def __iter__(self) -> Iterator[int]:
+        """
+        Iterator over the nodes in the graph `self.G`.
+        """
+        return iter(self.G.nodes(data=False))
 
 if __name__ == "__main__":
     pass

@@ -331,6 +331,57 @@ def cycle_length_ranking(G:nx.Graph,noisy:bool=True) -> list[tuple[int]]:
     return edges_ranked
 
 # -------------------------------------------------------------------------------
+#                   Operator chains & operator layers
+# -------------------------------------------------------------------------------
+
+def is_disjoint_layer(layer:tuple[dict[int:tuple]],op_chain:dict[int:tuple]=dict()) -> bool:
+    """
+    Tests if the set `op_chains` of operator chains is disjoint,
+    i.e. the operator chains in `op_chains` act on different sites.
+    If `op_chain` is given, tests if `op_chains` is disjoint upon
+    addition of `op_chain`.
+    """
+    new_sites = set(op_chain.keys())
+    for op_chain_ in layer:
+        if len(new_sites & set(op_chain_.keys())) > 0: return False
+
+    return True
+
+def get_disjoint_subsets_from_opchains(op_chains:tuple[dict[int:tuple]]) -> tuple[tuple[tuple[dict[int:tuple]]]]:
+    """
+    Given operator chains, decomposes them into as many
+    disjoint subsets as are necessary for a brick wall
+    layout. Returns a tuple containing the single-site
+    layers, and a tuple containing the multi-site layers
+    (aka brick-wall layers).
+    """
+    # layers of the hamiltonian are sets of operators, s.t. all operators within
+    # the layer commute. This is achieved by grouping spatially disjoint
+    # operators together in the layers. Single-site operators will be grouped
+    # separately.
+    singlesite_layers = [(),]
+    brick_wall_layers = [(),]
+
+    for op_chain in op_chains:
+        if len(op_chain.keys()) == 1:
+            # single-site operators will be grouped in one chain
+            iLayer = 0
+            while not is_disjoint_layer(singlesite_layers[iLayer],op_chain):
+                iLayer += 1
+                if len(singlesite_layers) == iLayer: singlesite_layers += [(),]
+            singlesite_layers[iLayer] += (op_chain,)
+
+        else:
+            # single-site operators will be grouped in one chain
+            iLayer = 0
+            while not is_disjoint_layer(brick_wall_layers[iLayer],op_chain):
+                iLayer += 1
+                if len(brick_wall_layers) == iLayer: brick_wall_layers += [(),]
+            brick_wall_layers[iLayer] += (op_chain,)
+
+    return tuple(singlesite_layers),tuple(brick_wall_layers)
+
+# -------------------------------------------------------------------------------
 #                   sanity checks & diagnosis
 # -------------------------------------------------------------------------------
 
@@ -395,6 +446,60 @@ def network_message_check(G:nx.MultiGraph) -> bool:
                 if len(data["msg"].values()) != 2:
                     warnings.warn(f"Wrong number of messages on edge ({node1},{node2}).")
                     return False
+
+    return True
+
+def op_layer_intact_check(G:nx.MultiGraph,layer:tuple[dict[int,np.ndarray]],target_chain_length:int=np.nan,test_same_length:bool=False,test_disjoint:bool=False) -> bool:
+    """
+    Tests if the operator chains in `op_chains` are intact.
+    This amounts to:
+    * Are all physical dimensions equal?
+    * Are the chains disjoint? (tested only if `test_disjoint = True`)
+    * Do all chains have the same length? (tested only of `test_same_length = True`)
+        * Do all chains have the correct length? (tested only if the reference length is given under `target_chain_length`)
+    """
+    if test_disjoint:
+        # are the operator chains disjoint?
+        if not is_disjoint_layer(layer=layer):
+            warnings.warn("The operator chains are not disjoint.",UserWarning)
+            return False
+
+    D_set = set()
+    length_set = set()
+    for iChain,op_chain in enumerate(layer):
+        # saving operator chain length
+        length_set.add(len(op_chain))
+
+        for node,T in op_chain.items():
+            # does the graph contain this node?
+            if not G.has_node(node):
+                warnings.warn(f"Node {node} in operator chain {iChain} not contained in graph.",UserWarning)
+                return False
+
+            # is the operator square?
+            if not T.shape[0] == T.shape[1]:
+                warnings.warn(f"Non-square operator on node {node} in operator chain {iChain}.",UserWarning)
+                return False
+
+            # saving physical dimension
+            D_set.add(T.shape[0])
+
+    if not len(D_set) == 1:
+        warnings.warn("Multiple different physical dimensions in operator chains.",UserWarning)
+        return False
+
+    if not np.isnan(target_chain_length): test_same_length = True
+
+    if test_same_length:
+        if not len(length_set) == 1:
+            warnings.warn("Operator layer contains chains with varying length.",UserWarning)
+            return False
+
+        if not np.isnan(target_chain_length):
+            chain_length = length_set.pop()
+            if chain_length != target_chain_length:
+                warnings.warn(f"Wrong operator chain length; received {chain_length}, expected {target_chain_length}.",UserWarning)
+                return False
 
     return True
 
