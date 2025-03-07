@@ -15,9 +15,7 @@ from typing import Union,Iterable,Iterator
 from belief_propagation.utils import network_message_check,multi_kron,proportional,is_hermitian,same_legs,graph_compatible
 from belief_propagation.PEPS import PEPS
 
-__all__ = [
-    "PEPO","PauliPEPO"
-]
+__all__ = ["PEPO","PauliPEPO"]
 
 class PEPO:
     """
@@ -53,7 +51,8 @@ class PEPO:
 
     It is assumed that, within the virtual dimension, the finite state automaton
     initial state is the 0th component, and the final state is the last
-    component.
+    component. When traversing the graph along operator chains from root to leaves,
+    the virtual bond dimension index must be non-decreasing.
     """
 
     def contract_boundaries(self):
@@ -131,8 +130,6 @@ class PEPO:
         H = ctg.einsum(expr,*tensors)
         H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
 
-        if sanity_check: assert is_hermitian(H)
-
         return H
 
         inputs = ()
@@ -161,8 +158,6 @@ class PEPO:
 
         H = ctg.array_contract(arrays=arrays,inputs=inputs,output=output,size_dict=size_dict)
         H = np.reshape(H,newshape=(self.D ** self.G.number_of_nodes(),self.D ** self.G.number_of_nodes()))
-
-        if sanity_check: assert is_hermitian(H)
 
         return H
 
@@ -361,14 +356,16 @@ class PEPO:
 
         raise ValueError("chi must be an integer or an iterable of ints.")
 
-    def operator_chains(self,sanity_check:bool=False) -> tuple[dict[int:np.ndarray]]:
+    def operator_chains(self,save_tensors:bool=True,remove_ids:bool=True,sanity_check:bool=False) -> tuple[dict[int:np.ndarray]]:
         """
         Returns all operator chains. An operator chain is a collection
         of operators. The summation of the tensor products of all operator chains
         gives the operator.
 
-        Operator chains are returned as a dict, where nodes are keys
-        and operators are values.
+        Operator chains are returned as a dict, where nodes are keys.
+        If `save_tensors=True` (default), local operators are values;
+        otherwise, indices to PEPO tensors are values. If
+        `remove_ids=True` (default), identities are removed.
         """
         # sanity checks
         if sanity_check: assert self.intact
@@ -378,71 +375,84 @@ class PEPO:
 
         operator_chains:list[dict] = []
 
-        self.__chain_construction_recursion(node=self.root,i_upstream=np.nan,chain=dict(),chains=operator_chains)
+        self.__chain_construction_recursion(edges_to_indices={},chains=operator_chains,sanity_check=sanity_check)
 
-        # removing identity operators from the chain, substituting indices
-        # with operators
+        # removing identity operators from the chain, substituting indices with operators
         for chain in operator_chains:
             keys = tuple(chain.keys())
             for key in keys:
-                if np.allclose(chain[key],self.I): chain.pop(key,None)
+                T = self[key][chain[key]]
+
+                # removing identities
+                if remove_ids and np.allclose(T,self.I):
+                    chain.pop(key,None)
+                    continue
+
+                # substituting indices with tensors
+                if save_tensors: chain[key] = T
 
         return tuple(operator_chains)
 
-    def __chain_construction_recursion(self,node:int,i_upstream:int,chain:dict[int,np.ndarray],chains:list[dict[int,np.ndarray]]) -> None:
+    def __chain_construction_recursion(self,edges_to_indices:dict[frozenset[int],int],chains:list[dict[int,tuple[int]]],sanity_check:bool=False) -> None:
         """
-        Traversing the PEPO either downstream along the tree, or hopping
-        from one branch (of the tree) to another, collecting the operator
+        Traversing the PEPO graph, collecting the operator
         chains. Chains are saved in the argument `chains`, which is
         manipulated in-place.
+
+        This function recursively traverses the graph by
+        moving one step out from the current set `edges_to_indices`.
         """
-        # this recursion breaks off eventually because the finite state
-        # automaton that defines the tree does not have feedback loops
+        if all_edges_present(G=self.G,edges_to_indices=edges_to_indices,sanity_check=sanity_check):
+            # the current chain has traversed the entire graph, and is thus complete
+            chain = {}
 
-        if node != self.root:
-            assert len(self.tree.pred[node]) == 1
-            # parameters of the upstream node (parent)
-            parent = tuple(self.tree.pred[node])[0]
-            upstream_leg = self.G[node][parent][0]["legs"][node]
-        else:
-            # an upstream node only exists if node is not the root node
-            parent = np.nan
-            upstream_leg = np.nan
+            # assembling the chain
+            for node in self: chain[node] = edge_indices_to_site_index(G=self.G,node=node,edges_to_indices=edges_to_indices,sanity_check=sanity_check) + (slice(0,self.D),slice(0,self.D))
 
-        # checking if the operator chain that terminates in node is non-zero
-        terminal_index = tuple(i_upstream if i_neighbor == upstream_leg else self.G[node][neighbor][0]["size"] - 1 for i_neighbor,neighbor in enumerate(self.G.adj[node])) + (slice(0,self.D),slice(0,self.D))
-        if not np.allclose(self[node][terminal_index],0):
-            chain = copy.deepcopy(chain)
-            chain[node] = self[node][terminal_index]
+            # saving the chain
             chains.append(chain)
 
-        for child in self.G.adj[node]:
-            for i_downstream in range(self.G[node][child][0]["size"]):
-                if child == parent:
-                    # this leg is the upstream leg in the PEPO tree; this is not where the operator chain continues
-                    continue
+            return
 
-                downstream_leg = self.G[node][child][0]["legs"][node]
-                # assembling an index that takes us downstream in the operator chain
-                index = tuple(
-                    i_downstream if _ == downstream_leg else
-                    i_upstream if _ == upstream_leg else
-                    self.G[node][child][0]["size"] - 1
-                    for _ in range(self[node].ndim-2)
-                ) + (slice(0,self.D),slice(0,self.D))
+        # which edges have we not yet visited?
+        if len(edges_to_indices) == 0:
+            next_edges = tuple(edge for edge in self.G.edges(nbunch=self.root))
+        else:
+            next_edges = get_next_edges(G=self.G,edge_set=tuple(tuple(edge) for edge in edges_to_indices.keys()),sanity_check=sanity_check)
 
-                if np.allclose(self[node][index],0):
-                    # not part of any operator chain
-                    continue
+        if len(next_edges) == 0:
+            # nothing to do here
+            return
 
-                if index == terminal_index:
-                    # this operator chain terminates here
-                    continue
+        # which nodes belonog to the unvisited edges?
+        next_nodes = set().union(*[set(edge) for edge in next_edges])
 
-                nextchain = copy.deepcopy(chain)
-                nextchain[node] = self[node][index]
+        assert sanity_check == sanity_check
 
-                self.__chain_construction_recursion(node=child,i_upstream=i_downstream,chain=nextchain,chains=chains)
+        for neighbor_indices in itertools.product(*[range(self.G[edge[0]][edge[1]][0]["size"]) for edge in next_edges]):
+            # preparing the next iteration
+            new_edges_to_indices = copy.deepcopy(edges_to_indices)
+
+            # adding new edge indices
+            for i,edge in enumerate(next_edges):
+                new_edges_to_indices[frozenset(edge)] = neighbor_indices[i]
+
+            # do these indices contain a zero-valued local operator?
+            zero_valued_chain = False
+            for node in next_nodes:
+                if all_edges_present(G=self.G,edges_to_indices=new_edges_to_indices,node=node,sanity_check=sanity_check):
+                    index = edge_indices_to_site_index(G=self.G,node=node,edges_to_indices=new_edges_to_indices,sanity_check=sanity_check) + (slice(0,self.D),slice(0,self.D))
+                    if np.allclose(self[node][index],0):
+                        # zero-valued index; this operator chain is zero; stopping recursion
+                        zero_valued_chain = True
+                        break
+
+            if zero_valued_chain: continue
+
+            # continuing recursion deeper into the graph
+            self.__chain_construction_recursion(edges_to_indices=new_edges_to_indices,chains=chains,sanity_check=sanity_check)
+
+        return
 
     def _canonical_to_correct_legs(self,T:np.ndarray,node:int) -> np.ndarray:
         """
@@ -725,6 +735,23 @@ class PEPO:
 
         return
 
+    def __mul__(self,x:float):
+        """
+        Multiplication of the whole PEPO with a scalar.
+        """
+        if not np.isscalar(x): raise ValueError("x must be a scalar.")
+        newPEPO = copy.deepcopy(self)
+
+        N = newPEPO.nsites
+        for node in newPEPO: newPEPO[node] = newPEPO[node] * (x**(1/N))
+
+        # since we are inserting additional factors into the PEPO, the tree traversal check will fail
+        newPEPO.check_tree = False
+
+        return newPEPO
+
+    def __rmul__(self,x:float): return self.__mul__(x)
+
     def __matmul__(self,psi:Union["PEPO",PEPS,np.ndarray]) -> Union["PEPO",PEPS,np.ndarray]:
         """
         Action of the operator on the object `psi`.
@@ -940,6 +967,59 @@ class PauliPEPO(PEPO):
         super().__init__(2)
 
         return
+
+
+
+def get_next_edges(G:nx.MultiGraph,edge_set:tuple[tuple[int]],sanity_check:bool=False) -> tuple[tuple[int]]:
+    """
+    Returns the edges that are adjacent to, but not contained in,
+    the set `edge_set`.
+    """
+    if sanity_check:
+        assert network_message_check(G)
+        if not all([G.has_edge(edge[0],edge[1]) for edge in edge_set]): raise ValueError("Some edges are not contained in the graph G.")
+
+    next_edges = ()
+
+    interior = tuple(nx.Graph(incoming_graph_data=edge_set).nodes())
+
+    for node1,node2 in G.edges(nbunch=interior):
+        if (node1 not in interior) or (node2 not in interior):
+            next_edges += (node1,node2),
+
+    return next_edges
+
+def edge_indices_to_site_index(G:nx.MultiGraph,node:int,edges_to_indices:dict[frozenset[int],int],sanity_check:bool=False) -> tuple[int]:
+    """
+    Given a dictionary of edges to indices, returns the
+    index to the local tensor at `node`.
+    """
+    if sanity_check:
+        assert network_message_check(G)
+        if not G.has_node(node): raise ValueError(f"Node {node} not contained in graph G.")
+
+    index = [np.nan for _ in G.adj[node]]
+
+    for neighbor in G.adj[node]: index[G[node][neighbor][0]["legs"][node]] = edges_to_indices[frozenset((node,neighbor))]
+
+    return tuple(index)
+
+def all_edges_present(G:nx.MultiGraph,edges_to_indices:dict[frozenset[int],int],node:int=np.nan,sanity_check:bool=False) -> bool:
+    """
+    Returns `True` if all edges adjacent to `node` have an
+    index in `edges_to_indices`.
+    """
+    if sanity_check: assert network_message_check(G)
+
+    if not np.isnan(node):
+        # checking if al edges adjacent to node are present
+        if sanity_check:
+            if not G.has_node(node): raise ValueError(f"Node {node} not contained in graph G.")
+
+        return all([frozenset((node,neighbor)) in edges_to_indices.keys() for neighbor in G.adj[node]])
+
+    # checking if all edges are present
+    return nx.utils.edges_equal(G.edges(),[tuple(edge) for edge in edges_to_indices.keys()])
 
 if __name__ == "__main__":
     pass
