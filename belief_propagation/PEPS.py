@@ -7,7 +7,7 @@ import networkx as nx
 import cotengra as ctg
 import warnings
 import copy
-from typing import Iterator
+from typing import Union,Iterator
 
 from belief_propagation.utils import network_message_check,crandn,write_exp_bonddim_to_graph,multi_tensor_rank
 
@@ -103,6 +103,9 @@ class PEPS:
             if not "size" in data.keys():
                 warnings.warn(f"No size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
+            if data["size"] == 0:
+                warnings.warn(f"Edge ({node1},{node2}) has size 0.",RuntimeWarning)
+                return False
             if data["size"] != self[node1].shape[data["legs"][node1]] or data["size"] != self[node2].shape[data["legs"][node2]]:
                 warnings.warn(f"Wrong size saved in edge ({node1},{node2}).",RuntimeWarning)
                 return False
@@ -135,7 +138,7 @@ class PEPS:
         return True
 
     @classmethod
-    def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=False,bond_dim_strategy:str="uniform",sanity_check:bool=False,**kwargs):
+    def init_random(cls,G:nx.MultiGraph,D:int,chi:int,rng:np.random.Generator=np.random.default_rng(),real:bool=False,bond_dim_strategy:str="uniform",sanity_check:bool=False,**kwargs) -> "PEPS":
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
         the physical dimension is `D`. Any leg ordering in `G` is not
@@ -169,7 +172,7 @@ class PEPS:
         return cls(G,sanity_check=sanity_check)
 
     @classmethod
-    def init_from_TN(cls,G:nx.MultiGraph,sanity_check:bool=False):
+    def init_from_TN(cls,G:nx.MultiGraph,sanity_check:bool=False) -> "PEPS":
         """
         Initialises a PEPS from a TN by appending dummy physical dimensions
         of size one to the site tensors.
@@ -186,7 +189,7 @@ class PEPS:
         return cls(G=newG,sanity_check=sanity_check)
 
     @classmethod
-    def Dummy(cls,G:nx.MultiGraph,sanity_check:bool=False):
+    def Dummy(cls,G:nx.MultiGraph,sanity_check:bool=False) -> "PEPS":
         """
         Returns a dummy PEPS on graph `G` with physical dimension one.
         """
@@ -199,6 +202,44 @@ class PEPS:
         for node1,node2 in G.edges(): G[node1][node2][0]["size"] = 1
 
         return cls(G=G,sanity_check=sanity_check)
+
+    @classmethod
+    def ProductState(cls,G:nx.MultiGraph,state:Union[np.ndarray,dict[int,np.ndarray]],normalize:bool=True,sanity_check:bool=False) -> "PEPS":
+        """
+        Initialises a product state PEPO. If `state` is an array, it is
+        broadcasted to all sites. If `state` is a dictionary, it is
+        assumed to contain a pure state for every site. The PEPO is
+        normalized to unity, if `normalize=True` (default).
+        """
+        if isinstance(state,np.ndarray):
+            return cls.ProductState(
+                G=G,
+                state={node:state for node in G.nodes()},
+                sanity_check=sanity_check
+            )
+
+        if isinstance(state,dict):
+            # sanity check
+            if not nx.utils.nodes_equal(state.keys(),G.nodes()): raise ValueError("State and graph do not agree in the nodes that they contain.")
+            if any([state[node].ndim != 1 for node in G.nodes()]): raise ValueError("All local states must be pure states.")
+
+            psi = cls.Dummy(G=G,sanity_check=sanity_check)
+
+            for node in psi:
+                old_shape = list(psi[node].shape)
+                old_shape[-1] = state[node].shape[0]
+                newT = np.resize(psi[node],old_shape)
+                newT[...,:] = state[node] / np.sqrt(np.dot(state[node].conj(),state[node])) if normalize else state[node]
+                psi[node] = newT
+
+            # new physical dimension
+            psi.D = state[node].shape[0]
+
+            if sanity_check: assert psi.intact
+
+            return psi
+
+        raise NotImplementedError("PEPS.ProductState not implemented for state of type " + str(type(state)) + ".")
 
     @staticmethod
     def prepare_graph(G:nx.MultiGraph,keep_legs:bool=False,keep_size:bool=False,sanity_check:bool=False) -> nx.MultiGraph:
@@ -309,14 +350,14 @@ class PEPS:
         newPEPS = copy.deepcopy(self)
 
         N = newPEPS.nsites
-        for node in newPEPS.G.nodes(): newPEPS.G.nodes[node]["T"] = newPEPS.G.nodes[node]["T"] * (x**(1/N))
+        for node in newPEPS: newPEPS[node] = newPEPS[node] * (x**(1/N))
 
         return newPEPS
 
     def __rmul__(self,x:float): return self.__mul__(x)
 
     def __repr__(self) -> str:
-        out = f"State on {self.nsites} sites. PEPS is " + ("intact." if self.intact else "not intact.")
+        out = f"State on {self.nsites} sites. Local Hilbert Space of size {self.D}. PEPS is " + ("intact." if self.intact else "not intact.")
         return out
 
         # bond dimensions and multilinear tensor ranks

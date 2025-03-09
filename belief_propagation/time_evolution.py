@@ -27,15 +27,19 @@ def get_brick_wall_layers(op:PEPO,sanity_check:bool=False) -> tuple[tuple[dict[i
 
     singlesite_layers,brick_wall_layers = get_disjoint_subsets_from_opchains(op_chains)
 
-    return (*singlesite_layers,*brick_wall_layers)
+    all_layers = ()
+    if singlesite_layers != ((),): all_layers += (*singlesite_layers,)
+    if brick_wall_layers != ((),): all_layers += (*brick_wall_layers,)
 
-def time_evolution_operator(op:PEPO,trotter_order:int=1,contract:bool=False,sanity_check:bool=False) -> Union[PEPO,tuple[PEPO]]:
+    return all_layers
+
+def operator_exponential(op:PEPO,trotter_order:int=1,contract:bool=False,sanity_check:bool=False) -> Union[PEPO,tuple[PEPO]]:
     """
     Time evolution operator from trotterization. If `contract=True`, multiple
     layers are multiplied together afterwards.
     """
     if trotter_order == 1:
-        op_list = __time_evolution_operator_first_order_trotter(op=op,sanity_check=sanity_check)
+        op_list = __operator_exponential_first_order_trotter(op=op,sanity_check=sanity_check)
 
     else:
         raise NotImplementedError(f"Time evolution from trotterization order {trotter_order} not implemented.")
@@ -50,7 +54,7 @@ def time_evolution_operator(op:PEPO,trotter_order:int=1,contract:bool=False,sani
 
     return contracted_op
 
-def __time_evolution_operator_first_order_trotter(op:PEPO,sanity_check:bool=False) -> tuple[PEPO]:
+def __operator_exponential_first_order_trotter(op:PEPO,sanity_check:bool=False) -> tuple[PEPO]:
     """
     Time evolution operator from first-order trotterization.
     """
@@ -87,7 +91,8 @@ def __PEPO_exp_single_site_op_chains(G:nx.MultiGraph,op_chain_sum:tuple[dict[int
     first_key = tuple(op_chain_sum[0].keys())[0]
     D = op_chain_sum[0][first_key].shape[-1]
 
-    op = Zero(G=G,D=D,sanity_check=sanity_check)
+    op = Identity(G=G,D=D,sanity_check=sanity_check)
+    op.check_tree = False
 
     for op_chain in op_chain_sum:
         for node in op_chain:

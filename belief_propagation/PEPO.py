@@ -378,13 +378,23 @@ class PEPO:
         self.__chain_construction_recursion(edges_to_indices={},chains=operator_chains,sanity_check=sanity_check)
 
         # removing identity operators from the chain, substituting indices with operators
-        for chain in operator_chains:
-            keys = tuple(chain.keys())
-            for key in keys:
+        for iChain,chain in enumerate(operator_chains):
+            # any identities in the chain?
+            is_id = {node:np.allclose(self[node][chain[node]],self.I) for node in chain.keys()}
+
+            if all(is_id.values()):
+                # this chain consists of identities only, and needs special treatment
+                if remove_ids: operator_chains[iChain] = {self.root:chain[self.root]}
+
+                if save_tensors:
+                    for node in operator_chains[iChain].keys():
+                        operator_chains[iChain][node] = self[node][operator_chains[iChain][node]]
+
+            for key in is_id.keys():
                 T = self[key][chain[key]]
 
                 # removing identities
-                if remove_ids and np.allclose(T,self.I):
+                if remove_ids and is_id[key]:
                     chain.pop(key,None)
                     continue
 
@@ -426,8 +436,6 @@ class PEPO:
 
         # which nodes belonog to the unvisited edges?
         next_nodes = set().union(*[set(edge) for edge in next_edges])
-
-        assert sanity_check == sanity_check
 
         for neighbor_indices in itertools.product(*[range(self.G[edge[0]][edge[1]][0]["size"]) for edge in next_edges]):
             # preparing the next iteration
@@ -549,7 +557,6 @@ class PEPO:
         * Are the physical legs the last two dimensions in each tensor?
         * Do the physical legs have the correct sizes?
         * is the information flow in the tree intact?
-        * Is every constituent operator hermitian?
         """
         # are all the necessary attributes defined?
         assert hasattr(self,"D")
@@ -649,7 +656,6 @@ class PEPO:
         for node in self.G.nodes():
             axes = tuple(range(len(self.G.adj[node]))) + (len(self.G.adj[node])+1,len(self.G.adj[node]))
             if not np.allclose(self[node],np.transpose(self[node],axes=axes)):
-                self.view_site(node)
                 return False
 
         return True
@@ -742,11 +748,19 @@ class PEPO:
         if not np.isscalar(x): raise ValueError("x must be a scalar.")
         newPEPO = copy.deepcopy(self)
 
-        N = newPEPO.nsites
-        for node in newPEPO: newPEPO[node] = newPEPO[node] * (x**(1/N))
-
         # since we are inserting additional factors into the PEPO, the tree traversal check will fail
         newPEPO.check_tree = False
+
+        # what we ae really doing is multiplying every operator chain by x;
+        # this is more computationaly intensive, but has the advantage that
+        # the sanity check still works (otherwise, identity operators
+        # would be multiplied by x, which makes the sanity check fail)
+        chains = newPEPO.operator_chains(save_tensors=False)
+
+        for chain in chains:
+            for node,index in chain.items():
+                newPEPO[node][index] *= x
+                break
 
         return newPEPO
 

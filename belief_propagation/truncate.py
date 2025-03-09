@@ -140,7 +140,7 @@ def QR_bottleneck(braket:Braket,node1:int,node2:int,vec1:np.ndarray,vec2:np.ndar
 
     return
 
-def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,return_singvals:bool=True,sanity_check:bool=False,**kwargs) -> tuple[PEPS,dict[frozenset,np.ndarray]]:
+def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,return_singvals:bool=True,min_bond_dim:int=1,sanity_check:bool=False,**kwargs) -> tuple[PEPS,dict[frozenset,np.ndarray]]:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321).
     Singular values below `singval_threshold` are discarded. A `Braket` object can be passed, in which
@@ -152,7 +152,6 @@ def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,
 
     # handling kwargs
     kwargs["iterator_desc_prefix"] = (kwargs["iterator_desc_prefix"] + " | L2BP compression") if "iterator_desc_prefix" in kwargs.keys() else "L2BP compression"
-    kwargs["sanity_check"] = sanity_check
 
     if overlap != None:
         if not isinstance(overlap,Braket): raise ValueError("overlap is not a braket object!")
@@ -164,7 +163,7 @@ def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,
     if overlap == None:
         # BP iteration
         overlap = Braket.Overlap(psi,psi,sanity_check=sanity_check)
-        overlap.BP(**kwargs)
+        overlap.BP(**kwargs,sanity_check=sanity_check)
 
     all_singvals = {}
 
@@ -189,18 +188,27 @@ def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,
 
         # SVD over the bond, and truncation
         U,singvals,Vh = scialg.svd(R1 @ R2,full_matrices=False,overwrite_a=True)
-        nonzero_mask = np.logical_not(np.isclose(singvals,0,atol=singval_threshold))
 
         # saving singular values
         all_singvals[frozenset((node1,node2))] = singvals
 
-        if np.sum(nonzero_mask) == 0:
-            warnings.warn(f"Threshold {singval_threshold:.3e} cuts edge ({node1},{node2}). Setting bond dimension to one.")
-            nonzero_mask[0] = True
+        # for numerical stability, we have to drop all singular values that are close to zero
+        nonzero_mask = singvals != 0
+        # singular values we want to keep, based on singval_threshold
+        threshold_mask = np.logical_not(np.isclose(singvals,0,atol=singval_threshold))
 
-        U = U[:,nonzero_mask]
-        Vh = Vh[nonzero_mask,:]
-        singvals = singvals[nonzero_mask]
+        keep_mask = np.logical_and(nonzero_mask,threshold_mask)
+
+        if sum(nonzero_mask) == 0: raise RuntimeError(f"Edge ({node1},{node2}) is zero-valued.")
+
+        if np.sum(keep_mask) < min_bond_dim and sum(nonzero_mask) > 0:
+            # the singular value threshold is too restrictive
+            for i in range(min(min_bond_dim,sum(nonzero_mask))):
+                keep_mask[i] = True
+
+        U = U[:,keep_mask]
+        Vh = Vh[keep_mask,:]
+        singvals = singvals[keep_mask]
 
         # projectors
         P1 = np.einsum("ij,jk,kl->il",R2,Vh.conj().T,np.diag(1 / np.sqrt(singvals)),optimize=True)

@@ -609,7 +609,13 @@ class Braket(BaseBraket):
                         # self.__contract_tensors_inbound_messages
                         continue
 
-                    self.msg[sending_node][receiving_node] /= np.sum(self.msg[sending_node][receiving_node])
+                    msg_sum = np.sum(self.msg[sending_node][receiving_node])
+
+                    if np.isclose(msg_sum,0):
+                        warnings.warn(f"Message from {sending_node} to {receiving_node} sums to zero. Skipping normalization.",RuntimeWarning)
+                        continue
+
+                    self.msg[sending_node][receiving_node] /= msg_sum
 
             return
 
