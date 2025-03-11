@@ -324,7 +324,7 @@ class BaseBraket:
             assert graph_compatible(bra.G,op.G)
             assert bra.D == op.D and ket.D == op.D
 
-        self.G:nx.MultiGraph = self.prepare_graph(ket.G,True)
+        self.G:nx.MultiGraph = PEPO.prepare_graph(ket.G,True)
         self._bra:PEPS = bra
         self._op:PEPO = op
         self._ket:PEPS = ket

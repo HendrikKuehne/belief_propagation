@@ -104,7 +104,7 @@ class TFI(PauliPEPO):
         0 is the moving particle state, 1 the decay state, and 2 is the vacuum state.
         """
 
-        self.G = super().prepare_graph(G=G,chi=3,sanity_check=sanity_check)
+        self.G = PEPO.prepare_graph(G=G,chi=3,sanity_check=sanity_check)
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
@@ -318,7 +318,7 @@ class Heisenberg(PauliPEPO):
         0 is the moving particle state, 1/2/3 the decay state in x/y/z, and 4 is the vacuum state.
         """
 
-        self.G = super().prepare_graph(G=G,chi=chi,sanity_check=sanity_check)
+        self.G = PEPO.prepare_graph(G=G,chi=chi,sanity_check=sanity_check)
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
@@ -366,7 +366,7 @@ def Zero(G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False) -> P
         Physical dimension `D`.
         """
         op = PEPO(D=D)
-        op.G = op.prepare_graph(G=G,chi=1)
+        op.G = PEPO.prepare_graph(G=G,chi=1)
 
         # root node is node with smallest degree
         op.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]
@@ -394,8 +394,9 @@ def Identity(G:nx.MultiGraph,D:int,dtype=np.complex128,sanity_check:bool=False) 
         # adding local identities
         for node in Id: Id[node][...,:,:] = Id.I
 
-        # enabling tree traversal checks
-        Id.check_tree = True
+        if nx.is_tree(G):
+            # enabling tree traversal checks
+            Id.check_tree = True
 
         if sanity_check: assert Id.intact
 
@@ -424,7 +425,7 @@ def posneg_TFI(G:nx.MultiGraph,J:float=1,g:float=0,sanity_check:bool=False) -> t
     0 is the moving particle state, 1 & 2 are decay states, and 3 is the vacuum state.
     """
 
-    G = pos_op.prepare_graph(G=G,chi=chi,sanity_check=sanity_check)
+    G = PEPO.prepare_graph(G=G,chi=chi,sanity_check=sanity_check)
     pos_op.G = copy.deepcopy(G)
     neg_op.G = copy.deepcopy(G)
 
@@ -571,7 +572,7 @@ def operator_layer(G:nx.MultiGraph,op_chains:tuple[dict[int,np.ndarray]],sanity_
     We need the particle state, and one additional bond dimension for each increment in chain length.
     """
 
-    op.G = op.prepare_graph(G=G,chi=3,sanity_check=sanity_check)
+    op.G = PEPO.prepare_graph(G=G,chi=3,sanity_check=sanity_check)
 
     # root node is node with smallest degree
     op.root = sorted(G.nodes(),key=lambda x: len(G.adj[x]))[0]

@@ -38,13 +38,13 @@ class DMRG:
 
         for node1,node2 in self.overlap.G.edges():
             for sending_node,receiving_node in itertools.permutations((node1,node2)):
-                chi = sum(expval.op.chi for expval in self.expvals)
+                chi = sum(expval.op.G[sending_node][receiving_node][0]["size"] for expval in self.expvals)
                 msg = np.full(shape=(self.overlap.bra.G[sending_node][receiving_node][0]["size"],chi,self.overlap.ket.G[sending_node][receiving_node][0]["size"]),fill_value=np.inf) + 0j
 
-                full_chi = 0
+                chi_filled = 0
                 for expval in self.expvals:
-                    msg[:,full_chi:full_chi+expval.op.chi,:] = expval.msg[sending_node][receiving_node]
-                    full_chi += expval.op.chi
+                    msg[:,chi_filled:chi_filled+expval.op.G[sending_node][receiving_node][0]["size"],:] = expval.msg[sending_node][receiving_node]
+                    chi_filled += expval.op.G[sending_node][receiving_node][0]["size"]
 
                 assert np.all(np.isfinite(msg))
                 self._msg[sending_node][receiving_node] = msg
@@ -60,16 +60,17 @@ class DMRG:
 
         self._total_op_T = {node:None for node in self.overlap.G.nodes()}
 
-        chi = sum(expval.op.chi for expval in self.expvals)
         for node in self.overlap.G.nodes():
-            H = np.zeros(shape=tuple(chi for _ in self.overlap.G.adj[node]) + (self.D,self.D)) + 0j
+            chi = {neighbor:sum(expval.op.G[node][neighbor][0]["size"] for expval in self.expvals) for neighbor in self.overlap.G.adj[node]}
+            H = np.zeros(shape=tuple(chi[neighbor] for neighbor in self.overlap.G.adj[node]) + (self.D,self.D)) + 0j
 
-            full_chi = 0
+            chi_filled = {neighbor:0 for neighbor in self.overlap.G.adj[node]}
             # filling the Hamiltonian
             for expval in self.expvals:
-                index = tuple(slice(full_chi,full_chi+expval.op.chi) for _ in self.overlap.G.adj[node]) + (slice(0,self.D),slice(0,self.D))
+                index = tuple(slice(chi_filled[neighbor],chi_filled[neighbor]+expval.op.G[node][neighbor][0]["size"]) for neighbor in self.overlap.G.adj[node]) + (slice(0,self.D),slice(0,self.D))
                 H[index] = expval.op[node]
-                full_chi += expval.op.chi
+
+                for neighbor in self.overlap.G.adj[node]: chi_filled[neighbor] += expval.op.G[node][neighbor][0]["size"]
 
             self._total_op_T[node] = H
 
@@ -177,9 +178,11 @@ class DMRG:
         BP iteration on the overlap and all expvals. Total messages
         and local PEPO tensors are formed, if BP converged.
         """
-        if not self.overlap.converged: self.overlap.BP(normalize_after=True,new_messages=True,sanity_check=sanity_check,**kwargs)
+        iterator_desc_prefix = kwargs.pop("iterator_desc_prefix") if "iterator_desc_prefix" in kwargs.keys() else "DMRG"
+
+        if not self.overlap.converged: self.overlap.BP(normalize_after=True,new_messages=True,sanity_check=sanity_check,iterator_desc_prefix=iterator_desc_prefix + f" | overlap",**kwargs)
         for i in range(len(self.expvals)):
-            if not self.expvals[i].converged: self.expvals[i].BP(normalize_after=True,new_messages=True,sanity_check=sanity_check,**kwargs)
+            if not self.expvals[i].converged: self.expvals[i].BP(normalize_after=True,new_messages=True,sanity_check=sanity_check,iterator_desc_prefix=iterator_desc_prefix + f" | expval {i}",**kwargs)
 
         if self.converged:
             self.__assemble_messages(sanity_check=sanity_check)
@@ -199,6 +202,9 @@ class DMRG:
         thereby updating the environments.
         """
         if sanity_check: assert self.intact
+
+        # handling kwargs
+        iterator_desc_prefix = (kwargs.pop("iterator_desc_prefix") + " | DMRG | ") if "iterator_desc_prefix" in kwargs.keys() else "DMRG | "
 
         # calculating environments and previous energy
         self.BP(sanity_check=sanity_check,**kwargs)
@@ -232,7 +238,7 @@ class DMRG:
             if gauge: self.gauge(sanity_check=sanity_check,tree=self.expvals[0].op.tree,nodes=(node,))
 
             # calculating new environments
-            self.BP(sanity_check=sanity_check,**kwargs)
+            self.BP(sanity_check=sanity_check,iterator_desc_prefix=iterator_desc_prefix+f"node {node}",**kwargs)
         Enext = self.E0
 
         return np.abs(Eprev - Enext)

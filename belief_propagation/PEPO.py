@@ -183,7 +183,7 @@ class PEPO:
 
             for chain in chains:
                 ops = tuple(
-                    scisparse.coo_array(self[node][chain[node]]) if node in chain.keys()
+                    scisparse.coo_array(chain[node]) if node in chain.keys()
                     else scisparse.eye_array(self.D,format="coo")
                     for node in nodes[::-1]
                 )
@@ -258,41 +258,6 @@ class PEPO:
                 print(index[:-2],":\n",self[node][index],"\n")
 
         return
-
-    def prepare_graph(self,G:nx.MultiGraph,chi:int=np.nan,sanity_check:bool=False) -> nx.MultiGraph:
-        """
-        Creates a shallow copy of G, and adds the keys `legs`, `trace` and `indices`
-        to the edges. If `np.isnan(chi)` is False, the size `chi` will be added to
-        each edge.
-
-        The leg ordering is preserved, `trace` is set to `False` and, accordingly,
-        `indices` to `None`.
-
-        To be used in `__init__` of subclasses of `PEPO`: `G` is the graph from which
-        the operator inherits it's underlying graph.
-        """
-        # shallow copy of G
-        newG = nx.MultiGraph(G.edges())
-
-        # adding additional information to every edge
-        for node1,node2,legs in newG.edges(data="legs",keys=False):
-            newG[node1][node2][0]["trace"] = False
-            newG[node1][node2][0]["indices"] = None
-            newG[node1][node2][0]["legs"] = {}
-
-        for node in newG.nodes:
-            # adding to the adjacent edges which index they correspond to
-            for i,neighbor in enumerate(newG.adj[node]):
-                newG[node][neighbor][0]["legs"][node] = i
-
-        if not np.isnan(chi):
-            if not np.isclose(int(chi),chi): raise ValueError("Size must be an integer.")
-            # writing size chi to each edge
-            for node1,node2 in newG.edges(keys=False): newG[node1][node2][0]["size"] = int(chi)
-
-        if sanity_check: assert network_message_check(newG)
-
-        return newG
 
     def legs_dict(self,node,sanity_check:bool=False) -> dict:
         """
@@ -678,6 +643,47 @@ class PEPO:
             if not np.allclose(T[index],0):
                 print(index[:-2],":\n",T[index],"\n")
 
+    @staticmethod
+    def prepare_graph(G:nx.MultiGraph,chi:int=np.nan,sanity_check:bool=False) -> nx.MultiGraph:
+        """
+        Creates a shallow copy of G, and adds the keys `legs`, `trace` and `indices`
+        to the edges. If `np.isnan(chi)` is False, the size `chi` will be added to
+        each edge.
+
+        The leg ordering is preserved, `trace` is set to `False` and, accordingly,
+        `indices` to `None`.
+
+        To be used in `__init__` of subclasses of `PEPO`: `G` is the graph from which
+        the operator inherits it's underlying graph.
+        """
+        # shallow copy of G
+        newG = nx.MultiGraph(G.edges())
+
+        # adding additional information to every edge
+        for node1,node2,legs in newG.edges(data="legs",keys=False):
+            newG[node1][node2][0]["trace"] = False
+            newG[node1][node2][0]["indices"] = None
+            newG[node1][node2][0]["legs"] = {}
+
+        for node in newG.nodes:
+            # adding to the adjacent edges which index they correspond to
+            for i,neighbor in enumerate(newG.adj[node]):
+                newG[node][neighbor][0]["legs"][node] = i
+
+        if not np.isnan(chi):
+            if not np.isinf(chi):
+                if not np.isclose(int(chi),chi):
+                    raise ValueError("Size must be an integer.")
+                # writing size chi to each edge
+                for node1,node2 in newG.edges(keys=False): newG[node1][node2][0]["size"] = int(chi)
+            else:
+                # writing size chi to each edge
+                for node1,node2 in newG.edges(keys=False): newG[node1][node2][0]["size"] = chi
+
+        if sanity_check: assert network_message_check(newG)
+
+        return newG
+
     @classmethod
     def from_graphs(cls,G:nx.MultiGraph,tree:nx.DiGraph,check_tree:bool=True,sanity_check:bool=False):
         """
@@ -905,7 +911,7 @@ class PEPO:
         res.check_tree = False # TODO: this is unelegant, and could be (more or less) easily avoided; see TODO in README
 
         # graph for the result with correct legs and sizes
-        res.G = res.prepare_graph(lhs.G)
+        res.G = PEPO.prepare_graph(lhs.G)
 
         # saving new sizes in the edges
         for node1,node2 in res.G.edges():
@@ -983,6 +989,10 @@ class PauliPEPO(PEPO):
         return
 
 
+
+# -------------------------------------------------------------------------------
+#                   Functions for PEPO.operator_chains
+# -------------------------------------------------------------------------------
 
 def get_next_edges(G:nx.MultiGraph,edge_set:tuple[tuple[int]],sanity_check:bool=False) -> tuple[tuple[int]]:
     """

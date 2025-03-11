@@ -16,7 +16,7 @@ from belief_propagation.braket import Braket
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
 from belief_propagation.networks import expose_edge
-from belief_propagation.utils import delta_tensor
+from belief_propagation.utils import delta_tensor,graph_compatible
 
 def make_BP_informed(truncation_func:Callable) -> Callable:
     """
@@ -140,21 +140,40 @@ def QR_bottleneck(braket:Braket,node1:int,node2:int,vec1:np.ndarray,vec2:np.ndar
 
     return
 
-def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,return_singvals:bool=True,min_bond_dim:int=1,sanity_check:bool=False,**kwargs) -> tuple[PEPS,dict[frozenset,np.ndarray]]:
+def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,return_singvals:bool=True,min_bond_dim:Union[int,nx.MultiGraph]=1,max_bond_dim:Union[int,nx.MultiGraph]=np.inf,verbose:bool=False,sanity_check:bool=False,**kwargs) -> tuple[PEPS,dict[frozenset,np.ndarray]]:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321).
     Singular values below `singval_threshold` are discarded. A `Braket` object can be passed, in which
     case it's messages will be used. `kwargs` are passed to
     `Braket.BP`. Returns the gauged state `psi` and, if `return_singvals = True`, a dictionary containing the singular values
     over every edge.
+
+    The minimum and maximum bond dimensions can be specified as `nx.MultiGraph`, in which
+    case it is assumed that each edge contains the respective value for the edges in `psi`.
+
+    The minimum magnitude of singular values (determined by `singval_threshold`) and the maximum
+    bond dimension (determined by `max_bond_dim`) are combined using a logical and. The minimum
+    size takes precedent over the maximum size.
     """
     if sanity_check: assert psi.intact
+
+    # preparing target edge sizes
+    if not isinstance(min_bond_dim,nx.MultiGraph): min_bond_dim = PEPO.prepare_graph(G=psi.G,chi=min_bond_dim,sanity_check=sanity_check)
+    if not isinstance(max_bond_dim,nx.MultiGraph): max_bond_dim = PEPO.prepare_graph(G=psi.G,chi=max_bond_dim,sanity_check=sanity_check)
+
+    if not graph_compatible(psi.G,min_bond_dim): raise ValueError("Minimum bond dimension and state have non-compatible graphs.")
+    if not graph_compatible(psi.G,max_bond_dim): raise ValueError("Maximum bond dimension and state have non-compatible graphs.")
+
+    for node1,node2 in psi.G.edges():
+        if min_bond_dim[node1][node2][0]["size"] > max_bond_dim[node1][node2][0]["size"]:
+            warnings.warn(f"Minimum bond dimension {min_bond_dim} on edge ({node1},{node2}) is larger than maximum bond dimension {max_bond_dim}. Setting bond dimension to unlimited. This may increase runtime drastically.",RuntimeWarning)
+            max_bond_dim[node1][node2][0]["size"] = np.inf
 
     # handling kwargs
     kwargs["iterator_desc_prefix"] = (kwargs["iterator_desc_prefix"] + " | L2BP compression") if "iterator_desc_prefix" in kwargs.keys() else "L2BP compression"
 
     if overlap != None:
-        if not isinstance(overlap,Braket): raise ValueError("overlap is not a braket object!")
+        if not isinstance(overlap,Braket): raise ValueError("Overlap is not a braket object!")
         if sanity_check: assert overlap.intact
         if not overlap.converged:
             warnings.warn("Messages in overlap are not converged. Running BP iteration.",RuntimeWarning)
@@ -163,12 +182,16 @@ def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,
     if overlap == None:
         # BP iteration
         overlap = Braket.Overlap(psi,psi,sanity_check=sanity_check)
-        overlap.BP(**kwargs,sanity_check=sanity_check)
+        overlap.BP(**kwargs,verbose=verbose,sanity_check=sanity_check)
 
     all_singvals = {}
 
-    # new state
+    # newly compressed state
     newpsi = copy.deepcopy(psi)
+
+    # runtime diagnosis
+    old_sizes = ()
+    new_sizes = ()
 
     # compressing every edge
     for node1,node2 in psi.G.edges():
@@ -192,18 +215,24 @@ def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,
         # saving singular values
         all_singvals[frozenset((node1,node2))] = singvals
 
-        # for numerical stability, we have to drop all singular values that are close to zero
+        # for numerical stability, we have to drop all zero singular values
         nonzero_mask = singvals != 0
         # singular values we want to keep, based on singval_threshold
         threshold_mask = np.logical_not(np.isclose(singvals,0,atol=singval_threshold))
+        # singular values we want to keep, based on the maximum size of this edge
+        maxsize_mask = np.arange(len(singvals)) < max_bond_dim[node1][node2][0]["size"]
 
-        keep_mask = np.logical_and(nonzero_mask,threshold_mask)
+        keep_mask = np.logical_and(np.logical_and(nonzero_mask,threshold_mask),maxsize_mask)
+
+        # saving values for runtime diagnosis
+        old_sizes += (len(keep_mask),)
+        new_sizes += (sum(keep_mask),)
 
         if sum(nonzero_mask) == 0: raise RuntimeError(f"Edge ({node1},{node2}) is zero-valued.")
 
-        if np.sum(keep_mask) < min_bond_dim and sum(nonzero_mask) > 0:
+        if np.sum(keep_mask) < min_bond_dim[node1][node2][0]["size"]:
             # the singular value threshold is too restrictive
-            for i in range(min(min_bond_dim,sum(nonzero_mask))):
+            for i in range(min(min_bond_dim[node1][node2][0]["size"],sum(nonzero_mask))):
                 keep_mask[i] = True
 
         U = U[:,keep_mask]
@@ -240,6 +269,13 @@ def L2BP_compression(psi:PEPS,singval_threshold:float=1e-10,overlap:Braket=None,
 
         # updating size of edge
         newpsi.G[node1][node2][0]["size"] = P1.shape[1]
+
+    if False:
+        compression_ratios = tuple(new_sizes[i] / old_sizes[i] for i in range(len(old_sizes)))
+        print("L2BP compression:")
+        print(f"    Mean old size:          {np.mean(old_sizes):7.3f} +- {np.std(old_sizes):7.3f}")
+        print(f"    Mean new size:          {np.mean(new_sizes):7.3f} +- {np.std(new_sizes):7.3f}")
+        print(f"    Mean compression ratio: {np.mean(compression_ratios):7.3f} +- {np.std(compression_ratios):7.3f}")
 
     return (newpsi,all_singvals) if return_singvals else newpsi
 
