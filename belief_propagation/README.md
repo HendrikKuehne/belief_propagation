@@ -15,7 +15,7 @@
     * This necessitates handling the tree traversal; so far (5th of February), I had to disable the tree traversal tests in `PEPO.intact`, since the way I implemented summation of PEPOs is not compatible with the check I had so far. I don't think this would be hard to implement, it just requires some bookkeeping.
   * **ToDo** Check `PEPO.hermitian`; it somehow fails for the square Ising model, calculated using `PEPO.__matmul__`.
     * The reason is, probably, that factors `1j` get mixed up (wander from one virtual index to another). I suspect this because the sanity check still works, i.e. every local operator is still proportional to a Pauli matrix. Is there a simple, concise way to test if a PEPO is hermitian in this case?
-  * **ToDo** Complete imnplementation of `hamiltonians.operator_layer`
+  * **ToDo** Complete implementation of `hamiltonians.operator_layer`
   * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues. Tested against Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master).
 * **`PEPS.py`** PEPS on arbitrary graphs.
   * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
@@ -25,6 +25,7 @@
     * Pancotti & Gray stack all the tensors and the messages s.t. the BP algorithm becomes a vector iteration ([arxiv:2306.15004](https://arxiv.org/abs/2306.15004))
     * :arrows_counterclockwise: parallelize using [Ray](https://docs.ray.io/en/latest/ray-overview/getting-started.html) - What I have done so far is actually slower than the straightforward implementation. The overhead seems to be too large, maybe I should think this through a little more thoroughly.
   * **ToDo** Smarter discrimination between cases in `Braket.contract`.
+* **`dmrg.py`** DMRG on arbitrary graphs.
   * **ToDo** Optimize local updates; Lanczos algorithm? (In python implemented, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/))
   * **ToDo** The implementation of the DMRG class is wildly inefficient (at least in terms of memory) because the overlap $\braket{\psi|\psi}$ and the expectation value $\braket{\psi|H|\psi}$ are both stored as full `Braket` objects, although they contain essentially the same data
   * **ToDo** Normalize states after DMRG algorithm

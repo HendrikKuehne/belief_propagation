@@ -21,6 +21,9 @@ datasets/
 # Mac
 .DS_Store
 
+# VScode
+.vscode/
+
 # ignore Latex temporary files
 *.aux
 *.bbl

@@ -7,7 +7,7 @@ import networkx as nx
 import cotengra as ctr
 
 from belief_propagation.utils import network_intact_check,network_message_check
-from belief_propagation.old.networks_old import merge_edges
+from belief_propagation.old.networks import merge_edges
 
 def neighborhood(G:nx.MultiGraph,rootnode:int,r:int=0,sanity_check:bool=False) -> tuple[set,set]:
     """
