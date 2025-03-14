@@ -4,7 +4,7 @@ Time evolution of PEPO operators.
 
 __all__ = ["get_brick_wall_layers", "operator_exponential"]
 
-from typing import Union
+from typing import Union, Tuple, Dict
 
 import numpy as np
 import networkx as nx
@@ -21,7 +21,7 @@ from belief_propagation.utils import (
 def get_brick_wall_layers(
         op: PEPO,
         sanity_check: bool = False
-    ) -> tuple[tuple[dict[int, tuple]]]:
+    ) -> Tuple[Tuple[Dict[int, tuple]]]:
     """
     Decomposes a PEPO into multiple layers based on the brick wall
     layout. This is accomplished by decomposing the PEPO into operator
@@ -48,7 +48,7 @@ def operator_exponential(
         trotter_order: int = 1,
         contract: bool = False,
         sanity_check: bool = False
-    ) -> Union[PEPO, tuple[PEPO]]:
+    ) -> Union[PEPO, Tuple[PEPO]]:
     """
     Time evolution operator from trotterization. If `contract=True`,
     multiple layers are multiplied together afterwards.
@@ -78,7 +78,7 @@ def operator_exponential(
 def __operator_exponential_first_order_trotter(
         op: PEPO,
         sanity_check: bool = False
-    ) -> tuple[PEPO]:
+    ) -> Tuple[PEPO]:
     """
     Time evolution operator from first-order trotterization.
     """
@@ -112,7 +112,7 @@ def __operator_exponential_first_order_trotter(
 
 def __PEPO_exp_single_site_op_chains(
         G: nx.MultiGraph,
-        op_chain_sum: tuple[dict[int, np.ndarray]],
+        op_chain_sum: Tuple[Dict[int, np.ndarray]],
         sanity_check: bool = False
     ) -> PEPO:
     """
@@ -143,7 +143,7 @@ def __PEPO_exp_single_site_op_chains(
 
 def __PEPO_exp_two_site_op_chains(
         G: nx.MultiGraph,
-        op_chain_sum: tuple[dict[int, np.ndarray]],
+        op_chain_sum: Tuple[Dict[int, np.ndarray]],
         sanity_check: bool = False
     ) -> PEPO:
     """

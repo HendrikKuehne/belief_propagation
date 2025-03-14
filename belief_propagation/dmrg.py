@@ -5,6 +5,7 @@ DMRG on Braket-objects. Contains the DMRG-class.
 __all__ = ["DMRG",]
 
 import itertools
+from typing import Dict, Tuple
 
 import numpy as np
 import networkx as nx
@@ -559,7 +560,7 @@ class DMRG:
         return
 
     @property
-    def msg(self) -> dict[int, dict[int, np.ndarray]]:
+    def msg(self) -> Dict[int, Dict[int, np.ndarray]]:
         """
         Messages on the total expval. These are formed as direct
         products of messages on the individual expvals.
@@ -691,7 +692,7 @@ class DMRG:
 
     def __init__(
             self,
-            oplist: tuple[PEPO],
+            oplist: Tuple[PEPO],
             psi_init: PEPS = None,
             chi: int = None,
             sanity_check: bool = False,
@@ -729,7 +730,7 @@ class DMRG:
         self.D = oplist[0].D
         """Physical dimension."""
 
-        self.expvals: tuple[Braket] = tuple(
+        self.expvals: Tuple[Braket] = tuple(
             Braket.Expval(psi=psi_init, op=op, sanity_check=sanity_check)
             for op in oplist
         )
@@ -737,12 +738,12 @@ class DMRG:
         self.overlap: Braket = Braket.Overlap(psi1=psi_init, psi2=psi_init)
         """Norm of the current state."""
 
-        self._msg: dict[int, dict[int, np.ndarray]] = None
+        self._msg: Dict[int, Dict[int, np.ndarray]] = None
         """
         Messages on the total expval. Formed as direct products of
         expval messages.
         """
-        self._total_op_T:dict[int,np.ndarray] = None
+        self._total_op_T:Dict[int,np.ndarray] = None
         """
         Total local PEPO tensors. Formed as direct products of
         constituent PEPO tensors.

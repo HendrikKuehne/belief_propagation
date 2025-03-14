@@ -23,6 +23,7 @@ datasets/
 
 # VScode
 .vscode/
+*.code-workspace
 
 # ignore Latex temporary files
 *.aux

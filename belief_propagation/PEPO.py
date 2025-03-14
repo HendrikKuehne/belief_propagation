@@ -6,7 +6,7 @@ __all__ = ["PEPO", "PauliPEPO"]
 
 import warnings
 import itertools
-from typing import Union,Iterable,Iterator
+from typing import Union, Iterable, Iterator, Tuple, List, Dict, FrozenSet
 import copy
 
 import numpy as np
@@ -474,7 +474,7 @@ class PEPO:
             save_tensors: bool = True,
             remove_ids: bool = True,
             sanity_check: bool = False
-        ) -> tuple[dict[int, np.ndarray]]:
+        ) -> Tuple[Dict[int, np.ndarray]]:
         """
         Returns all operator chains. An operator chain is a collection
         of operators. The summation of the tensor products of all operator chains
@@ -491,7 +491,7 @@ class PEPO:
         # why a recursion? For large graphs, simply iterating through all
         # indices to find valid chains might take prohibitively long
 
-        operator_chains: list[dict] = []
+        operator_chains: List[dict] = []
 
         self.__chain_construction_recursion(
             edges_to_indices={},
@@ -534,8 +534,8 @@ class PEPO:
 
     def __chain_construction_recursion(
             self,
-            edges_to_indices: dict[frozenset[int], int],
-            chains: list[dict[int, tuple[int]]],
+            edges_to_indices: Dict[FrozenSet[int], int],
+            chains: List[Dict[int, Tuple[int]]],
             sanity_check: bool = False
         ) -> None:
         """
@@ -1451,9 +1451,9 @@ class PauliPEPO(PEPO):
 
 def get_next_edges(
         G: nx.MultiGraph,
-        edge_set: tuple[tuple[int]],
+        edge_set: Tuple[Tuple[int]],
         sanity_check: bool = False
-    ) -> tuple[tuple[int]]:
+    ) -> Tuple[Tuple[int]]:
     """
     Returns the edges that are adjacent to, but not contained in, the
     set `edge_set`.
@@ -1477,9 +1477,9 @@ def get_next_edges(
 def edge_indices_to_site_index(
         G: nx.MultiGraph,
         node: int,
-        edges_to_indices: dict[frozenset[int], int],
+        edges_to_indices: Dict[FrozenSet[int], int],
         sanity_check: bool = False
-    ) -> tuple[int]:
+    ) -> Tuple[int]:
     """
     Given a dictionary of edges to indices, returns the index to the
     local tensor at `node`.
@@ -1500,7 +1500,7 @@ def edge_indices_to_site_index(
 
 def all_edges_present(
         G: nx.MultiGraph,
-        edges_to_indices: dict[frozenset[int], int],
+        edges_to_indices: Dict[FrozenSet[int], int],
         node: int = None,
         sanity_check: bool = False
     ) -> bool:

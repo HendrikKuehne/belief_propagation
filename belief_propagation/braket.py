@@ -13,7 +13,7 @@ __all__ = ["Braket",]
 import copy
 import warnings
 import itertools
-from typing import Iterator
+from typing import Iterator, Tuple, Dict
 
 import numpy as np
 import networkx as nx
@@ -399,14 +399,14 @@ class BaseBraket:
 
         return
 
-    def __getitem__(self, node:int) -> tuple[np.ndarray]:
+    def __getitem__(self, node:int) -> Tuple[np.ndarray]:
         """
         Subscripting with a node gives the tensor stack
         `(bra[node],op[node],ket[node])` at that node.
         """
         return (self._bra[node], self._op[node], self._ket[node])
 
-    def __setitem__(self, node: int, Tstack: tuple[np.ndarray]) -> None:
+    def __setitem__(self, node: int, Tstack: Tuple[np.ndarray]) -> None:
         """
         Changing tensors directly.
         """
@@ -688,7 +688,7 @@ class Braket(BaseBraket):
             new_messages: bool,
             msg_init: str,
             sanity_check: bool
-        ) -> tuple[float]:
+        ) -> Tuple[float]:
         """
         Performs a message passing iteration. Returns the change `eps`
         in maximum message norm for every iteration.
@@ -1176,7 +1176,7 @@ class Braket(BaseBraket):
         return True
 
     @property
-    def edge_T(self) -> dict[int, dict[int, np.ndarray]]:
+    def edge_T(self) -> Dict[int, Dict[int, np.ndarray]]:
         """
         Transformations on edges. First key sending node, second key
         receiving node.
@@ -1294,12 +1294,12 @@ class Braket(BaseBraket):
         # sanity check
         super().__init__(bra=bra, op=op, ket=ket, sanity_check=False)
 
-        self.msg: dict[int, dict[int, np.ndarray]] = None
+        self.msg: Dict[int, Dict[int, np.ndarray]] = None
         """
         Messages. First key sending node, second key receiving node.
         """
 
-        self._edge_T: dict[int, dict[int, np.ndarray]] = {
+        self._edge_T: Dict[int, Dict[int, np.ndarray]] = {
             sender: {
                 receiver: np.full(shape=(1,), fill_value=np.nan)
                 for receiver in self.G.adj[sender]

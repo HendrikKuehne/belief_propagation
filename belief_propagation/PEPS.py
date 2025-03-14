@@ -6,7 +6,7 @@ __all__ = ["PEPS",]
 
 import warnings
 import copy
-from typing import Union,Iterator
+from typing import Union, Iterator, Dict
 
 import numpy as np
 import networkx as nx
@@ -273,7 +273,7 @@ class PEPS:
     def ProductState(
             cls,
             G: nx.MultiGraph,
-            state: Union[np.ndarray, dict[int, np.ndarray]],
+            state: Union[np.ndarray, Dict[int, np.ndarray]],
             normalize: bool = True,
             sanity_check: bool = False
         ) -> "PEPS":

@@ -15,7 +15,7 @@ __all__ = [
 
 import itertools
 import copy
-from typing import Callable,Union
+from typing import Callable, Union, Tuple, Dict
 import warnings
 
 import numpy as np
@@ -287,7 +287,7 @@ def L2BP_compression(
         verbose: bool = False,
         sanity_check: bool = False,
         **kwargs
-    ) -> tuple[PEPS ,dict[frozenset, np.ndarray]]:
+    ) -> Tuple[PEPS ,Dict[frozenset, np.ndarray]]:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321
     (2024)](https://doi.org/10.1126/sciadv.adk4321). Singular values
@@ -505,7 +505,7 @@ def L2BP_compression(
 def QR_gauging(
         psi: PEPS,
         tree: nx.DiGraph = None,
-        nodes: tuple[int] = None,
+        nodes: Tuple[int] = None,
         sanity_check: bool = False,
         **kwargs
     ) -> PEPS:
@@ -600,7 +600,7 @@ def feynman_cut(
         node1: int,
         node2: int,
         sanity_check: bool = False
-    ) -> Union[tuple[PEPS], tuple[PEPO], tuple[Braket]]:
+    ) -> Union[Tuple[PEPS], Tuple[PEPO], Tuple[Braket]]:
     """
     Cuts the edge `(node1, node2)` in `obj`, and returns all resulting
     objects.

@@ -14,6 +14,7 @@ __all__ = [
 
 import copy
 import warnings
+from typing import Dict, Tuple
 
 import numpy as np
 import networkx as nx
@@ -481,7 +482,7 @@ def posneg_TFI(
         J: float = 1,
         g: float = 0,
         sanity_check: bool = False
-    ) -> tuple[PEPO, PEPO]:
+    ) -> Tuple[PEPO, PEPO]:
     """
     Constructs two PEPOs, where one contains the positive-semidefinite
     part of the TFI and the other contains the negative-semidefinite
@@ -609,7 +610,7 @@ def posneg_TFI(
 
 def operator_chain(
         G: nx.MultiGraph,
-        ops: dict[int, np.ndarray],
+        ops: Dict[int, np.ndarray],
         sanity_check: bool = False
     ) -> PEPO:
     """
@@ -650,7 +651,7 @@ def operator_chain(
 
 def operator_layer(
         G: nx.MultiGraph,
-        op_chains: tuple[dict[int, np.ndarray]],
+        op_chains: Tuple[Dict[int, np.ndarray]],
         sanity_check: bool = False
     ) -> PEPO:
     """

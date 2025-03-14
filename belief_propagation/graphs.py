@@ -15,6 +15,7 @@ __all__ = [
 ]
 
 import itertools
+from typing import Tuple
 
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -384,7 +385,7 @@ def line(N: int) -> nx.MultiGraph:
 def loop_hist(
         G: nx.MultiGraph,
         bin_edges: np.ndarray = ()
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Creates a histogram of the loop lengths of `G`.
     """
