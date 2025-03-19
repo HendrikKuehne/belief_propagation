@@ -123,6 +123,9 @@ This will be updated continuously, as questions come to mind.
     * Jonathan S. Yedidia, William T. Freeman, Yair Weiss  
       Constructing Free-Energy Approximations and Generalized Belief Propagation Algorithms  
       [IEEE Trans. Inf. Theory, vol. 51, no. 7, pp. 2282–2312, Jul. 2005.](10.1109/TIT.2005.850085)
+    * Loop Series Expansions for Tensor Networks  
+      Glen Evenbly, Nicola Pancotti, Ashley Milsted, Johnnie Gray, Garnet Kin-Lic Chan  
+      [arXiv:2409.03108](https://arxiv.org/abs/2409.03108)
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  
@@ -141,12 +144,11 @@ This will be updated continuously, as questions come to mind.
     Efficient Tensor Network Simulation of IBM’s Eagle Kicked Ising Experiment  
     [PRX Quantum 5, 010308 (2024)](https://doi.org/10.1103/PRXQuantum.5.010308) ([arXiv:2306.14887](https://arxiv.org/abs/2306.14887))
   * Tomislav Begusic, Johnnie Gray, Garnet Kin-Lic Chan  
-    Fast and converged classical simulations of evidence for the utility of quantum
+    Fast and converged classical simulations of evidence for the utility of quantum computing before fault tolerance  
+    [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321) ([arXiv:2308.05077](https://arxiv.org/abs/2308.05077))
   * Geoffrey R. Grimmett, Tobias J. Osborne & Petra F. Scudo  
     Bounded Entanglement Entropy in the Quantum Ising Model  
     [J Stat Phys 178, 281–296 (2020)](https://doi.org/10.1007/s10955-019-02432-y) ([arXiv:1906.11954](https://arxiv.org/abs/1906.11954))
-computing before fault tolerance  
-    [Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321) ([arXiv:2308.05077](https://arxiv.org/abs/2308.05077))
 * Mathematics / Numerics
   * A. N. Tikhonov , A. V. Goncharsky , V. V. Stepanov , A. G. Yagola  
     Numerical Methods for the Solution of Ill-Posed Problems  

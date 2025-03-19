@@ -14,6 +14,8 @@ setup(
         "matplotlib",
         "cotengra",
         "scipy",
-        "sparse"
+        "sparse",
+        "ray",
+        "tqdm",
     ],
 )

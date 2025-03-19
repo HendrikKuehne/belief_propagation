@@ -58,9 +58,10 @@ def crandn(
 
 def delta_tensor(
         nLegs: int,
-        chi: int
+        chi: int,
+        dtype=np.complex128
     ) -> np.ndarray:
-    T = np.zeros(shape = nLegs * [chi])
+    T = np.zeros(shape=nLegs * [chi], dtype=dtype)
     idx = nLegs * (np.arange(chi),)
     T[idx] = 1
     return T
@@ -539,15 +540,20 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
     if not isinstance(G, nx.MultiGraph):
         raise TypeError("G must be a MultiGraph.")
 
+    # Is the graph connected?
+    if not nx.is_connected(G=G):
+        warnings.warn("The graph G must be connected.", UserWarning)
+        return False
+
     # two legs in every edge's legs attribute?
-    for node1,node2,key in G.edges(keys=True):
+    for node1, node2, key in G.edges(keys=True):
         if G[node1][node2][key]["trace"]:
             # trace edge
             if len(G[node1][node2][key]["indices"]) != 2:
                 warnings.warn(
                     "".join((
                         "Wrong number of legs in trace edge",
-                        f"({node1},{node2},{key})."
+                        f"({node1}, {node2}, {key})."
                     )),
                     UserWarning
                 )
@@ -556,7 +562,7 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
             # default edge
             if len(G[node1][node2][key]["legs"].keys()) != 2:
                 warnings.warn(
-                    f"Wrong number of legs in edge ({node1},{node2},{key}).",
+                    f"Wrong number of legs in edge ({node1}, {node2}, {key}).",
                     UserWarning
                 )
                 return False
@@ -588,25 +594,34 @@ def network_message_check(G: nx.MultiGraph) -> bool:
     """
     if not network_intact_check(G): return False
 
-    for node1,node2,key,data in G.edges(keys=True, data=True):
+    for node1, node2, key, data in G.edges(keys=True, data=True):
         if node1 == node2:
-            warnings.warn(f"Trace edge from {node1} to {node2}.")
+            warnings.warn(f"Trace edge from {node1} to {node2}.", UserWarning)
             return False
+
         if key != 0:
-            warnings.warn(f"Multiple edges connecting {node1} and {node2}.")
+            warnings.warn(
+                f"Multiple edges connecting {node1} and {node2}.",
+                UserWarning
+            )
             return False
+
         if "msg" in data.keys():
             if data["msg"] != {}:
                 if (not node1 in data["msg"].keys()
                     or not node2 in data["msg"].keys()):
                     warnings.warn(
-                        f"Wrong nodes in msg-value of edge ({node1},{node2}).",
+                        f"Wrong node in msg-value of edge ({node1}, {node2}).",
                         UserWarning
                     )
                     return False
+
                 if len(data["msg"].values()) != 2:
                     warnings.warn(
-                        f"Wrong number of messages on edge ({node1},{node2}).",
+                        "".join((
+                            "Wrong number of messages on edge ",
+                            f"({node1}, {node2})."
+                        )),
                         UserWarning
                     )
                     return False
@@ -699,7 +714,7 @@ def op_layer_intact_check(
     return True
 
 
-def same_legs(G1: nx.MultiGraph,G2: nx.MultiGraph) -> bool:
+def same_legs(G1: nx.MultiGraph, G2: nx.MultiGraph) -> bool:
     """
     Checks if the leg orderings in `G1` and `G2` are the same.
     """
@@ -714,20 +729,23 @@ def same_legs(G1: nx.MultiGraph,G2: nx.MultiGraph) -> bool:
     return True
 
 
-def graph_compatible(G1: nx.MultiGraph,G2: nx.MultiGraph) -> bool:
+def graph_compatible(
+        G1: nx.MultiGraph,
+        G2: nx.MultiGraph,
+        sanity_check: bool = False
+    ) -> bool:
     """
     Tests if `G1` and `G2` can be combined into a sandwich, that is if
     their geometry is the same. This amounts to checking if every edge
     in `G1` is contained in `G2`.
-
-    Throws `ValueError` if there are two edges between any two nodes in
-    `G1` or `G2`.
     """
     # sanity check
-    assert network_message_check(G1)
-    assert network_message_check(G2)
-    assert nx.utils.nodes_equal(G1.nodes(), G2.nodes())
-    assert nx.utils.edges_equal(G1.edges(), G2.edges())
+    if sanity_check:
+        assert network_message_check(G1)
+        assert network_message_check(G2)
+
+    if not nx.utils.nodes_equal(G1.nodes(), G2.nodes()): return False
+    if not nx.utils.edges_equal(G1.edges(), G2.edges()): return False
 
     return True
 

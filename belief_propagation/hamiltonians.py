@@ -50,7 +50,7 @@ class TFI(PauliPEPO):
         # transverse field
         index = ((0,)
                  + tuple(-1 for _ in range(N_pas + N_out))
-                 + (slice(0,2),slice(0,2)))
+                 + (slice(2), slice(2)))
         T[index] = g * self.X
 
         return T
@@ -554,7 +554,7 @@ def posneg_TFI(
         neg_op[node] = neg_op._canonical_to_correct_legs(neg_T, node)
 
     # adding incoming and outgoing coupling to every node but the root.
-    for node1,node2 in G.edges():
+    for node1, node2 in G.edges():
         if node1 in tree.succ[node2]:
             # node1 is downstream from node2
             child = node1

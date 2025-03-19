@@ -6,11 +6,11 @@ __all__ = ["DMRG",]
 
 import itertools
 from typing import Dict, Tuple
+import warnings
 
 import numpy as np
 import networkx as nx
 import cotengra as ctg
-import warnings
 import tqdm
 
 from belief_propagation.utils import (
@@ -23,7 +23,7 @@ from belief_propagation.utils import (
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
 from belief_propagation.braket import Braket
-from belief_propagation.truncate import L2BP_compression, QR_gauging
+from belief_propagation.truncate_expand import L2BP_compression, QR_gauging
 
 
 class DMRG:
@@ -293,7 +293,6 @@ class DMRG:
         # running BP on all Brakets that are not converged:
         if not self.overlap.converged:
             self.overlap.BP(
-                normalize_after=True,
                 new_messages=True,
                 sanity_check=sanity_check,
                 iterator_desc_prefix="".join((
@@ -302,10 +301,13 @@ class DMRG:
                 )),
                 **kwargs
             )
+            self.overlap.normalize_messages(
+                normalize_to="cntr",
+                sanity_check=sanity_check
+            )
         for i in range(len(self.expvals)):
             if not self.expvals[i].converged:
                 self.expvals[i].BP(
-                    normalize_after=True,
                     new_messages=True,
                     sanity_check=sanity_check,
                     iterator_desc_prefix="".join((
@@ -313,6 +315,10 @@ class DMRG:
                         f" | expval {i}"
                     )),
                     **kwargs
+                )
+                self.expvals[i].normalize_messages(
+                    normalize_to="cntr",
+                    sanity_check=sanity_check
                 )
 
         if self.converged:

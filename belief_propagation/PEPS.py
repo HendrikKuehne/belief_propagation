@@ -235,11 +235,11 @@ class PEPS:
         ) -> "PEPS":
         """
         Initialises a PEPS from a TN by appending dummy physical
-        dimensions of size one to the site tensors.
+        dimensions of size one to the site tensors. `G` needs to contain
+        a tensor on every site, and the `legs` attribute on every edge.
         """
-        if sanity_check: assert network_message_check(G)
-
         newG = cls.prepare_graph(G, keep_legs=True)
+
         # appending a dummy physical dimension with size one to the tensors
         for node in G.nodes:
             newG.nodes[node]["T"] = np.expand_dims(G.nodes[node]["T"], axis=-1)
@@ -429,6 +429,7 @@ class PEPS:
         """Physical dimension."""
 
         self.G: nx.MultiGraph = G
+        """Grapth that contains PEPS local tensors."""
 
         if sanity_check: assert self.intact
 
@@ -479,7 +480,7 @@ class PEPS:
         ) -> str:
         out = "".join((
             f"State on {self.nsites} sites.",
-            " Local Hilbert Space of size {self.D}.",
+            f" Local Hilbert Space of size {self.D}.",
             " PEPS is ",
             ("intact." if self.intact else "not intact.")))
 
@@ -513,6 +514,10 @@ class PEPS:
         Iterator over the nodes in the graph `self.G`.
         """
         return iter(self.G.nodes(data=False))
+
+    def __contains__(self, node: int) -> bool:
+        """Does the graph `self.G` contain the node `node`?"""
+        return self.G.has_node(node)
 
 if __name__ == "__main__":
     pass

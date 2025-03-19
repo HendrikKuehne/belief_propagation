@@ -20,11 +20,14 @@
 * **`PEPS.py`** PEPS on arbitrary graphs.
   * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
 * **`braket.py`** Stacks of combinations of PEPS and PEPO on arbitrary graphs.
-  * **ToDo** Accelerate the mesage uodate somehow
+  * **ToDo** Accelerate the mesage update somehow
     * Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
     * Pancotti & Gray stack all the tensors and the messages s.t. the BP algorithm becomes a vector iteration ([arxiv:2306.15004](https://arxiv.org/abs/2306.15004))
     * :arrows_counterclockwise: parallelize using [Ray](https://docs.ray.io/en/latest/ray-overview/getting-started.html) - What I have done so far is actually slower than the straightforward implementation. The overhead seems to be too large, maybe I should think this through a little more thoroughly.
   * **ToDo** Smarter discrimination between cases in `Braket.contract`.
+  * **ToDo** Should I change the code s.t. messages are tensor stacks?
+    * This would be a massive overhaul, requiring changes in many different files, but there could be cases where it would be useful to have the messages factorized.
+    * :x: No! If I don't contract the physical dimensions, the bond dimensions in message tensor stacks would become huge during a message passing iteration.
 * **`dmrg.py`** DMRG on arbitrary graphs.
   * **ToDo** Optimize local updates; Lanczos algorithm? (In python implemented, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/))
   * **ToDo** The implementation of the DMRG class is wildly inefficient (at least in terms of memory) because the overlap $\braket{\psi|\psi}$ and the expectation value $\braket{\psi|H|\psi}$ are both stored as full `Braket` objects, although they contain essentially the same data

@@ -1,16 +1,18 @@
 """
-Functions for manipulation of PEPS, PEPO and Braket,
-with the goal of cutting / truncating edges in the
-graphs.
+Functions for manipulation of PEPS, PEPO and Braket, with the goal of...
+* cutting / truncating edges in the graphs.
+* series expansion of brakets.
 """
 
 __all__ = [
     "make_BP_informed",
     "project_down",
-    "project_out",
+    "insert_excitation",
     "QR_bottleneck",
     "L2BP_compression",
-    "QR_gauging"
+    "QR_gauging",
+    "loop_excitations",
+    "loop_series_expansion"
 ]
 
 import itertools
@@ -22,11 +24,22 @@ import numpy as np
 import networkx as nx
 import scipy.linalg as scialg
 
-from belief_propagation.braket import Braket
+from belief_propagation.braket import (
+    Braket,
+    contract_braket_physical_indices
+)
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
 from belief_propagation.networks import expose_edge
-from belief_propagation.utils import delta_tensor, graph_compatible
+from belief_propagation.utils import (
+    delta_tensor,
+    graph_compatible,
+    network_message_check
+)
+
+# -----------------------------------------------------------------------------
+#                   Truncating brakets
+# -----------------------------------------------------------------------------
 
 
 def make_BP_informed(truncation_func: Callable) -> Callable:
@@ -43,6 +56,9 @@ def make_BP_informed(truncation_func: Callable) -> Callable:
     sanity_check: bool = False, **kwargs)`, where `kwargs` are passed to
     the BP iteration. `braket` contains the messages that will be used
     for truncation of the edge `(node1, node2)`.
+    `BP_informed_truncation_func` runs a BP iteration, if messages in
+    `braket` are not converged, and normalizes with respect to the dot
+    product.
     """
 
     def BP_informed_truncation_func(
@@ -69,11 +85,11 @@ def make_BP_informed(truncation_func: Callable) -> Callable:
 
         # inserting truncation into the Braket
         truncation_func(
-            braket=braket,
-            node1=node1,
-            node2=node2,
-            vec1=braket.msg[node1][node2],
-            vec2=braket.msg[node2][node1],
+            braket,
+            node1,
+            node2,
+            braket.msg[node1][node2],
+            braket.msg[node2][node1],
             sanity_check=sanity_check
         )
 
@@ -87,13 +103,13 @@ def project_down(
         braket: Braket,
         node1: int,
         node2: int,
-        vec1: np.ndarray,
-        vec2: np.ndarray,
+        msg12: np.ndarray,
+        msg21: np.ndarray,
         sanity_check: bool = False
     ) -> None:
     """
-    Projects the edge `(node1, node2)` onto the given messages. `vec1`
-    is the message from `node1` to `node2`, `vec2` is defined
+    Projects the edge `(node1, node2)` onto the given messages. `msg12`
+    is the message from `node1` to `node2`, `msg21` is defined
     accordingly. Both vectors must have the shape `(braket.bra.size,
     braket.op.size, braket.ket.size)`. This effectively removes the
     edge.
@@ -104,26 +120,26 @@ def project_down(
         braket.op.G[node1][node2][0]["size"],
         braket.ket.G[node1][node2][0]["size"]
     )
-    if not vec1.shape == vec_size:
+    if not msg12.shape == vec_size:
         raise ValueError("".join((
-            "vec1 has wrong size; expected ",
+            "msg12 has wrong size; expected ",
             str(vec_size),
             ", got ",
-            str(vec1.shape),
+            str(msg12.shape),
             "."
         )))
-    if not vec2.shape == vec_size:
+    if not msg21.shape == vec_size:
         raise ValueError("".join((
-            "vec2 has wrong size; expected ",
+            "msg21 has wrong size; expected ",
             str(vec_size),
             ", got ",
-            str(vec2.shape),
+            str(msg21.shape),
             "."
         )))
     if sanity_check: assert braket.intact
 
-    P1 = np.einsum("ijk, lmn -> ijklmn", vec2, vec1)
-    P2 = np.einsum("ijk, lmn -> ijklmn", vec1, vec2)
+    P1 = np.einsum("ijk,lmn->ijklmn", msg21, msg12)
+    P2 = np.einsum("ijk,lmn->ijklmn", msg12, msg21)
     braket.insert_edge_T(P1, node1, node2, sanity_check=sanity_check)
     braket.insert_edge_T(P2, node2, node1, sanity_check=sanity_check)
 
@@ -131,85 +147,75 @@ def project_down(
 
 
 @make_BP_informed
-def project_out(
+def insert_excitation(
         braket: Braket,
         node1: int,
         node2: int,
-        vec1: np.ndarray,
-        vec2: np.ndarray,
-        sanity_check: bool = False
+        msg12: np.ndarray,
+        msg21: np.ndarray,
+        sanity_check: bool = False,
+        dtype=np.complex128
     ) -> None:
     """
-    Projects the given messages out of the edge `(node1, node2)`. `vec1`
-    is the message from `node1` to `node2`, `vec2` is defined
-    accordingly. Both vectors must have the shape `(braket.bra.size,
-    braket.op.size, braket.ket.size)`. Inserts the projector in the
-    edge `(node1, node2)` in `braket`. `braket` is changed in-place.
+    Inserts a projector onto the excited subspace on the edge `(node1,
+    node2)`. `msg12` is the message from `node1` to `node2`, `msg21` is
+    defined accordingly. Both vectors must have the shape
+    `(braket.bra.size, braket.op.size, braket.ket.size)`. `braket` is
+    changed in-place. Proceudre from
+    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
     """
     # sanity check
     bra_size = braket.bra.G[node1][node2][0]["size"]
-    op_size = braket.op.chi
+    op_size = braket.op.G[node1][node2][0]["size"]
     ket_size = braket.ket.G[node1][node2][0]["size"]
     vec_size = (bra_size, op_size, ket_size)
-    if not vec1.shape == vec_size:
+    if not msg12.shape == vec_size:
         raise ValueError("".join((
-            "vec1 has wrong size; expected ",
+            "msg12 has wrong size; expected ",
             str(vec_size),
             ", got ",
-            str(vec1.shape),
+            str(msg12.shape),
             "."
         )))
-    if not vec2.shape == vec_size:
+    if not msg21.shape == vec_size:
         raise ValueError("".join((
-            "vec2 has wrong size; expected ",
+            "msg21 has wrong size; expected ",
             str(vec_size),
             ", got ",
-            str(vec2.shape),
+            str(msg21.shape),
             "."
         )))
     if sanity_check: assert braket.intact
 
-    # normalisation in every PEPO virtual bond.
-    vec1 = np.einsum(
-        "ijk, j -> ijk",
-        vec1,
-        1 / np.sqrt(np.einsum("ijk, ijk -> j", vec1.conj(), vec1))
-    )
-    vec2 = np.einsum(
-        "ijk, j -> ijk",
-        vec2,
-        1 / np.sqrt(np.einsum("ijk, ijk -> j", vec2.conj(), vec2))
-    )
-
     # constructing projectors
-    P1 = np.einsum(
-        "ij, kl, mn -> ikmjln",
-        np.eye(bra_size),
-        np.eye(op_size),
-        np.eye(ket_size)
+    P1to2 = np.einsum(
+        "ij,kl,mn->ikmjln",
+        np.eye(bra_size, dtype=dtype),
+        np.eye(op_size, dtype=dtype),
+        np.eye(ket_size, dtype=dtype)
     )
-    P1 -= np.einsum(
-        "ijk, lmn, jmrh -> irklhn",
-        vec1,
-        vec1.conj(),
-        delta_tensor(nLegs=4, chi=op_size)
-    )
-
-    P2 = np.einsum(
-        "ij, kl, mn -> ikmjln",
-        np.eye(bra_size),
-        np.eye(op_size),
-        np.eye(ket_size)
-    )
-    P2 -= np.einsum(
-        "ijk, lmn, jmrh -> irklhn",
-        vec2,
-        vec2.conj(),
-        delta_tensor(nLegs=4, chi=op_size)
+    P1to2 -= np.einsum(
+        "ijk,lmn,jmrh->irklhn",
+        msg12,
+        msg21,
+        delta_tensor(nLegs=4, chi=op_size, dtype=dtype)
     )
 
-    braket.insert_edge_T(P1, node1, node2, sanity_check=sanity_check)
-    braket.insert_edge_T(P2, node2, node1, sanity_check=sanity_check)
+    P2to1 = np.einsum(
+        "ij,kl,mn->ikmjln",
+        np.eye(bra_size, dtype=dtype),
+        np.eye(op_size, dtype=dtype),
+        np.eye(ket_size, dtype=dtype)
+    )
+    P2to1 -= np.einsum(
+        "ijk,lmn,jmrh->irklhn",
+        msg21,
+        msg12,
+        delta_tensor(nLegs=4, chi=op_size, dtype=dtype)
+    )
+
+    braket.insert_edge_T(P1to2, node1, node2, sanity_check=sanity_check)
+    braket.insert_edge_T(P2to1, node2, node1, sanity_check=sanity_check)
 
     return
 
@@ -410,7 +416,8 @@ def L2BP_compression(
         threshold_mask = np.logical_not(
             np.isclose(singvals, 0, atol=singval_threshold)
         )
-        # singular values we want to keep, based on the maximum size of this edge
+        # singular values we want to keep, based on the maximum size of this
+        # edge.
         maxsize_mask = (np.arange(len(singvals))
                         < max_bond_dim[node1][node2][0]["size"])
 
@@ -443,14 +450,14 @@ def L2BP_compression(
 
         # projectors
         P1 = np.einsum(
-            "ij, jk, kl -> il",
+            "ij,jk,kl->il",
             R2,
             Vh.conj().T,
             np.diag(1 / np.sqrt(singvals)),
             optimize=True
         )
         P2 = np.einsum(
-            "ij, jk, kl -> il",
+            "ij,jk,kl->il",
             np.diag(1 / np.sqrt(singvals)),
             U.conj().T,
             R1,
@@ -686,6 +693,272 @@ def feynman_cut(
     raise NotImplementedError("".join((
         "feynman_cut not implemented for object of type ",str(type(obj)),"."
     )))
+
+
+# -----------------------------------------------------------------------------
+#                   Loop series expansion
+# -----------------------------------------------------------------------------
+
+
+def loop_excitations(
+        G: nx.MultiGraph,
+        max_order: int = np.inf,
+        sanity_check: bool = False
+    ) -> Tuple[nx.MultiGraph]:
+    """
+    Given the graph `G`, returns the excitations from
+    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108) up to order
+    `max_order`. The order of an excitation is the number of edges that
+    are excited.
+    """
+    if sanity_check: assert network_message_check(G=G)
+
+    # the excitations are all possible subgraphs that are composed of loops
+    # only, where composition means union of sets and edges. I will construct
+    # the excitations by composing simply cycles in all possible ways.
+
+    # Constructing simply cycles as nx.MultiGraph objects.
+    simple_cycles_nodes = nx.simple_cycles(G=G)
+    simple_cycles_edges = tuple(
+        tuple(
+            tuple((cycle[i], cycle[(i+1) % len(cycle)]))
+            for i in range(len(cycle))
+        )
+        for cycle in simple_cycles_nodes
+    )
+    cycle_graphs = tuple(
+        nx.MultiGraph(cycle)
+        for cycle in simple_cycles_edges
+    )
+
+    excitations = ()
+    # combining simple cycles into the excitations
+    for N in range(1,len(cycle_graphs)+1):
+        for cycles in itertools.combinations(cycle_graphs, r=N):
+            exc = nx.compose_all(cycles)
+
+            # Is this excitation below the max_order threshold?
+            if exc.number_of_edges() > max_order: continue
+
+            # is this excitation already contained in the list of excitations?
+            is_contained = any(
+                graph_compatible(exc, exc_)
+                for exc_ in excitations
+            )
+
+            if is_contained: continue
+
+            excitations += (exc,)
+
+    return excitations
+
+
+def loop_series_expansion(
+        braket: Braket,
+        max_order: int = np.inf,
+        sanity_check: bool = False,
+        **kwargs
+    ) -> float:
+    """
+    Loop series expansion of the value of `braket` from
+    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108). `max_order` is
+    the maximum oder of loops that are taken into consideration; default
+    is `np.inf`, where all loops are incorporated. `kwargs` are passed
+    to `braket.BP`.
+
+    See [`D1BP.contract_loop_series_expansion`](https://github.com/jcmgray/quimb/blob/main/quimb/tensor/belief_propagation/d1bp.py#L335)
+    in quimb for a reference implementation.
+    """
+    # sanity check
+    if sanity_check: assert braket.intact
+
+    # finding the BP fixed point.
+    if not braket.converged:
+        braket.BP(**kwargs, sanity_check=sanity_check)
+
+    # inserting projectors in the edges.
+    for node1, node2 in braket.G.edges():
+        insert_excitation(
+            braket=braket,
+            node1=node1,
+            node2=node2,
+            sanity_check=sanity_check
+        )
+
+    # The total contraction value of the braket is factored out, s.t. the
+    # calculation of higher-order contributions becomes easier.
+    cntr_norm_factor = braket.cntr
+    # saving node contraction values, s.t. I can undo the node normalization
+    # later.
+    node_cntr = {node: cntr for node, cntr in braket.G.nodes(data="cntr")}
+    # normalizing braket s.t. the BP vacuum contribution is one.
+    for node in braket:
+        braket[node] = tuple(
+            T / (node_cntr[node] ** (1/3))
+            for T in braket[node]
+        )
+
+    # During the computations of excitations, messages are inserted into the
+    # network. Messages are dense tensors, not tensor stacks - we must thus
+    # contract the physical dimensions.
+    densebraket = contract_braket_physical_indices(
+        braket=braket, sanity_check=sanity_check
+    )
+
+    # finding excitations in the graph.
+    excitations = loop_excitations(
+        braket.G, max_order=max_order, sanity_check=sanity_check
+    )
+
+    cntr = 1
+    for excitation in excitations:
+        cntr_ = __compute_BP_excitation(
+            braket=densebraket,
+            excitation=excitation,
+            sanity_check=sanity_check
+        )
+        cntr += cntr_
+
+    # Undoing BP vacuum contribution, so that the braket remains unchanged.
+    for node in braket:
+        braket[node] = tuple(
+            T * (node_cntr[node] ** (1/3))
+            for T in braket[node]
+        )
+
+    return cntr * cntr_norm_factor
+
+
+def __check_contracted_physical_dims(
+        braket: Braket,
+        sanity_check: bool = False
+    ) -> bool:
+    """
+    Checks if `braket` contains dummy networks in `braket.op` and
+    `braket.bra`.
+    """
+    if sanity_check: assert braket.intact
+
+    for node in braket:
+        if not (np.allclose(braket.bra[node], np.ones(shape=1))
+                and np.allclose(braket.op[node], np.ones(shape=1))):
+            return False
+
+    return True
+
+
+def __compute_BP_excitation(
+        braket: Braket,
+        excitation: nx.MultiGraph,
+        sanity_check: bool = False,
+        **kwargs
+    ) -> float:
+    """
+    Computes the contribution of the excitation `excitation`. Method
+    taken from [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
+    `excitation` contains the excited edges, `braket` contains the
+    tensor network, the projectors and the messages. `kwargs` are passed
+    to `Braket.contract`.
+    """
+    assert __check_contracted_physical_dims(braket, sanity_check=sanity_check)
+
+    if not nx.is_connected(G=excitation):
+        connected_excitations = tuple(
+            excitation.subgraph(component).copy()
+            for component in nx.connected_components(excitation)
+        )
+
+        # For disjoint excitations, the contribution is the product of the
+        # components.
+        return np.prod(tuple(
+            __compute_BP_excitation(
+                braket=braket,
+                excitation=exc,
+                sanity_check=sanity_check,
+                **kwargs
+            )
+            for exc in connected_excitations
+        ))
+
+    # How will this work under the hood? We truncate the network. All edges
+    # that are not contained in the excitation will be removed, and new edges
+    # will be added that connect the messages that flow into the excitation.
+    # On the excitations edges we add the projectors.
+
+    # The set of nodes inside the excitation, and the set of edges that are not
+    # excited.
+    excitation_nodes = set(excitation.nodes())
+    non_excitation_nodes = set(braket.G.nodes()) - excitation_nodes
+    non_excitation_edges = nx.MultiGraph(incoming_graph_data=braket.G.edges())
+    non_excitation_edges.remove_edges_from(excitation.edges())
+
+    # The graph that we will contract.
+    G = copy.deepcopy(braket.ket.G)
+
+    # Removing nodes and edges that are not present in the excitation.
+    G.remove_edges_from(non_excitation_edges.edges())
+    G.remove_nodes_from(non_excitation_nodes)
+
+    for node in excitation_nodes:
+        # Removing the dummy physical dimension from local tensors.
+        G.nodes[node]["T"] = G.nodes[node]["T"][...,0]
+
+        # Inserting messages as new sites in the graph.
+        while G.nodes[node]["T"].ndim > len(G.adj[node]):
+            # If this is the case, there are dangling tensor legs to which no
+            # message is attached. Identifying the dangling neighbor, and the
+            # tensor leg it connects to.
+            next_node_label = max(node_ for node_ in G) + 1
+            neighbor = (set(braket.G.adj[node])
+                        - (set(G.adj[node]))).pop()
+            leg = braket.G[node][neighbor][0]["legs"][node]
+
+            # Inserting a new node that contains the respective message, and
+            # connecting it to the graph.
+            G.add_node(
+                node_for_adding=next_node_label,
+                T=braket.msg[neighbor][node][0,0,:]
+            )
+            G.add_edge(
+                u_for_edge=node,
+                v_for_edge=next_node_label,
+                legs={node: leg, next_node_label: 0},
+            )
+
+    # inserting projectors as nodes on the excited edges.
+    for node1, node2 in excitation.edges():
+        # Parameters of this edge, and the node we will add: edge legs, size,
+        # and the label of the next node.
+        leg1 = G[node1][node2][0]["legs"][node1]
+        leg2 = G[node1][node2][0]["legs"][node2]
+        next_node_label = max(node_ for node_ in G) + 1
+
+        # Adding a node that contains the projector, and connecting it to the
+        # graph.
+        G.add_node(
+            node_for_adding=next_node_label,
+            T=braket.edge_T[node1][node2][0,0,:,0,0,:]
+        )
+        G.add_edge(
+            u_for_edge=node1,
+            v_for_edge=next_node_label,
+            legs={node1: leg1, next_node_label: 1},
+        )
+        G.add_edge(
+            u_for_edge=node2,
+            v_for_edge=next_node_label,
+            legs={node2: leg2, next_node_label: 0},
+        )
+
+        # Removing the old edge.
+        G.remove_edge(node1, node2)
+
+    # Constructing a new braket for this excitation, and contracting it to get
+    # the contribution of this excitation.
+    exc_braket = Braket.Cntr(G=G, sanity_check=sanity_check)
+    cntr = exc_braket.contract(sanity_check=sanity_check, **kwargs)
+
+    return cntr
 
 
 if __name__ == "__main__":

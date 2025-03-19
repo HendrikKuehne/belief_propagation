@@ -3,17 +3,20 @@ Creating sandwiches of the form
 * MPS @ PEPO @ MPS, or
 * MPS @ MPS,
 
-by combining the classes MPS and PEPO.
-The class `Braket` contained herein implements the Belief Propagation
-algorithm.
+by combining the classes MPS and PEPO. The class `Braket` contained
+herein implements the Belief Propagation algorithm.
 """
 
-__all__ = ["Braket",]
+__all__ = [
+    "Braket",
+    "contract_tensor_inbound_messages",
+    "contract_braket_physical_indices"
+]
 
 import copy
 import warnings
 import itertools
-from typing import Iterator, Tuple, Dict
+from typing import Iterator, Tuple, Dict, Union
 
 import numpy as np
 import networkx as nx
@@ -30,6 +33,7 @@ from belief_propagation.utils import (
 from belief_propagation.hamiltonians import Identity
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
+
 
 @ray.remote(num_cpus=1)
 def contract_tensor_msg(
@@ -84,6 +88,7 @@ def contract_tensor_msg(
     msg = np.einsum(*args, out_legs, optimize=True)
 
     return msg
+
 
 class BaseBraket:
     """
@@ -302,7 +307,7 @@ class BaseBraket:
     @ket.setter
     def ket(self, ket: PEPS) -> None:
         # sanity check
-        assert graph_compatible(self.G, ket.G)
+        assert graph_compatible(self.G, ket.G, sanity_check=True)
         self._ket = ket
 
         # it is no longer guaranteed that the messages are converged
@@ -320,7 +325,7 @@ class BaseBraket:
     @bra.setter
     def bra(self, bra: PEPS) -> None:
         # sanity check
-        assert graph_compatible(self.G, bra.G)
+        assert graph_compatible(self.G, bra.G, sanity_check=True)
         self._bra = bra
 
         # it is no longer guaranteed that the messages are converged
@@ -338,7 +343,7 @@ class BaseBraket:
     @op.setter
     def op(self, op: PEPO) -> None:
         # sanity check
-        assert graph_compatible(self.G, op.G)
+        assert graph_compatible(self.G, op.G, sanity_check=True)
         self._op = op
 
         # it is no longer guaranteed that the messages are converged
@@ -360,13 +365,74 @@ class BaseBraket:
         # shallow copy of G
         newG = nx.MultiGraph(G.edges())
         # adding legs attribute to each edge
-        for node1,node2,legs in G.edges(data="legs",keys=False):
+        for node1, node2, legs in G.edges(data="legs", keys=False):
             newG[node1][node2][0]["legs"] = legs if keep_legs else {}
             newG[node1][node2][0]["trace"] = False
             newG[node1][node2][0]["indices"] = None
             newG[node1][node2][0]["msg"] = {}
 
         return newG
+
+    @classmethod
+    def Cntr(
+            cls,
+            G: nx.MultiGraph,
+            sanity_check: bool = False,
+            **kwargs
+        ):
+        """
+        Contraction of the tensor network contained in `G`. The TN will
+        be contained in `self.ket`. `kwargs` are passed to
+        `cls.__init__`. `G` needs to contain a tensor on every site, and
+        the `legs` attribute on every edge.
+        """
+        return cls(
+            bra=PEPS.Dummy(G=G, sanity_check=sanity_check),
+            op=Identity(G=G, D=1, sanity_check=sanity_check),
+            ket=PEPS.init_from_TN(G=G, sanity_check=sanity_check),
+            sanity_check=sanity_check,
+            **kwargs
+        )
+
+    @classmethod
+    def Overlap(
+            cls,
+            psi1: PEPS,
+            psi2: PEPS,
+            sanity_check: bool = False,
+            **kwargs
+        ):
+        """
+        Overlap <`psi1`,`psi2`> of two PEPS. Returns the corresponding
+        `Braket` object. `kwargs` are passed to `cls.__init__`.
+        """
+        return cls(
+            bra=psi1.conj(sanity_check=sanity_check),
+            op=Identity(G=psi1.G, D=psi1.D, sanity_check=sanity_check),
+            ket=psi2,
+            sanity_check=sanity_check,
+            **kwargs
+        )
+
+    @classmethod
+    def Expval(
+            cls,
+            psi: PEPS,
+            op: PEPO,
+            sanity_check: bool = False,
+            **kwargs
+        ):
+        """
+        Expectation value of the operator `op` for the state `psi`.
+        `kwargs` are passed to `cls.__init__`.
+        """
+        return cls(
+            bra=psi.conj(sanity_check=sanity_check),
+            op=op,
+            ket=psi,
+            sanity_check=sanity_check,
+            **kwargs
+        )
 
     def __init__(
             self,
@@ -377,8 +443,8 @@ class BaseBraket:
         ) -> None:
         # sanity check
         if sanity_check:
-            assert graph_compatible(bra.G, ket.G)
-            assert graph_compatible(bra.G, op.G)
+            assert graph_compatible(bra.G, ket.G, sanity_check=sanity_check)
+            assert graph_compatible(bra.G, op.G, sanity_check=sanity_check)
             assert bra.D == op.D and ket.D == op.D
 
         self.G: nx.MultiGraph = PEPO.prepare_graph(ket.G, True)
@@ -388,7 +454,7 @@ class BaseBraket:
         self.D: int = op.D
         """Physical dimension."""
 
-        self._converged:bool = False
+        self._converged: bool = False
         """Whether the messages in `self.msg` are converged."""
         # this attribute does not really belong in BaseBraket, of course; I
         # included it here to be able to have the property setters in this base
@@ -440,6 +506,11 @@ class BaseBraket:
         """
         return iter(self.G.nodes(data=False))
 
+    def __contains__(self, node: int) -> bool:
+        """Does the graph `self.G` contain the node `node`?"""
+        return (node in self.bra) and (node in self.op) and (node in self.ket)
+
+
 class Braket(BaseBraket):
     """
     Code for belief propagation.
@@ -448,7 +519,7 @@ class Braket(BaseBraket):
     def construct_initial_messages(
             self,
             real:bool = False,
-            normalize_during: bool = True,
+            normalize: bool = True,
             msg_init: str = "normal",
             sanity_check: bool = False,
             rng: np.random.Generator = np.random.default_rng(),
@@ -456,7 +527,7 @@ class Braket(BaseBraket):
         ) -> None:
         """
         Initial messages for BP iteration. Saved in the dictionary
-        `self.msg`.
+        `self.msg`. Sets convergence marker to `False`.
 
         Messages are three-index tensors, where the first index belongs
         to the bra, the second index belongs to the operator and the
@@ -493,11 +564,15 @@ class Braket(BaseBraket):
                         self._ket.G.nodes[sender]["T"]
                     )
 
-        if normalize_during:
-            self.__normalize_messages(
+        if normalize:
+            self.normalize_messages(
                 normalize_to="unity",
                 sanity_check=sanity_check
             )
+
+        # After initializing new messages, the messages are - of course - not
+        # converged.
+        self._converged = False
 
         return
 
@@ -583,7 +658,7 @@ class Braket(BaseBraket):
 
     def __message_passing_step(
             self,
-            normalize_during: bool,
+            normalize: bool,
             parallel: bool,
             sanity_check: bool
         ) -> float:
@@ -659,9 +734,9 @@ class Braket(BaseBraket):
         # passing messages through the edges
         self.__pass_msg_through_edges(sanity_check=sanity_check)
 
-        if normalize_during:
+        if normalize:
             # normalize messages to unity
-            self.__normalize_messages(
+            self.normalize_messages(
                 normalize_to="unity",
                 sanity_check=sanity_check
             )
@@ -680,7 +755,7 @@ class Braket(BaseBraket):
             self,
             numiter: int,
             real: bool,
-            normalize_during: bool,
+            normalize: bool,
             threshold: float,
             parallel: bool,
             iterator_desc_prefix: str,
@@ -706,14 +781,14 @@ class Braket(BaseBraket):
         # message initialization
         if new_messages: self.construct_initial_messages(
             real=real,
-            normalize_during=normalize_during,
+            normalize=normalize,
             msg_init=msg_init,
             sanity_check=sanity_check
         )
 
         for i in iterator:
             eps = self.__message_passing_step(
-                normalize_during=normalize_during,
+                normalize=normalize,
                 parallel=parallel,
                 sanity_check=sanity_check
             )
@@ -729,7 +804,7 @@ class Braket(BaseBraket):
 
         return eps_list
 
-    def __normalize_messages(
+    def normalize_messages(
             self,
             normalize_to: str,
             sanity_check: bool
@@ -741,9 +816,12 @@ class Braket(BaseBraket):
         If `normalize_to = "cntr"`, normalizes messages, such that at
         each site, contraction of a tensor with it's inbound messages
         yields the complete network value. When `self.BP` is executed
-        with `normalize_during = False`, this is already the case. This
-        function is thus only necessary when messages were obtained with
-        `normalize_during = True`.
+        with `normalize = False`, this is already the case. This
+        normalization is thus only necessary when messages were obtained
+        with `normalize = True`.
+
+        if `normalize_to = dotp`, normalizes messages such that their
+        inner product is one.
         """
         # sanity check
         if sanity_check: assert self.intact
@@ -807,6 +885,22 @@ class Braket(BaseBraket):
 
             return
     
+        if normalize_to == "dotp":
+            # sanity check
+            if not all(
+                "cntr" in self.G[node1][node2][0].keys()
+                for node1, node2 in self.G.edges()
+            ):
+                self.__contract_edge_opposite_messages(
+                    sanity_check=sanity_check
+                )
+
+            for node1, node2, cntr in self.G.edges(data="cntr"):
+                self.msg[node1][node2] /= np.sqrt(cntr)
+                self.msg[node2][node1] /= np.sqrt(cntr)
+
+            return
+
         raise NotImplementedError(
             "Message normalization " + normalize_to + " not implemented."
         )
@@ -843,36 +937,11 @@ class Braket(BaseBraket):
         if sanity_check: assert self.intact
 
         for node in self:
-            nLegs = len(self.G.adj[node])
-            args = ()
-
-            for neighbor in self.G.adj[node]:
-                args += (
-                    self.msg[neighbor][node],
-                    (
-                        # bra leg
-                        self._bra.G[node][neighbor][0]["legs"][node],
-                        # operator leg
-                        nLegs + self._op.G[node][neighbor][0]["legs"][node],
-                        # ket leg
-                        2*nLegs + self._ket.G[node][neighbor][0]["legs"][node],
-                    )
-                )
-
-            args += (
-                # bra tensor
-                self._bra.G.nodes[node]["T"],
-                tuple(range(nLegs)) + (3 * nLegs,),
-                # operator tensor
-                self._op.G.nodes[node]["T"],
-                (tuple(nLegs + iLeg for iLeg in range(nLegs))
-                 + (3 * nLegs, 3*nLegs + 1)),
-                # ket tensor
-                self._ket.G.nodes[node]["T"],
-                tuple(2*nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs + 1,),
+            node_cntr = contract_tensor_inbound_messages(
+                braket=self,
+                node=node,
+                sanity_check=sanity_check
             )
-
-            node_cntr = ctg.einsum(*args, optimize="greedy")
 
             if np.isclose(node_cntr, 0):
                 self.G.nodes[node]["cntr"] = 0
@@ -915,8 +984,7 @@ class Braket(BaseBraket):
             numiter: int = 500,
             trials: int = 3,
             real: bool = False,
-            normalize_during: bool = True,
-            normalize_after: bool = True,
+            normalize: bool = True,
             threshold: float = 1e-10,
             parallel: bool = False,
             verbose: bool = False,
@@ -934,23 +1002,18 @@ class Braket(BaseBraket):
         terminates only when a trial reaches `threshold`.
         * `real`: Initialization of messages with real values (otherwise
         complex).
-        * `normalize_during`: Normalization of messages after each
+        * `normalize`: Normalization of messages after each
         message passing iteration. If `normalize=True`, this function
-        implements the BP algorithm from
-        [Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211).
-        Otherwise, the algorithm becomes Belief Propagation on trees.
-        * `normalize_after`: Normalization of messages after the
-        completed BP iteration. If `True`, contraction of a node with
-        it's incoming messages yields the complete network value. Only
-        relevant if `normalize_during = True`.
+        implements the BP algorithm from [Sci. Adv. 7, eabf1211
+        (2021)](https://doi.org/10.1126/sciadv.abf1211). Otherwise, the
+        algorithm becomes Belief Propagation on trees.
         * `threshold`: When to abort the BP iteration.
         * `new_messages`: Whether or not to initialize new messages.
         * `msg_init`: Method used for message initialization.
 
-        Writes the network contraction value to `self.cntr`. Converged
-        messages are normalized such that the contraction of a tensor
-        with it's inbound messages gives the complete network value, at
-        every site.
+        Writes the network contraction value to `self.cntr`. Messages
+        are normalized such that the dot product of messages on any
+        respective edge is one.
 
         If the algorithm converges, the flag `self.converged` is set to
         `True`.
@@ -964,6 +1027,15 @@ class Braket(BaseBraket):
                 UserWarning
             )
             return
+
+        if (not nx.is_tree(self.G)) and (not normalize):
+            warnings.warn(
+                "".join((
+                    "Normalization during BP disabled on a graph with loops. ",
+                    "This likely leads to diverging messages.",
+                    UserWarning
+                ))
+            )
 
         # handling kwargs
         if "iterator_desc_prefix" in kwargs.keys():
@@ -983,16 +1055,13 @@ class Braket(BaseBraket):
                 UserWarning
             )
 
-        # initially, the messages are not converged
-        self._converged = False
-
         iTrial = 0
         while iTrial < trials:
             # message passing iteration
             eps_list = self.__message_passing_iteration(
                 numiter=numiter,
                 real=real,
-                normalize_during=normalize_during,
+                normalize=normalize,
                 threshold=threshold,
                 parallel=parallel,
                 iterator_desc_prefix="".join((
@@ -1012,25 +1081,17 @@ class Braket(BaseBraket):
                 self.iter_until_conv = len(eps_list)
                 break
 
-        # contract tensors and messages, opposite messages
+        # contract tensors and messages, opposite messages, normalize messages.
+        self.normalize_messages(normalize_to="dotp", sanity_check=sanity_check)
         self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
-        self.__contract_edge_opposite_messages(sanity_check=sanity_check)
 
-        if normalize_during:
+        if normalize:
             # the network value is the product of all node values, divided by
-            # all edge values
+            # all edge values.
             self.cntr = 1
             for node, node_cntr in self.G.nodes(data="cntr"):
                 self.cntr *= node_cntr
-            for node1, node2, edge_cntr in self.G.edges(data="cntr"):
-                self.cntr /= edge_cntr
 
-            # normalizing messages
-            if normalize_after:
-                self.__normalize_messages(
-                    normalize_to="cntr",
-                    sanity_check=sanity_check
-                )
         else:
             # each node carries the network value
             self.cntr = self.G.nodes[self._op.root]["cntr"]
@@ -1076,7 +1137,7 @@ class Braket(BaseBraket):
         else:
             # transformations are executed successively
             self._edge_T[sender][receiver] = np.einsum(
-                "abcijk, ijklmn -> abclmn",
+                "abcijk,ijklmn->abclmn",
                 T,
                 self._edge_T[sender][receiver]
             )
@@ -1136,15 +1197,35 @@ class Braket(BaseBraket):
         """
         if not super().intact: return False
 
-        if self.msg != None:
-            # are there any messages with non-finite values?
+        if self.msg is not None:
             for sender in self.msg.keys():
                 for receiver in self.msg[sender].keys():
+                    # are there any messages with non-finite values?
                     if not np.isfinite(self.msg[sender][receiver]).all():
                         warnings.warn(
                             "".join((
                                 f"Non-finite message sent from {sender} to "
                                 ,f"{receiver}."
+                            )),
+                            RuntimeWarning
+                        )
+                        return False
+
+                    # does this message have the correct shape?
+                    target_shape = (
+                        self._bra.G[sender][receiver][0]["size"],
+                        self._op.G[sender][receiver][0]["size"],
+                        self._ket.G[sender][receiver][0]["size"]
+                    )
+                    if not self.msg[sender][receiver].shape == target_shape:
+                        warnings.warn(
+                            "".join((
+                                f"Message from {sender} to {receiver} has ",
+                                "wrong shape. Expected ",
+                                str(target_shape),
+                                " got ",
+                                str(self.msg[sender][receiver].shape),
+                                "."
                             )),
                             RuntimeWarning
                         )
@@ -1167,7 +1248,7 @@ class Braket(BaseBraket):
                     warnings.warn(
                         "".join((
                             f"Transformation for message pass {sender} -> ",
-                            f"{receiver} ash wrong shape."
+                            f"{receiver} has wrong shape."
                         )),
                         RuntimeWarning
                     )
@@ -1246,70 +1327,36 @@ class Braket(BaseBraket):
 
         return randn(size=(bra_size, op_size, ket_size))
 
-    @classmethod
-    def Cntr(cls, G: nx.MultiGraph, sanity_check: bool = False):
-        """
-        Contraction of the tensor network contained in `G`. The TN will
-        be contained in `self.ket`.
-        """
-        return cls(
-            bra=PEPS.Dummy(G, sanity_check=sanity_check),
-            op=Identity(G=G, D=1, sanity_check=sanity_check),
-            ket=PEPS.init_from_TN(G, sanity_check=sanity_check),
-            sanity_check=sanity_check
-        )
-
-    @classmethod
-    def Overlap(cls, psi1: PEPS, psi2: PEPS, sanity_check: bool = False):
-        """
-        Overlap <`psi1`,`psi2`> of two PEPS. Returns the corresponding
-        `Braket` object.
-        """
-        return cls(
-            bra=psi1.conj(sanity_check=sanity_check),
-            op=Identity(G=psi1.G, D=psi1.D, sanity_check=sanity_check),
-            ket=psi2,
-            sanity_check=sanity_check
-        )
-
-    @classmethod
-    def Expval(cls, psi: PEPS,op: PEPO, sanity_check: bool = False):
-        """
-        Expectation value of the operator `op` for the state `psi`.
-        """
-        return cls(
-            bra=psi.conj(sanity_check=sanity_check),
-            op=op,
-            ket=psi,
-            sanity_check=sanity_check
-        )
-
     def __init__(
             self,
             bra: PEPS,
             op: PEPO,
             ket: PEPS,
+            msg: Dict[int, Dict[int, np.ndarray]] = None,
+            edge_T: Dict[int, Dict[int, np.ndarray]] = None,
             sanity_check: bool = False
         ) -> None:
+        """
+        Initialize a new braket.
+        """
         # sanity check
         super().__init__(bra=bra, op=op, ket=ket, sanity_check=False)
 
-        self.msg: Dict[int, Dict[int, np.ndarray]] = None
+        self.msg = msg
         """
         Messages. First key sending node, second key receiving node.
         """
 
-        self._edge_T: Dict[int, Dict[int, np.ndarray]] = {
-            sender: {
-                receiver: np.full(shape=(1,), fill_value=np.nan)
-                for receiver in self.G.adj[sender]
+        if edge_T is None:
+            self._edge_T: Dict[int, Dict[int, np.ndarray]] = {
+                sender: {
+                    receiver: np.nan
+                    for receiver in self.G.adj[sender]
+                }
+                for sender in self.G.nodes
             }
-            for sender in self.G.nodes
-        }
-        """
-        Transformations on edges. First key sending node, second key
-        receiving node.
-        """
+        else:
+            self._edge_T = edge_T
 
         self.cntr: float = np.nan
         """Value of the network, calculated by BP."""
@@ -1327,6 +1374,170 @@ class Braket(BaseBraket):
             " Messages are ",
             "converged." if self.converged else "not converged."
         ))
+
+
+def contract_tensor_inbound_messages(
+        braket: Braket,
+        node: int,
+        neighbors: Tuple[int] = None,
+        sanity_check: bool = False
+    ) -> Union[float, np.ndarray]:
+    """
+    Contracts the tensor at `node` with it's incoming messages. If
+    given, only messages from nodes in `neighbors` are absorbed. By
+    default, all incoming messages are absorbed, yielding a scalar.
+    """
+    # sanity check
+    if sanity_check: assert braket.intact
+
+    # If neighbors is not given, we absorb all incoming messages.
+    if neighbors is None: neighbors = tuple(braket.G.adj[node])
+
+    # We use the number of virtual legs of the tensor to enumerate the edges
+    # during einsum contraction.
+    nLegs = len(braket.G.adj[node])
+
+    args = ()
+
+    for neighbor in neighbors:
+        args += (
+            braket.msg[neighbor][node],
+            (
+                # bra leg
+                braket.bra.G[node][neighbor][0]["legs"][node],
+                # operator leg
+                nLegs + braket.op.G[node][neighbor][0]["legs"][node],
+                # ket leg
+                2*nLegs + braket.ket.G[node][neighbor][0]["legs"][node],
+            )
+        )
+
+    args += (
+        # bra tensor
+        braket.bra.G.nodes[node]["T"],
+        tuple(range(nLegs)) + (3 * nLegs,),
+        # operator tensor
+        braket.op.G.nodes[node]["T"],
+        (tuple(nLegs + iLeg for iLeg in range(nLegs))
+         + (3 * nLegs, 3*nLegs + 1)),
+        # ket tensor
+        braket.ket.G.nodes[node]["T"],
+        tuple(2*nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs + 1,)
+    )
+
+    node_cntr = ctg.einsum(*args, optimize="greedy")
+
+    return node_cntr
+
+
+def __contract_tstack_physical_index(tstack: Tuple[np.ndarray]) -> np.ndarray:
+    """
+    Contracts the physical index in a tensor stack, and returns the
+    resulting tensor while keeping the leg ordering.
+    """
+    # Sizes of the legs that will remain after
+    bra_sizes = tuple(tstack[0].shape[:-1])
+    op_sizes = tuple(tstack[1].shape[:-2])
+    ket_sizes = tuple(tstack[2].shape[:-1])
+
+    # sanity check
+    if not len(tstack) == 3:
+        raise NotImplementedError("".join((
+            "Tensor stacks with more than three components are not yet ",
+            "supported."
+        )))
+    if not len(bra_sizes) == len(op_sizes) and len(op_sizes) == len(ket_sizes):
+        raise ValueError(
+            "Number of virtual legs in tensor stack components do not match."
+        )
+    if not (tstack[0].shape[-1] == tstack[1].shape[-2]
+            and tstack[1].shape[-1] == tstack[2].shape[-1]):
+        raise ValueError("Physical dimensions in tensor stack do not match.")
+
+    nLegs = len(bra_sizes)
+
+    args = (
+        # bra tensor
+        tstack[0],
+        tuple(3 * i for i in range(nLegs)) + (3 * nLegs,),
+        # operator tensor
+        tstack[1],
+        tuple(3*i + 1 for i in range(nLegs)) + (3 * nLegs, 3*nLegs + 1),
+        # ket tensor
+        tstack[2],
+        tuple(3*i + 2 for i in range(nLegs)) + (3*nLegs + 1,),
+    )
+    out_legs = tuple(range(3 * nLegs))
+
+    T = np.einsum(*args, out_legs, optimize=True)
+
+    # sizes of the new legs.
+    new_sizes = tuple(
+        bra_sizes[i] * op_sizes[i] * ket_sizes[i]
+        for i in range(nLegs)
+    )
+    T = T.reshape(new_sizes)
+
+    return T
+
+
+def contract_braket_physical_indices(
+        braket: Union[Braket, BaseBraket],
+        sanity_check: bool = False
+    ) -> Union[Braket, BaseBraket, nx.MultiGraph]:
+    """
+    Contracts the physical indices at each site. Returns a new braket,
+    where the network is contained in `newbraket.ket`. Edge
+    transformations and messages are added to the returned braket, if
+    present in `braket`. If `return_graph = True`, a graph is returned
+    that contains the network.
+    """
+    if sanity_check: assert braket.intact
+
+    newG = copy.deepcopy(braket.G)
+
+    # contracting physical dimension in every tensor stack.
+    for node in braket:
+        newG.nodes[node]["T"] = __contract_tstack_physical_index(braket[node])
+
+    # writing new sizes to the graph.
+    for node1, node2 in newG.edges():
+        leg1 = newG[node1][node2][0]["legs"][node1]
+        size = newG.nodes[node1]["T"].shape[leg1]
+        newG[node1][node2][0]["size"] = size
+
+    kwargs = {}
+    # flattening edge transformations, if present
+    if hasattr(braket,"edge_T"):
+        kwargs["edge_T"] = {}
+        for sender in braket.edge_T.keys():
+            kwargs["edge_T"][sender] = {}
+            for receiver, proj in braket.edge_T[sender].items():
+                size = newG[sender][receiver][0]["size"]
+                kwargs["edge_T"][sender][receiver] = (
+                    np.nan if np.isnan(proj).any()
+                    else np.expand_dims(
+                        proj.reshape(size, size),
+                        axis=(0, 1, 3, 4)
+                    )
+                )
+
+    # flattening messages, if present
+    if hasattr(braket,"msg"):
+        if braket.msg is not None:
+            kwargs["msg"] = {}
+            for sender in braket.msg.keys():
+                kwargs["msg"][sender] = {}
+                for receiver, msg in braket.msg[sender].items():
+                    flat_msg = np.expand_dims(msg.flatten(), axis=(0,1))
+                    kwargs["msg"][sender][receiver] = flat_msg
+
+    newbraket = braket.__class__.Cntr(
+        G=newG, sanity_check=sanity_check, **kwargs
+    )
+    newbraket._converged = braket.converged
+
+    return newbraket
 
 if __name__ == "__main__":
     pass

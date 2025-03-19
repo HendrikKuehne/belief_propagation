@@ -709,7 +709,7 @@ class PEPO:
             raise ValueError(
                 "Given graph does not contain a valid leg ordering."
             )
-        if not graph_compatible(self.G, G):
+        if not graph_compatible(self.G, G, sanity_check=sanity_check):
             raise ValueError("Given graph is not compatible with self.G.")
 
         # transposing site tensors
@@ -1022,6 +1022,7 @@ class PEPO:
         self.D = D
         """Physical dimension."""
         self.G: nx.MultiGraph
+        """Grapth that contains PEPO local tensors."""
         self.tree: nx.DiGraph
         """Spanning tree of the graph."""
         self.root: int
@@ -1115,7 +1116,7 @@ class PEPO:
             # returns newPEPO, where newPEPO = self @ psi
 
             # sanity checks
-            if not graph_compatible(self.G, psi.G):
+            if not graph_compatible(self.G, psi.G, sanity_check=True):
                 raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
 
             if not same_legs(self.G, psi.G):
@@ -1176,7 +1177,7 @@ class PEPO:
             # returned. It will inherit the leg ordering from psi.
 
             # sanity checks
-            if not graph_compatible(self.G, psi.G):
+            if not graph_compatible(self.G, psi.G, sanity_check=True):
                 raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
 
             if not same_legs(self.G, psi.G):
@@ -1383,6 +1384,10 @@ class PEPO:
         """
         return iter(self.G.nodes(data=False))
 
+    def __contains__(self, node: int) -> bool:
+        """Does the graph `self.G` contain the node `node`?"""
+        return self.G.has_node(node)
+
 
 class PauliPEPO(PEPO):
     """
@@ -1420,12 +1425,12 @@ class PauliPEPO(PEPO):
 
                 if np.allclose(T[index], 0): continue
 
-                closeness = [
+                proportional_to_pauli = [
                     proportional(T[index], op, 10)
                     for op in (self.X, self.Y, self.Z, self.I)
                 ]
 
-                if not any(closeness):
+                if not any(proportional_to_pauli):
                     warnings.warn(
                         "".join((
                             f"Unknown operator in index {virtual_index} at ",
