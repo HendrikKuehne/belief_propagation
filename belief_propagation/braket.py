@@ -146,7 +146,7 @@ class BaseBraket:
 
     def __contract_ctg_hyperopt(
             self,
-            target_size: int = 2**20,
+            target_width: int = 20,
             parallel: bool = False,
             verbose: bool = False,
             sanity_check: bool = False,
@@ -154,8 +154,12 @@ class BaseBraket:
         ) -> float:
         """
         Exact contraction using a `cotengra.HyperOptimizer` object.
-        * `target_size`: Maximum intermediate tensor size (see
-        [basic slicing](https://cotengra.readthedocs.io/en/latest/advanced.html#basic-slicing-slicing-opts)).
+        * `target_size`: Maximum number of dimensions of any
+        intermediate tensor. Is passed to dynamic slicing options of
+        `ctg.HyperOptimizer` as `target_size = max_edge_size **
+        target_width`, where `max_edge_size` is the largest edge size
+        (see [dynamic slicing](https://cotengra.readthedocs.io/en/latest/advanced.html#dynamic-slicing-slicing-reconf-opts)
+        in the cotengra docs).
         Standard value was chosen basically arbitrarily.
         * `parallel`: Whether Cotengra uses parallelization.
         * `kwargs` are passed to `ctg.HyperOptimizer`.
@@ -165,11 +169,7 @@ class BaseBraket:
 
         if self.nsites == 1:
             # the network is trivial
-            bra = tuple(self._bra.G.nodes(data="T"))[0][1]
-            op = tuple(self._op.G.nodes(data="T"))[0][1]
-            ket = tuple(self._ket.G.nodes(data="T"))[0][1]
-
-            return np.einsum("i, ij, j->", bra, op, ket)
+            return np.einsum("i,ij,j->", *self[self.op.root])
 
         size_dict = {}
         arrays = ()
@@ -186,19 +186,19 @@ class BaseBraket:
                 size_dict[ctg.get_symbol(N + i)] = edge_size
             N += 3
 
-        # enumerating the physical edges in the network, extracting the size of
-        # every edge
+        # Enumerating the physical edges in the network, extracting the size of
+        # every edge.
         for node in self:
             self._bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
             self._op.G.nodes[node]["label"] = [
-                ctg.get_symbol(N),ctg.get_symbol(N+1)
+                ctg.get_symbol(N), ctg.get_symbol(N+1)
             ]
             self._ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
             size_dict[ctg.get_symbol(N)] = self.D
             size_dict[ctg.get_symbol(N + 1)] = self.D
             N += 2
 
-        # extracting the einsum arguments
+        # Extracting the einsum arguments.
         for node in self:
             for layer in (self._bra.G, self._op.G, self._ket.G):
                 # tensor at this site
@@ -217,6 +217,10 @@ class BaseBraket:
 
                 inputs += (legs,)
 
+        # Handling kwargs.
+        max_edge_size = max(size_dict.values())
+        target_size = max_edge_size ** target_width
+
         opt = ctg.HyperOptimizer(
             parallel=parallel,
             slicing_reconf_opts={"target_size": target_size},
@@ -225,9 +229,27 @@ class BaseBraket:
         )
         tree = opt.search(inputs=inputs, output=output, size_dict=size_dict)
 
+        # If we use cotengra to contract a braket that was created using
+        # Braket.Cntr - i.e. one that contains dummies in self.bra and self.ket
+        # - this code might fail. The reason is that the size objectives of
+        # cotengra only account for the numbers of elements of intermediate
+        # tensors, not the number of dimensions. When there are dummies in the
+        # braket, however, there are many dimensions of size one in the
+        # tensors. Cotengra does not care about those, and leaves them mostly
+        # untouched, so they accumulate. This causes problems not in cotengra
+        # but in the underlying numpy code, because the maximum number of
+        # dimensions of a numpy array is 32. Large brakets with dummies in bra
+        # and operator might reach this threshold. What I'll do to prevent this
+        # is I'll slice all edges in the tree that have size one. Slicing an
+        # edge with size one is free, after all (incurs no additional
+        # computational cost).
+        for ind, size in size_dict.items():
+            if size == 1:
+                tree.remove_ind(ind, inplace=True)
+
         try:
             return tree.contract(arrays)
-        except ValueError:
+        except ValueError as err:
             warnings.warn(
                 "".join((
                     "Contraction not possible using cotengra due to ",
@@ -236,6 +258,7 @@ class BaseBraket:
                 )),
                 RuntimeWarning
             )
+            print("Exception:",err)
             return np.nan
 
     def contract(self, sanity_check: bool = False, **kwargs) -> float:
