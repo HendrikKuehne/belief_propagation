@@ -11,7 +11,7 @@ __all__ = [
     "QR_bottleneck",
     "L2BP_compression",
     "QR_gauging",
-    "loop_excitations",
+    "BP_excitations",
     "loop_series_expansion"
 ]
 
@@ -23,6 +23,7 @@ import warnings
 import numpy as np
 import networkx as nx
 import scipy.linalg as scialg
+import matplotlib.pyplot as plt
 
 from belief_propagation.braket import (
     Braket,
@@ -700,7 +701,84 @@ def feynman_cut(
 # -----------------------------------------------------------------------------
 
 
-def loop_excitations(
+def BP_excitations(
+        G:nx.MultiGraph,
+        max_order: int = np.inf,
+        sanity_check: bool = False
+    ) -> Tuple[nx.MultiGraph]:
+    """
+    Given the graph `G`, returns the excitations from
+    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108) up to order
+    `max_order`. The order of an excitation is the number of edges that
+    are excited.
+    """
+    if sanity_check: assert network_message_check(G=G)
+
+    if nx.is_tree(G): return ()
+
+    # The loop excitations are the operator chains of a PEPO with bond
+    # dimension2  on the graph G, where the PEPOs local tensors are defined
+    # s.t. the only non-zero components are located in indices that ensure
+    # that there are no dangling edges.
+
+    # Root node of the PEPO is node with smallest degree.
+    root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
+
+    # Depth-first search tree is PEPO traversal tree.
+    tree = nx.dfs_tree(G,root)
+
+    pepoG = PEPO.prepare_graph(G=G, chi=2, sanity_check=sanity_check)
+
+    # Filling the PEPO with tensors that are zero-valued if there is a dangling
+    # edge.
+    for node in pepoG:
+        pepoG.nodes[node]["T"] = np.zeros(
+            shape=tuple(2 for neighbor in pepoG.adj[node]) + (2, 2)
+        )
+
+        for virt_idx in itertools.product(
+            range(2),repeat=len(pepoG.adj[node])
+        ):
+            # A unit-valued edge is considered to be excited. This means that
+            # if the virtual indices sum to one, there is a dangling excitation
+            # at this node.
+            if sum(virt_idx) != 1:
+                idx = virt_idx + (slice(2), slice(2))
+                pepoG.nodes[node]["T"][idx] = np.eye(2)
+
+    exc_pepo = PEPO.from_graphs(
+        G=pepoG,
+        tree=tree,
+        check_tree=False,
+        sanity_check=sanity_check
+    )
+
+    _,virt_idx_list = exc_pepo.operator_chains(
+        return_virtidx=True,
+        sanity_check=sanity_check
+    )
+
+    excitations = ()
+    # Assembling the excitation graphs from virt_idx_list.
+    for virt_idx in virt_idx_list:
+        if sum(virt_idx.values()) > max_order:
+            # This excitation has more edges than we asked for. Skipping.
+            continue
+
+        if sum(virt_idx.values()) == 0:
+            # The BP vacuum is not an excited state.
+            continue
+
+        excitations += (nx.MultiGraph(incoming_graph_data=(
+            tuple(edge)
+            for edge, idx in virt_idx.items()
+            if idx == 1
+        )),)
+
+    return excitations
+
+
+def loop_excitations_old(
         G: nx.MultiGraph,
         max_order: int = np.inf,
         sanity_check: bool = False
@@ -765,9 +843,6 @@ def loop_series_expansion(
     the maximum oder of loops that are taken into consideration; default
     is `np.inf`, where all loops are incorporated. `kwargs` are passed
     to `braket.BP`.
-
-    See [`D1BP.contract_loop_series_expansion`](https://github.com/jcmgray/quimb/blob/main/quimb/tensor/belief_propagation/d1bp.py#L335)
-    in quimb for a reference implementation.
     """
     # sanity check
     if sanity_check: assert braket.intact
@@ -806,7 +881,7 @@ def loop_series_expansion(
     )
 
     # finding excitations in the graph.
-    excitations = loop_excitations(
+    excitations = BP_excitations(
         braket.G, max_order=max_order, sanity_check=sanity_check
     )
 
@@ -847,6 +922,16 @@ def __check_contracted_physical_dims(
     return True
 
 
+__excitations_to_contributions: Dict[int, float] = dict()
+
+
+def __BP_excitation_memoization(func: Callable) -> Callable:
+    """
+    Memoization of `__compute_BP_excitation`.
+    """
+    raise NotImplementedError
+
+
 def __compute_BP_excitation(
         braket: Braket,
         excitation: nx.MultiGraph,
@@ -864,7 +949,7 @@ def __compute_BP_excitation(
 
     if not nx.is_connected(G=excitation):
         connected_excitations = tuple(
-            excitation.subgraph(component).copy()
+            excitation.subgraph(component)
             for component in nx.connected_components(excitation)
         )
 

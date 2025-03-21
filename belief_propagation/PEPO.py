@@ -473,29 +473,34 @@ class PEPO:
             self,
             save_tensors: bool = True,
             remove_ids: bool = True,
+            return_virtidx: bool = False,
             sanity_check: bool = False
         ) -> Tuple[Dict[int, np.ndarray]]:
         """
         Returns all operator chains. An operator chain is a collection
-        of operators. The summation of the tensor products of all operator chains
-        gives the operator.
+        of operators. The summation of the tensor products of all
+        operator chains gives the operator.
 
         Operator chains are returned as a dict, where nodes are keys.
-        If `save_tensors=True` (default), local operators are values;
-        otherwise, indices to PEPO tensors are values. If
-        `remove_ids=True` (default), identities are removed.
+        If `save_tensors = True` (default), local operators are values;
+        otherwise, indices to PEPO tensors are values. If `remove_ids =
+        True` (default), identities are removed. If `return_virtidx =
+        True`, the virtual indices on every edge are returned as a
+        dictionary alognside the operator chains.
         """
-        # sanity checks
+        # Sanity checks.
         if sanity_check: assert self.intact
 
-        # why a recursion? For large graphs, simply iterating through all
-        # indices to find valid chains might take prohibitively long
+        # Why a recursion? For large graphs, simply iterating through all
+        # indices to find valid chains might take prohibitively long.
 
-        operator_chains: List[dict] = []
+        operator_chains: List[Dict[int, Tuple[int]]] = []
+        operator_chain_virtidx: List[Dict[FrozenSet[int], int]] = []
 
         self.__chain_construction_recursion(
             edges_to_indices={},
             chains=operator_chains,
+            edges_to_indices_list=operator_chain_virtidx,
             sanity_check=sanity_check
         )
 
@@ -530,18 +535,23 @@ class PEPO:
                 # substituting indices with tensors
                 if save_tensors: chain[key] = T
 
-        return tuple(operator_chains)
+        if return_virtidx:
+            return tuple(operator_chains), operator_chain_virtidx
+        else:
+            return tuple(operator_chains)
 
     def __chain_construction_recursion(
             self,
             edges_to_indices: Dict[FrozenSet[int], int],
             chains: List[Dict[int, Tuple[int]]],
+            edges_to_indices_list: List[Dict[FrozenSet[int], int]],
             sanity_check: bool = False
         ) -> None:
         """
         Traversing the PEPO graph, collecting the operator chains.
         Chains are saved in the argument `chains`, which is manipulated
-        in-place.
+        in-place. `edges_to_indices_list` contains the edge indices of
+        every chain.
 
         This function recursively traverses the graph by moving one step
         out from the current set `edges_to_indices`.
@@ -551,11 +561,11 @@ class PEPO:
             edges_to_indices=edges_to_indices,
             sanity_check=sanity_check
         ):
-            # the current chain has traversed the entire graph, and is thus
-            # complete. Let's save it
+            # The current chain has traversed the entire graph, and is thus
+            # complete. Let's save it.
             chain = {}
 
-            # assembling the chain
+            # Saving virtual indices for every node.
             for node in self:
                 chain[node] = edge_indices_to_site_index(
                     G=self.G,
@@ -566,8 +576,9 @@ class PEPO:
                     slice(0, self.D), slice(0, self.D)
                 )
 
-            # saving the chain
+            # Saving the chain.
             chains.append(chain)
+            edges_to_indices_list.append(edges_to_indices)
 
             return
 
@@ -631,7 +642,8 @@ class PEPO:
             self.__chain_construction_recursion(
                 edges_to_indices=new_edges_to_indices,
                 chains=chains,
-                sanity_check=sanity_check
+                sanity_check=sanity_check,
+                edges_to_indices_list=edges_to_indices_list
             )
 
         return
