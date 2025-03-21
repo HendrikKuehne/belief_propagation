@@ -107,6 +107,9 @@ class PEPO:
         operator chains.
         * `sparse`: Scipy csr-sparse matrix from sparse contraction of
         the network. Works for small PEPOs only.
+
+        The order of the physical dimensions is inherited from the
+        labels of the nodes: the nodes are sorted in ascending order.        
         """
 
         if create_using == "cotengra":
@@ -132,7 +135,7 @@ class PEPO:
 
     def __to_dense(self, sanity_check: bool) -> np.ndarray:
         """
-        Constructs the operator using `ctg.einsum`.
+        Constructs the dense operator using `ctg.einsum`.
         """
         if sanity_check: assert self.intact
 
@@ -143,15 +146,15 @@ class PEPO:
         inputs = ()
         tensors = ()
 
-        # enumerating the edges in the graph
+        # Enumerating the edges in the graph.
         for i, nodes in enumerate(self.G.edges()):
             node1, node2 = nodes
             self.G[node1][node2][0]["label"] = ctg.get_symbol(i)
 
         N_edges = self.G.number_of_edges()
-        # assembling the einsum arguments
-        for i, nodeT in enumerate(self.G.nodes(data="T")):
-            node, T = nodeT
+        # Assembling the einsum arguments.
+        for i, node in enumerate(sorted(self)):
+            T = self[node]
             legs = [
                 None
                 for _ in range(T.ndim-2)
@@ -188,59 +191,6 @@ class PEPO:
 
         return H
 
-        inputs = ()
-        arrays = ()
-        size_dict = {}
-
-        # enumerating the edges in the graph
-        for i, nodes in enumerate(self.G.edges()):
-            node1, node2 = nodes
-            self.G[node1][node2][0]["label"] = i
-            size_dict[i] = self.G[node1][node2][0]["size"]
-
-        N_edges = self.G.number_of_edges()
-        # assembling the einsum arguments
-        for i, nodeT in enumerate(self.G.nodes(data="T")):
-            node, T = nodeT
-            legs = [
-                None
-                for _ in range(T.ndim-2)
-            ] + [
-                N_edges + i,
-                N_edges + self.G.number_of_nodes() + i
-            ] # last two indices are the physical legs
-
-            for _, neighbor, edge_label in self.G.edges(
-                nbunch=node,
-                data="label"
-            ):
-                legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
-
-            inputs += (legs,)
-            arrays += (T,)
-
-        # output ordering
-        output = tuple(
-            _
-            for _ in range(N_edges, N_edges + 2 * self.G.number_of_nodes())
-        )
-
-        H = ctg.array_contract(
-            arrays=arrays,
-            inputs=inputs,
-            output=output,
-            size_dict=size_dict
-        )
-        H = np.reshape(
-            H,
-            newshape=(
-                self.D ** self.G.number_of_nodes(),
-                self.D ** self.G.number_of_nodes()
-            )
-        )
-
-        return H
-
     def __to_sparse(
             self,
             create_using: str,
@@ -252,7 +202,7 @@ class PEPO:
         if sanity_check: assert self.intact
 
         if self.nsites == 1:
-            # the network is trivial
+            # The network is trivial.
             return tuple(self.G.nodes(data="T"))[0][1]
 
         if create_using == "scipy.csr":
@@ -260,11 +210,11 @@ class PEPO:
             # operator chains. array construction is fastest using the coo
             # format, but I'm returning csr because this is optimal for
             # matrix-vector multiplication; an operation that the Lanczos
-            # algorithm heavily relies on
+            # algorithm heavily relies on.
             chains = self.operator_chains(sanity_check=sanity_check)
 
             H = scisparse.csr_array((self.D**self.nsites, self.D**self.nsites))
-            nodes = tuple(self.G.nodes())
+            nodes = tuple(sorted(self))
 
             for chain in chains:
                 ops = tuple(
@@ -290,8 +240,8 @@ class PEPO:
             inputs = ()
             tensors = ()
 
-            # enumerating the edges in the graph
-            for i,nodes in enumerate(self.G.edges()):
+            # Enumerating the edges in the graph.
+            for i, nodes in enumerate(self.G.edges()):
                 node1, node2 = nodes
                 self.G[node1][node2][0]["label"] = ctg.get_symbol(i)
 
@@ -301,15 +251,15 @@ class PEPO:
                 for i in range(2 * self.nsites)
             )
 
-            # assembling the einsum arguments
-            for i, node in enumerate(self.G.nodes()):
+            # Assembling the einsum arguments.
+            for i, node in enumerate(sorted(self)):
                 legs = [
                     None
                     for _ in range(self[node].ndim-2)
                 ] + [
                     ctg.get_symbol(N_edges + i),
                     ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)
-                ] # last two indices are the physical legs
+                ]
 
                 for _, neighbor, edge_label in self.G.edges(
                     nbunch=node,
@@ -320,12 +270,12 @@ class PEPO:
                 inputs += (tuple(legs),)
                 tensors += (sparse.GCXS(self[node]),)
 
-            # einsum expression, with all physical dimensions in ellipsis
+            # Einsum expression, with all physical dimensions in ellipsis.
             einsum_expr = ctg.utils.inputs_output_to_eq(
                 inputs=inputs,
                 output=output
             )
-            # contraction using einsum
+            # Contraction using einsum.
             H = sparse.einsum(einsum_expr, *tensors)
             H = sparse.reshape(
                 H,

@@ -37,17 +37,18 @@ class PEPS:
         N = self.G.number_of_edges()
         args = ()
 
-        # enumerating the edges in the graph
+        # Enumerating the edges in the graph.
         for i,nodes in enumerate(self.G.edges()):
             node1, node2 = nodes
             self.G[node1][node2][0]["label"] = i
 
-        # extracting the einsum arguments
-        for node, T in self.G.nodes(data="T"):
+        # Extracting the einsum arguments.
+        for node in sorted(self):
+            T = self[node]
             args += (T,)
 
-            # the first legs are thy virtual bond dimensions, the last leg is
-            # the physical dimension
+            # The first legs are thy virtual bond dimensions, the last leg is
+            # the physical dimension.
             legs = [None for i in range(T.ndim-1)] + [N,]
 
             for _, neighbor, edge_label in self.G.edges(
