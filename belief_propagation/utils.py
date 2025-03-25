@@ -750,5 +750,50 @@ def graph_compatible(
     return True
 
 
+def check_msg_intact(
+        msg: np.ndarray,
+        target_shape: Tuple[int],
+        sender: int = None,
+        receiver: int = None
+    ) -> bool:
+    """
+    Checks if `msg` is intact. This amounts to:
+    * Checking if `msg` has the correct shape.
+    * Checking if `msg` contains only finite values (non-infinite and
+    non-nan). Only checked if `check_finite = True` (default).
+    """
+    if not target_shape[0] == target_shape[2]:
+        raise ValueError("".join((
+            "Target shape must have the form (bra_size, op_size, ket_size), ",
+            "where bra_size = ket_size."
+        )))
+
+    if not msg.shape == target_shape:
+        warnings.warn(
+            "".join((
+                f"Message from {sender} to {receiver} has ", "wrong shape. ",
+                "Expected ",
+                str(target_shape),
+                " got ",
+                str(msg.shape),
+                "."
+            )),
+            UserWarning
+        )
+        return False
+
+    if not np.isfinite(msg).all():
+        warnings.warn(
+            "".join((
+                f"Message from {sender} to {receiver} contains non-finite ",
+                "values."
+            )),
+            UserWarning
+        )
+        return False
+
+    return True
+
+
 if __name__ == "__main__":
     pass

@@ -16,7 +16,7 @@ __all__ = [
 import copy
 import warnings
 import itertools
-from typing import Iterator, Tuple, Dict, Union
+from typing import Iterator, Tuple, Dict, Union, List
 
 import numpy as np
 import networkx as nx
@@ -28,7 +28,9 @@ import tqdm
 from belief_propagation.utils import (
     network_message_check,
     crandn,
-    graph_compatible
+    graph_compatible,
+    same_legs,
+    check_msg_intact
 )
 from belief_propagation.hamiltonians import Identity
 from belief_propagation.PEPO import PEPO
@@ -93,67 +95,23 @@ def contract_tensor_msg(
 class BaseBraket:
     """
     Base class for sandwiches of MPS and PEPOs.
-    Always describes a braket-object of the form `<bra|op|ket>`.
+    Always describes a braket of the form `<bra|op|ket>`.
     """
-
-    def __contract_ctg_einsum(self, sanity_check: bool = False) -> float:
-        """
-        Exact contraction using `ctg.einsum`.
-        """
-        # sanity check
-        if sanity_check: assert self.intact
-
-        if self.G.number_of_nodes() == 1:
-            # the network is trivial
-            bra = tuple(self._bra.G.nodes(data="T"))[0][1]
-            op = tuple(self._op.G.nodes(data="T"))[0][1]
-            ket = tuple(self._ket.G.nodes(data="T"))[0][1]
-
-            return np.einsum("i,ij,j->", bra, op, ket)
-
-        N = 0
-        # enumerating the virtual edges in the network
-        for node1, node2 in self.G.edges():
-            self._bra.G[node1][node2][0]["label"] = N
-            self._op.G[node1][node2][0]["label"] = N + 1
-            self._ket.G[node1][node2][0]["label"] = N + 2
-            N += 3
-        # enumerating the physical edges in the network
-        for node in self:
-            self._bra.G.nodes[node]["label"] = [N,]
-            self._op.G.nodes[node]["label"] = [N, N+1]
-            self._ket.G.nodes[node]["label"] = [N+1,]
-            N += 2
-
-        args = ()
-        # extracting the einsum arguments
-        for node in self:
-            for layer in (self._bra.G, self._op.G, self._ket.G):
-                args += (layer.nodes[node]["T"],)
-                # virtual edges
-                legs = [None for _ in range(len(layer.adj[node]))]
-                for _, neighbor, edge_label in layer.edges(
-                    nbunch=node,
-                    data="label"
-                ):
-                    legs[layer[node][neighbor][0]["legs"][node]] = edge_label
-                # physical edges
-                legs += layer.nodes[node]["label"]
-
-                args += (legs,)
-
-        return ctg.einsum(*args, optimize="greedy")
 
     def __contract_ctg_hyperopt(
             self,
+            inputs: List[List[str]],
+            arrays: List[np.ndarray],
+            size_dict: Dict[str, int],
             target_width: int = 20,
             parallel: bool = False,
             verbose: bool = False,
-            sanity_check: bool = False,
             **kwargs
         ) -> float:
         """
-        Exact contraction using a `cotengra.HyperOptimizer` object.
+        Exact contraction using a `cotengra.HyperOptimizer` object. This
+        is only recommended for large networks, as it incurs a
+        significant computational overhead.
         * `target_size`: Maximum number of dimensions of any
         intermediate tensor. Is passed to dynamic slicing options of
         `ctg.HyperOptimizer` as `target_size = max_edge_size **
@@ -164,58 +122,6 @@ class BaseBraket:
         * `parallel`: Whether Cotengra uses parallelization.
         * `kwargs` are passed to `ctg.HyperOptimizer`.
         """
-        # sanity check
-        if sanity_check: assert self.intact
-
-        if self.nsites == 1:
-            # the network is trivial
-            return np.einsum("i,ij,j->", *self[self.op.root])
-
-        size_dict = {}
-        arrays = ()
-        inputs = ()
-        output = ()
-
-        N = 0
-        # enumerating the virtual edges in the network, extracting the size of
-        # every edge
-        for node1, node2 in self.G.edges():
-            for i,layer in enumerate((self._bra, self._op, self._ket)):
-                edge_size = layer.G[node1][node2][0]["size"]
-                layer.G[node1][node2][0]["label"] = ctg.get_symbol(N + i)
-                size_dict[ctg.get_symbol(N + i)] = edge_size
-            N += 3
-
-        # Enumerating the physical edges in the network, extracting the size of
-        # every edge.
-        for node in self:
-            self._bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
-            self._op.G.nodes[node]["label"] = [
-                ctg.get_symbol(N), ctg.get_symbol(N+1)
-            ]
-            self._ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
-            size_dict[ctg.get_symbol(N)] = self.D
-            size_dict[ctg.get_symbol(N + 1)] = self.D
-            N += 2
-
-        # Extracting the einsum arguments.
-        for node in self:
-            for layer in (self._bra.G, self._op.G, self._ket.G):
-                # tensor at this site
-                arrays += (layer.nodes[node]["T"],)
-
-                # virtual edges
-                legs = [None for _ in range(len(layer.adj[node]))]
-                for _, neighbor, edge_label in layer.edges(
-                    nbunch=node,
-                    data="label"
-                ):
-                    legs[layer[node][neighbor][0]["legs"][node]] = edge_label
-
-                # physical edges
-                legs += layer.nodes[node]["label"]
-
-                inputs += (legs,)
 
         # Handling kwargs.
         max_edge_size = max(size_dict.values())
@@ -227,53 +133,48 @@ class BaseBraket:
             progbar=verbose,
             **kwargs
         )
-        tree = opt.search(inputs=inputs, output=output, size_dict=size_dict)
+        tree = opt.search(inputs=inputs, output=(), size_dict=size_dict)
 
-        # If we use cotengra to contract a braket that was created using
-        # Braket.Cntr - i.e. one that contains dummies in self.bra and self.ket
-        # - this code might fail. The reason is that the size objectives of
-        # cotengra only account for the numbers of elements of intermediate
-        # tensors, not the number of dimensions. When there are dummies in the
-        # braket, however, there are many dimensions of size one in the
-        # tensors. Cotengra does not care about those, and leaves them mostly
-        # untouched, so they accumulate. This causes problems not in cotengra
-        # but in the underlying numpy code, because the maximum number of
-        # dimensions of a numpy array is 32. Large brakets with dummies in bra
-        # and operator might reach this threshold. What I'll do to prevent this
-        # is I'll slice all edges in the tree that have size one. Slicing an
-        # edge with size one is free, after all (incurs no additional
-        # computational cost).
-        for ind, size in size_dict.items():
-            if size == 1:
-                tree.remove_ind(ind, inplace=True)
-
-        try:
-            return tree.contract(arrays)
-        except ValueError as err:
-            warnings.warn(
-                "".join((
-                    "Contraction not possible using cotengra due to ",
-                    "ValueError. This is known to happen if intermediate ",
-                    "arrays have too many dimensions."
-                )),
-                RuntimeWarning
-            )
-            print("Exception:",err)
-            return np.nan
+        return tree.contract(arrays)
 
     def contract(self, sanity_check: bool = False, **kwargs) -> float:
         """
         Exact contraction. `kwargs` are passed to `ctg.HyperOptimizer`.
         """
         # I'm using a guess to distinguish between cases where I should use a
-        # HyperOptimizer object, and where I shouldn't.
-        if self.nsites < 10:
-            return self.__contract_ctg_einsum(sanity_check=sanity_check)
+        # HyperOptimizer object, and where I shouldn't. Optimal contraction
+        # path construction with HyperOptimizers incurs a significant
+        # computational overhead, and is only recommended for large networks.
+
+        inputs, shapes, arrays, size_dict = braket_to_ctg_arguments(
+            braket=self,
+            sanity_check=sanity_check
+        )
+
+        if self.nsites < 100:
+            eq = ctg.utils.inputs_output_to_eq(inputs=inputs, output=())
+            return ctg.einsum(eq, *arrays)
 
         return self.__contract_ctg_hyperopt(
-            sanity_check=sanity_check,
+            inputs=inputs,
+            arrays=arrays,
+            size_dict=size_dict,
             **kwargs
         )
+
+    def _permute_virtual_dimensions(
+            self,
+            G: nx.MultiGraph,
+            sanity_check: bool = False
+        ) -> None:
+        """
+        Changes the leg ordering to the one given in `G`.
+        """
+        self._bra._permute_virtual_dimensions(G=G, sanity_check=sanity_check)
+        self._op._permute_virtual_dimensions(G=G, sanity_check=sanity_check)
+        self._ket._permute_virtual_dimensions(G=G, sanity_check=sanity_check)
+
+        return
 
     @property
     def nsites(self) -> int:
@@ -302,7 +203,7 @@ class BaseBraket:
         if not self._op.intact: return False
         if not self._ket.intact: return False
 
-        # do the physical dimensions match?
+        # Do the physical dimensions match?
         if not (self._bra.D == self.D
                 and self._ket.D == self.D
                 and self._op.D == self.D
@@ -333,7 +234,7 @@ class BaseBraket:
         assert graph_compatible(self.G, ket.G, sanity_check=True)
         self._ket = ket
 
-        # it is no longer guaranteed that the messages are converged
+        # It is no longer guaranteed that the messages are converged.
         self._converged = False
 
         return
@@ -479,10 +380,10 @@ class BaseBraket:
 
         self._converged: bool = False
         """Whether the messages in `self.msg` are converged."""
-        # this attribute does not really belong in BaseBraket, of course; I
+        # This attribute does not really belong in BaseBraket, of course; I
         # included it here to be able to have the property setters in this base
         # class. After all, the whole point of this base class was to avoid
-        # clutter in the BP code
+        # clutter in the BP code.
 
         if sanity_check: assert self.intact
 
@@ -491,13 +392,13 @@ class BaseBraket:
     def __getitem__(self, node:int) -> Tuple[np.ndarray]:
         """
         Subscripting with a node gives the tensor stack
-        `(bra[node],op[node],ket[node])` at that node.
+        `(bra[node], op[node], ket[node])` at that node.
         """
         return (self._bra[node], self._op[node], self._ket[node])
 
     def __setitem__(self, node: int, Tstack: Tuple[np.ndarray]) -> None:
         """
-        Changing tensors directly.
+        Changing tensor stacks directly.
         """
         if not len(Tstack) == 3:
             raise ValueError("".join((
@@ -533,10 +434,49 @@ class BaseBraket:
         """Does the graph `self.G` contain the node `node`?"""
         return (node in self.bra) and (node in self.op) and (node in self.ket)
 
+    def __eq__(self, rhs: "BaseBraket") -> bool:
+        """
+        Two Brakets are considered equal if they contain the same local
+        tensors on the same graph. Different leg orderings are accounted
+        for. Keep in mind that this notion of equality is not invariant
+        with respect to the gauge freedom of the virtual bond
+        dimensions!
+        """
+        # Do self and rhs live on the same graphs?
+        if not graph_compatible(self.G, rhs.G): return False
+
+        # Since we might need to permute the virtual dimensions, we will
+        # continue with a copy of self.
+        lhs = copy.deepcopy(self)
+
+        if not same_legs(lhs.G, rhs.G):
+            # Permute dimensions of lhs to make both Brakets compatible.
+            lhs._permute_virtual_dimensions(rhs.G)
+
+        # Are all site tensors the same?
+        for node in lhs:
+            if not all(
+                lhs_T.shape == rhs_T.shape
+                for lhs_T, rhs_T in zip(lhs[node], rhs[node])
+            ): 
+                # Two tensors in the respective tensor stacks have different
+                # shapes.
+                return False
+
+            if not all(
+                np.allclose(lhs_T, rhs_T)
+                for lhs_T, rhs_T in zip(lhs[node], rhs[node])
+            ):
+                # Two tensors in the respective tensor stacks have different
+                # components.
+                return False
+
+        return True
+
 
 class Braket(BaseBraket):
     """
-    Code for belief propagation.
+    Code for Belief Propagation.
     """
 
     def construct_initial_messages(
@@ -796,12 +736,12 @@ class Braket(BaseBraket):
 
         iterator = tqdm.tqdm(
             range(numiter),
-            desc=iterator_desc_prefix + f"BP iteration",
+            desc="".join((iterator_desc_prefix, "BP iteration")),
             disable=not verbose
         )
 
         eps_list = ()
-        # message initialization
+        # Message initialization.
         if new_messages: self.construct_initial_messages(
             real=real,
             normalize=normalize,
@@ -852,10 +792,10 @@ class Braket(BaseBraket):
         if normalize_to == "unity":
             for sender in self.msg.keys():
                 for receiver in self.msg[sender].keys():
-                    # vanishing messages will be blown up by normalization,
-                    # which is something we do not want
+                    # Vanishing messages will be blown up by normalization,
+                    # which is something we do not want.
                     if np.allclose(self.msg[sender][receiver],0):
-                        # why not set them to zero? Because we incur a
+                        # Why not set them to zero? Because we incur a
                         # divide-by-zero during cntr calculation at the end of
                         # BP. How I handle this instead is I set node.cntr = 0
                         # for zero-messages in
@@ -879,6 +819,9 @@ class Braket(BaseBraket):
             return
 
         if normalize_to == "cntr":
+            if np.isnan(self.cntr):
+                raise RuntimeError("Trying to normalize to nan network value.")
+
             if self.cntr == 0:
                 warnings.warn(
                     "".join((
@@ -890,14 +833,13 @@ class Braket(BaseBraket):
                 )
                 return
 
-            # contract messages into tensors first to obtain tensor values, if
-            # necessary
             if not "cntr" in self.G.nodes[self._op.root].keys():
+                # Contract messages into tensors to obtain tensor values.
                 self.__contract_tensors_inbound_messages(
                     sanity_check=sanity_check
                 )
 
-            for node in self.G.nodes():
+            for node in self:
                 norm = np.real_if_close(
                     ((self.cntr / self.G.nodes[node]["cntr"])
                      ** (1 / len(self.G.adj[node])))
@@ -1060,7 +1002,7 @@ class Braket(BaseBraket):
                 ))
             )
 
-        # handling kwargs
+        # Handling kwargs.
         if "iterator_desc_prefix" in kwargs.keys():
             kwargs["iterator_desc_prefix"] = "".join((
                 kwargs["iterator_desc_prefix"],
@@ -1118,6 +1060,9 @@ class Braket(BaseBraket):
         else:
             # each node carries the network value
             self.cntr = self.G.nodes[self._op.root]["cntr"]
+
+        #cntr_exact = self.contract()
+        #print(f"Rel. err. BP: {rel_err(cntr_exact,self.cntr)}")
 
         return
 
@@ -1211,53 +1156,37 @@ class Braket(BaseBraket):
     def intact(self) -> bool:
         """
         Whether the braket is intact or not. This includes:
-        * Is the network `G` message-ready?
-        * Are `bra`, `op`, and `ket` themselves intact?
-        * Do the physical dimensions match?
+        * Is the underlying `BaseBraket` object intact?
         * Do all the messages contain finite values?
         * Do all edge transformations have correct domains
         and images?
         """
         if not super().intact: return False
 
-        if self.msg is not None:
+        if (self.msg is not None) and self.converged:
+            # Checking if the messages are intact is only necessary if this
+            # braket contains a converged set of messages.
+
             for sender in self.msg.keys():
                 for receiver in self.msg[sender].keys():
-                    # are there any messages with non-finite values?
-                    if not np.isfinite(self.msg[sender][receiver]).all():
-                        warnings.warn(
-                            "".join((
-                                f"Non-finite message sent from {sender} to "
-                                ,f"{receiver}."
-                            )),
-                            RuntimeWarning
-                        )
-                        return False
-
-                    # does this message have the correct shape?
                     target_shape = (
                         self._bra.G[sender][receiver][0]["size"],
                         self._op.G[sender][receiver][0]["size"],
                         self._ket.G[sender][receiver][0]["size"]
                     )
-                    if not self.msg[sender][receiver].shape == target_shape:
-                        warnings.warn(
-                            "".join((
-                                f"Message from {sender} to {receiver} has ",
-                                "wrong shape. Expected ",
-                                str(target_shape),
-                                " got ",
-                                str(self.msg[sender][receiver].shape),
-                                "."
-                            )),
-                            RuntimeWarning
-                        )
+
+                    if not check_msg_intact(
+                        msg=self.msg[sender][receiver],
+                        target_shape=target_shape,
+                        sender=sender,
+                        receiver=receiver
+                    ):
                         return False
 
         for node1, node2 in self.G.edges():
             for sender, receiver in itertools.permutations((node1, node2)):
                 if np.isnan(self._edge_T[sender][receiver]).any():
-                    # no transformation on this edge
+                    # No transformation on this edge.
                     continue
 
                 if not self._edge_T[sender][receiver].shape == (
@@ -1357,12 +1286,12 @@ class Braket(BaseBraket):
             ket: PEPS,
             msg: Dict[int, Dict[int, np.ndarray]] = None,
             edge_T: Dict[int, Dict[int, np.ndarray]] = None,
+            converged: bool = False,
             sanity_check: bool = False
         ) -> None:
         """
         Initialize a new braket.
         """
-        # sanity check
         super().__init__(bra=bra, op=op, ket=ket, sanity_check=False)
 
         self.msg = msg
@@ -1387,6 +1316,11 @@ class Braket(BaseBraket):
         self.iter_until_conv: int = np.nan
         """Iterations `self.BP` took unttil convergence."""
 
+        if msg is not None:
+            # If a set of messages is supplied, the user might supply the
+            # information whether it is converged or not.
+            self._converged = converged
+
         if sanity_check: assert self.intact
 
         return
@@ -1397,6 +1331,138 @@ class Braket(BaseBraket):
             " Messages are ",
             "converged." if self.converged else "not converged."
         ))
+
+
+def braket_to_ctg_arguments(
+        braket: Braket,
+        slice_singletons: bool = True,
+        sanity_check: bool = False
+    ) -> Tuple[
+        List[List[str]],
+        List[List[int]],
+        List[np.ndarray],
+        Dict[str, int]
+    ]:
+    """
+    Given a `Braket` object, assembles and returns the cotengra
+    arguments `inputs`, `shapes`, `arrays` and `size_dict`. If
+    `slice_singletons = True` (default), singleton dimensions are
+    sliced.
+    """
+    # sanity check
+    if sanity_check: assert braket.intact
+
+    if braket.nsites == 1:
+        # The network is trivial.
+        inputs = [["a",], ["a", "b"], ["b",]]
+        shapes = [
+            [braket._bra.D,],
+            [braket._op.D, braket._op.D],
+            [braket._ket.D,]
+        ]
+        arrays = list(braket[braket.op.root])
+        size_dict = {
+            "a": braket._bra.D,
+            "b": braket._ket.D
+        }
+
+        return inputs, shapes, arrays, size_dict
+
+    inputs = []
+    shapes = []
+    arrays = []
+    size_dict = {}
+
+    N = 0
+
+    for node1, node2 in braket.G.edges():
+        for i, layer in enumerate((braket._bra, braket._op, braket._ket)):
+            # Enumerating the virtual edges in the network.
+            edge_size = layer.G[node1][node2][0]["size"]
+            layer.G[node1][node2][0]["label"] = ctg.get_symbol(N + i)
+
+            # Extracting the size of every edge.
+            size_dict[ctg.get_symbol(N + i)] = edge_size
+        N += 3
+
+    for node in braket:
+        # Enumerating the physical edges in the network.
+        braket._bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
+        braket._op.G.nodes[node]["label"] = [
+            ctg.get_symbol(N), ctg.get_symbol(N+1)
+        ]
+        braket._ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
+
+        # Extracting the size of every edge.
+        size_dict[ctg.get_symbol(N)] = braket.D
+        size_dict[ctg.get_symbol(N + 1)] = braket.D
+        N += 2
+
+    # Extracting the einsum arguments.
+    for node in braket:
+        for layer in (braket._bra.G, braket._op.G, braket._ket.G):
+            # Tensor at this site.
+            arrays += [layer.nodes[node]["T"],]
+
+            # Tensor at this site.
+            shapes += [layer.nodes[node]["T"].shape,]
+
+            # Virtual edges
+            legs = [None for _ in range(len(layer.adj[node]))]
+            for _, neighbor, edge_label in layer.edges(
+                nbunch=node,
+                data="label"
+            ):
+                leg = layer[node][neighbor][0]["legs"][node]
+                legs[leg] = edge_label
+
+            # Physical edges
+            legs += layer.nodes[node]["label"]
+
+            inputs += [legs,]
+
+    # If we use cotengra to contract a braket that was created using
+    # Braket.Cntr - i.e. one that contains dummies in self.bra and self.ket -
+    # the code so far might fail. The reason is that the size objectives of
+    # cotengra only account for the numbers of elements of intermediate
+    # tensors, not the number of dimensions. When there are dummies in the
+    # braket, however, there are many dimensions of size one in the tensors.
+    # Cotengra does not care about those, and leaves them mostly untouched, so
+    # they accumulate. This causes problems not in cotengra but in the
+    # underlying numpy code, because the maximum number of dimensions of a
+    # numpy array is 32. Large brakets with dummies in bra and operator might
+    # reach this threshold. What I'll do to prevent this is I'll slice all
+    # edges in the tree that have size one. Slicing an edge with size one is
+    # free, after all (e.g. incurs no additional computational cost).
+
+    if slice_singletons:
+        # Slicing singleton dimensions comes at no computational cost, but it
+        # is necessary in some scenarios to ensure that cotengra runs properly.
+        for i, T in enumerate(arrays):
+            singleton_dims = tuple(j for j in range(T.ndim) if T.shape[j] == 1)
+
+            if len(singleton_dims) == 0:
+                # This tensor has no singleton dimension; continuing.
+                continue
+
+            idx = tuple(slice(size) if size > 1 else 0 for size in T.shape)
+            singleton_dim_labels = tuple(inputs[i][j] for j in singleton_dims)
+
+            # Removing the singleton dimensions from the inputs and the size
+            # dictionary.
+            inputs_ = copy.deepcopy(inputs[i])
+            for label in singleton_dim_labels:
+                inputs_.remove(label)
+                size_dict.pop(label, None)
+            inputs[i] = inputs_
+
+            # Removing the singleton dimensions from the array.
+            arrays[i] = arrays[i][idx]
+
+            # Removing the singleton dimensions from the shapes.
+            shapes[i] = arrays[i].shape
+
+    return inputs, shapes, arrays, size_dict
 
 
 def contract_tensor_inbound_messages(
@@ -1512,14 +1578,13 @@ def contract_braket_physical_indices(
     Contracts the physical indices at each site. Returns a new braket,
     where the network is contained in `newbraket.ket`. Edge
     transformations and messages are added to the returned braket, if
-    present in `braket`. If `return_graph = True`, a graph is returned
-    that contains the network.
+    present in `braket`.
     """
     if sanity_check: assert braket.intact
 
     newG = copy.deepcopy(braket.G)
 
-    # contracting physical dimension in every tensor stack.
+    # Contracting physical dimension in every tensor stack.
     for node in braket:
         newG.nodes[node]["T"] = __contract_tstack_physical_index(braket[node])
 
@@ -1530,7 +1595,7 @@ def contract_braket_physical_indices(
         newG[node1][node2][0]["size"] = size
 
     kwargs = {}
-    # flattening edge transformations, if present
+    # Flattening edge transformations, if present.
     if hasattr(braket,"edge_T"):
         kwargs["edge_T"] = {}
         for sender in braket.edge_T.keys():
@@ -1545,7 +1610,7 @@ def contract_braket_physical_indices(
                     )
                 )
 
-    # flattening messages, if present
+    # Flattening messages, if present.
     if hasattr(braket,"msg"):
         if braket.msg is not None:
             kwargs["msg"] = {}
@@ -1561,6 +1626,84 @@ def contract_braket_physical_indices(
     newbraket._converged = braket.converged
 
     return newbraket
+
+
+def BP_excitations(
+        G: nx.MultiGraph,
+        max_order: int = np.inf,
+        sanity_check: bool = False
+    ) -> Tuple[nx.MultiGraph]:
+    """
+    Given the graph `G`, returns the excitations from
+    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108) up to order
+    `max_order`. The order of an excitation is the number of edges that
+    are excited.
+    """
+    if sanity_check: assert network_message_check(G=G)
+
+    if nx.is_tree(G): return ()
+
+    # The loop excitations are the operator chains of a PEPO with bond
+    # dimension2  on the graph G, where the PEPOs local tensors are defined
+    # s.t. the only non-zero components are located in indices that ensure
+    # that there are no dangling edges.
+
+    # Root node of the PEPO is node with smallest degree.
+    root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
+
+    # Depth-first search tree is PEPO traversal tree.
+    tree = nx.dfs_tree(G,root)
+
+    pepoG = PEPO.prepare_graph(G=G, chi=2, sanity_check=sanity_check)
+
+    # Filling the PEPO with tensors that are zero-valued if there is a dangling
+    # edge.
+    for node in pepoG:
+        pepoG.nodes[node]["T"] = np.zeros(
+            shape=tuple(2 for neighbor in pepoG.adj[node]) + (2, 2)
+        )
+
+        for virt_idx in itertools.product(
+            range(2),repeat=len(pepoG.adj[node])
+        ):
+            # A unit-valued edge is considered to be excited. This means that
+            # if the virtual indices sum to one, there is a dangling excitation
+            # at this node.
+            if sum(virt_idx) != 1:
+                idx = virt_idx + (slice(2), slice(2))
+                pepoG.nodes[node]["T"][idx] = np.eye(2)
+
+    exc_pepo = PEPO.from_graphs(
+        G=pepoG,
+        tree=tree,
+        check_tree=False,
+        sanity_check=sanity_check
+    )
+
+    _,virt_idx_list = exc_pepo.operator_chains(
+        return_virtidx=True,
+        sanity_check=sanity_check
+    )
+
+    excitations = ()
+    # Assembling the excitation graphs from virt_idx_list.
+    for virt_idx in virt_idx_list:
+        if sum(virt_idx.values()) > max_order:
+            # This excitation has more edges than we asked for. Skipping.
+            continue
+
+        if sum(virt_idx.values()) == 0:
+            # The BP vacuum is not an excited state.
+            continue
+
+        excitations += (nx.MultiGraph(incoming_graph_data=(
+            tuple(edge)
+            for edge, idx in virt_idx.items()
+            if idx == 1
+        )),)
+
+    return excitations
+
 
 if __name__ == "__main__":
     pass
