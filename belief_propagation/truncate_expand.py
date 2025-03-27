@@ -12,7 +12,7 @@ __all__ = [
     "L2BP_compression",
     "QR_gauging",
     "BP_excitations",
-    "loop_series_expansion"
+    "loop_series_contraction"
 ]
 
 import itertools
@@ -23,11 +23,12 @@ import warnings
 import numpy as np
 import networkx as nx
 import scipy.linalg as scialg
-import matplotlib.pyplot as plt
+import tqdm
 
 from belief_propagation.braket import (
     Braket,
-    contract_braket_physical_indices
+    contract_braket_physical_indices,
+    BP_excitations
 )
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
@@ -35,7 +36,6 @@ from belief_propagation.networks import expose_edge
 from belief_propagation.utils import (
     delta_tensor,
     graph_compatible,
-    network_message_check
 )
 
 # -----------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def make_BP_informed(truncation_func: Callable) -> Callable:
                 RuntimeWarning
             )
 
-        # inserting truncation into the Braket
+        # Inserting truncation into the Braket.
         truncation_func(
             braket,
             node1,
@@ -162,7 +162,7 @@ def insert_excitation(
     node2)`. `msg12` is the message from `node1` to `node2`, `msg21` is
     defined accordingly. Both vectors must have the shape
     `(braket.bra.size, braket.op.size, braket.ket.size)`. `braket` is
-    changed in-place. Proceudre from
+    changed in-place. Procedure from
     [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
     """
     # sanity check
@@ -188,7 +188,7 @@ def insert_excitation(
         )))
     if sanity_check: assert braket.intact
 
-    # constructing projectors
+    # Constructing projectors.
     P1to2 = np.einsum(
         "ij,kl,mn->ikmjln",
         np.eye(bra_size, dtype=dtype),
@@ -196,10 +196,9 @@ def insert_excitation(
         np.eye(ket_size, dtype=dtype)
     )
     P1to2 -= np.einsum(
-        "ijk,lmn,jmrh->irklhn",
+        "ijk,lmn->ijklmn",
         msg12,
-        msg21,
-        delta_tensor(nLegs=4, chi=op_size, dtype=dtype)
+        msg21
     )
 
     P2to1 = np.einsum(
@@ -209,10 +208,9 @@ def insert_excitation(
         np.eye(ket_size, dtype=dtype)
     )
     P2to1 -= np.einsum(
-        "ijk,lmn,jmrh->irklhn",
+        "ijk,lmn->ijklmn",
         msg21,
-        msg12,
-        delta_tensor(nLegs=4, chi=op_size, dtype=dtype)
+        msg12
     )
 
     braket.insert_edge_T(P1to2, node1, node2, sanity_check=sanity_check)
@@ -494,18 +492,23 @@ def L2BP_compression(
 
     if verbose:
         compression_ratios = tuple(
-            new_sizes[i] / old_sizes[i]
+            (old_sizes[i] - new_sizes[i]) / old_sizes[i]
             for i in range(len(old_sizes)))
+
         om = np.mean(old_sizes)
         os = np.std(old_sizes)
         nm = np.mean(new_sizes)
         ns = np.std(new_sizes)
         cm = np.mean(compression_ratios)
         cs = np.std(compression_ratios)
-        print("L2BP compression diagnostics:")
+        print(
+            f"L2BP compression: Sing.val. threshold = {singval_threshold:.3e}"
+        )
         print(f"    Mean old size:          {om:7.3f} +- {os:7.3f}")
         print(f"    Mean new size:          {nm:7.3f} +- {ns:7.3f}")
         print(f"    Mean compression ratio: {cm:7.3f} +- {cs:7.3f}")
+
+    if sanity_check: assert newpsi.intact
 
     return (newpsi, all_singvals) if return_singvals else newpsi
 
@@ -701,139 +704,11 @@ def feynman_cut(
 # -----------------------------------------------------------------------------
 
 
-def BP_excitations(
-        G:nx.MultiGraph,
-        max_order: int = np.inf,
-        sanity_check: bool = False
-    ) -> Tuple[nx.MultiGraph]:
-    """
-    Given the graph `G`, returns the excitations from
-    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108) up to order
-    `max_order`. The order of an excitation is the number of edges that
-    are excited.
-    """
-    if sanity_check: assert network_message_check(G=G)
-
-    if nx.is_tree(G): return ()
-
-    # The loop excitations are the operator chains of a PEPO with bond
-    # dimension2  on the graph G, where the PEPOs local tensors are defined
-    # s.t. the only non-zero components are located in indices that ensure
-    # that there are no dangling edges.
-
-    # Root node of the PEPO is node with smallest degree.
-    root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
-
-    # Depth-first search tree is PEPO traversal tree.
-    tree = nx.dfs_tree(G,root)
-
-    pepoG = PEPO.prepare_graph(G=G, chi=2, sanity_check=sanity_check)
-
-    # Filling the PEPO with tensors that are zero-valued if there is a dangling
-    # edge.
-    for node in pepoG:
-        pepoG.nodes[node]["T"] = np.zeros(
-            shape=tuple(2 for neighbor in pepoG.adj[node]) + (2, 2)
-        )
-
-        for virt_idx in itertools.product(
-            range(2),repeat=len(pepoG.adj[node])
-        ):
-            # A unit-valued edge is considered to be excited. This means that
-            # if the virtual indices sum to one, there is a dangling excitation
-            # at this node.
-            if sum(virt_idx) != 1:
-                idx = virt_idx + (slice(2), slice(2))
-                pepoG.nodes[node]["T"][idx] = np.eye(2)
-
-    exc_pepo = PEPO.from_graphs(
-        G=pepoG,
-        tree=tree,
-        check_tree=False,
-        sanity_check=sanity_check
-    )
-
-    _,virt_idx_list = exc_pepo.operator_chains(
-        return_virtidx=True,
-        sanity_check=sanity_check
-    )
-
-    excitations = ()
-    # Assembling the excitation graphs from virt_idx_list.
-    for virt_idx in virt_idx_list:
-        if sum(virt_idx.values()) > max_order:
-            # This excitation has more edges than we asked for. Skipping.
-            continue
-
-        if sum(virt_idx.values()) == 0:
-            # The BP vacuum is not an excited state.
-            continue
-
-        excitations += (nx.MultiGraph(incoming_graph_data=(
-            tuple(edge)
-            for edge, idx in virt_idx.items()
-            if idx == 1
-        )),)
-
-    return excitations
-
-
-def loop_excitations_old(
-        G: nx.MultiGraph,
-        max_order: int = np.inf,
-        sanity_check: bool = False
-    ) -> Tuple[nx.MultiGraph]:
-    """
-    Given the graph `G`, returns the excitations from
-    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108) up to order
-    `max_order`. The order of an excitation is the number of edges that
-    are excited.
-    """
-    if sanity_check: assert network_message_check(G=G)
-
-    # the excitations are all possible subgraphs that are composed of loops
-    # only, where composition means union of sets and edges. I will construct
-    # the excitations by composing simply cycles in all possible ways.
-
-    # Constructing simply cycles as nx.MultiGraph objects.
-    simple_cycles_nodes = nx.simple_cycles(G=G)
-    simple_cycles_edges = tuple(
-        tuple(
-            tuple((cycle[i], cycle[(i+1) % len(cycle)]))
-            for i in range(len(cycle))
-        )
-        for cycle in simple_cycles_nodes
-    )
-    cycle_graphs = tuple(
-        nx.MultiGraph(cycle)
-        for cycle in simple_cycles_edges
-    )
-
-    excitations = ()
-    # combining simple cycles into the excitations
-    for N in range(1,len(cycle_graphs)+1):
-        for cycles in itertools.combinations(cycle_graphs, r=N):
-            exc = nx.compose_all(cycles)
-
-            # Is this excitation below the max_order threshold?
-            if exc.number_of_edges() > max_order: continue
-
-            # is this excitation already contained in the list of excitations?
-            is_contained = any(
-                graph_compatible(exc, exc_)
-                for exc_ in excitations
-            )
-
-            if is_contained: continue
-
-            excitations += (exc,)
-
-    return excitations
-
-
-def loop_series_expansion(
+def loop_series_contraction(
         braket: Braket,
+        excitations: Tuple[nx.MultiGraph] = None,
         max_order: int = np.inf,
+        verbose: bool = False,
         sanity_check: bool = False,
         **kwargs
     ) -> float:
@@ -847,11 +722,21 @@ def loop_series_expansion(
     # sanity check
     if sanity_check: assert braket.intact
 
-    # finding the BP fixed point.
+    # Handling kwargs.
+    kwargs["verbose"] = verbose
+    if "iterator_desc_prefix" in kwargs.keys():
+        kwargs["iterator_desc_prefix"] = "".join((
+            kwargs["iterator_desc_prefix"],
+            " | Loop Series Contraction | "
+        ))
+    else:
+        kwargs["iterator_desc_prefix"] = "Loop Series Contraction"
+
+    # Finding the BP fixed point.
     if not braket.converged:
         braket.BP(**kwargs, sanity_check=sanity_check)
 
-    # inserting projectors in the edges.
+    # Inserting projectors in the edges.
     for node1, node2 in braket.G.edges():
         insert_excitation(
             braket=braket,
@@ -863,15 +748,18 @@ def loop_series_expansion(
     # The total contraction value of the braket is factored out, s.t. the
     # calculation of higher-order contributions becomes easier.
     cntr_norm_factor = braket.cntr
-    # saving node contraction values, s.t. I can undo the node normalization
+
+    # Saving node contraction values, s.t. I can undo the node normalization
     # later.
     node_cntr = {node: cntr for node, cntr in braket.G.nodes(data="cntr")}
-    # normalizing braket s.t. the BP vacuum contribution is one.
+
+    # Normalizing braket s.t. the BP vacuum contribution is one.
     for node in braket:
         braket[node] = tuple(
             T / (node_cntr[node] ** (1/3))
             for T in braket[node]
         )
+    braket.op.check_tree = False
 
     # During the computations of excitations, messages are inserted into the
     # network. Messages are dense tensors, not tensor stacks - we must thus
@@ -880,13 +768,28 @@ def loop_series_expansion(
         braket=braket, sanity_check=sanity_check
     )
 
-    # finding excitations in the graph.
-    excitations = BP_excitations(
-        braket.G, max_order=max_order, sanity_check=sanity_check
+    if excitations is None:
+        # Finding excitations in the graph.
+        excitations = BP_excitations(
+            braket.G, max_order=max_order, sanity_check=sanity_check
+        )
+    else:
+        excitations = tuple(
+            exc for exc in excitations
+            if exc.number_of_edges() <= max_order
+        )
+
+    iterator = tqdm.tqdm(
+        iterable=excitations,
+        desc="BP excitations",
+        disable=not verbose
     )
 
     cntr = 1
-    for excitation in excitations:
+    for excitation in iterator:
+        exc_weight = excitation.number_of_edges()
+        iterator.set_postfix_str(f"Current exc. weight = {exc_weight}")
+
         cntr_ = __compute_BP_excitation(
             braket=densebraket,
             excitation=excitation,
@@ -920,16 +823,6 @@ def __check_contracted_physical_dims(
             return False
 
     return True
-
-
-__excitations_to_contributions: Dict[int, float] = dict()
-
-
-def __BP_excitation_memoization(func: Callable) -> Callable:
-    """
-    Memoization of `__compute_BP_excitation`.
-    """
-    raise NotImplementedError
 
 
 def __compute_BP_excitation(
@@ -1010,7 +903,7 @@ def __compute_BP_excitation(
                 legs={node: leg, next_node_label: 0},
             )
 
-    # inserting projectors as nodes on the excited edges.
+    # Inserting projectors as nodes on the excited edges.
     for node1, node2 in excitation.edges():
         # Parameters of this edge, and the node we will add: edge legs, size,
         # and the label of the next node.

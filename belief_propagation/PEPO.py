@@ -717,18 +717,18 @@ class PEPO:
         * Do the physical legs have the correct sizes?
         * is the information flow in the tree intact?
         """
-        # are all the necessary attributes defined?
+        # Are all the necessary attributes defined?
         assert hasattr(self, "D")
         assert hasattr(self, "G")
         assert hasattr(self, "tree")
         assert hasattr(self, "root")
 
-        # is the underlying network message-ready?
+        # Is the underlying network message-ready?
         if not network_message_check(self.G):
             warnings.warn("Network not intact.", RuntimeWarning)
             return False
 
-        # size attribute given on every edge?
+        # Size attribute given on every edge?
         for node1, node2, data in self.G.edges(data=True):
             if not "size" in data.keys():
                 warnings.warn(
@@ -744,10 +744,10 @@ class PEPO:
                 )
                 return False
 
-        # are the physical legs the last dimension in each tensor?
+        # Are the physical legs the last dimension in each tensor?
         for node, T in self.G.nodes(data="T"):
             legs = [leg for leg in range(T.ndim)]
-            # accounting for virtual dimensions
+            # Accounting for virtual dimensions.
             for node1, node2, key in self.G.edges(node, keys=True):
                 try:
                     if not self.G[node1][node2][key]["trace"]:
@@ -782,16 +782,16 @@ class PEPO:
                 return False
 
         if not self.check_tree:
-            # the following tests fail if the PEPO is constructed using
-            # PEPO.__add__ (status on 5th of February)
+            # The following tests fail if the PEPO is constructed using
+            # PEPO.__add__ (status on 5th of February).
             return True
 
-        # tree traversal correct?
+        # Tree traversal correct?
         for node in self.tree.nodes():
             if (len(self.tree.succ[node]) > 0) and (node != self.root):
-                # node is an intermediate node in the tree
+                # Node is an intermediate node in the tree.
 
-                # checking if the particle state is pased along
+                # Checking if the particle state is pased along.
                 for parent, child in itertools.product(
                     self.tree.pred[node],
                     self.tree.succ[node]
@@ -816,7 +816,7 @@ class PEPO:
                         )
                         return False
 
-                # checking if the vacuum state is passed along
+                # Checking if the vacuum state is passed along.
                 index = (tuple(-1 for _ in range(self[node].ndim - 2))
                          + (slice(0, self.D), slice(0, self.D)))
                 if not np.allclose(self[node][index], self.I):
@@ -829,7 +829,7 @@ class PEPO:
                     )
                     return False
 
-                # checking if a particle state is passed along a passive edge
+                # Checking if a particle state is passed along a passive edge.
                 for parent, child in itertools.product(
                     self.tree.pred[node],
                     self.G.adj[node]
@@ -1252,8 +1252,8 @@ class PEPO:
         Addition of two PEPOs. The bond dimension of the new operator is
         the sum of the two old bond dimensions.
         """
-        # notice that lhs == self !!! I chose this variable name to keep track
-        # of what's going on
+        # Notice that lhs == self !!! I chose this variable name to keep track
+        # of what's going on.
 
         # sanity check
         if not nx.utils.nodes_equal(lhs.G.nodes(), rhs.G.nodes()):
@@ -1278,7 +1278,7 @@ class PEPO:
             )
 
         if not same_legs(lhs.G, rhs.G):
-            # permute dimensions of lhs to make both PEPOs compatible
+            # Permute dimensions of lhs to make both PEPOs compatible.
             lhs._permute_virtual_dimensions(rhs.G)
 
         res = PEPO(D=lhs.D)
@@ -1286,13 +1286,13 @@ class PEPO:
         res.tree = lhs.tree
 
         res.check_tree = False
-        # TODO: this is unelegant, and could be (more or less) easily avoided;
-        # see TODO in README
+        # TODO: This is unelegant, and could be (more or less) easily avoided;
+        # see TODO in README.
 
-        # graph for the result with correct legs and sizes
+        # Graph for the result with correct legs and sizes.
         res.G = PEPO.prepare_graph(lhs.G)
 
-        # saving new sizes in the edges
+        # Saving new sizes in the edges.
         for node1, node2 in res.G.edges():
             res.G[node1][node2][0]["size"] = (lhs.G[node1][node2][0]["size"]
                                               + rhs.G[node1][node2][0]["size"])

@@ -794,7 +794,7 @@ class Braket(BaseBraket):
                 for receiver in self.msg[sender].keys():
                     # Vanishing messages will be blown up by normalization,
                     # which is something we do not want.
-                    if np.allclose(self.msg[sender][receiver],0):
+                    if np.allclose(self.msg[sender][receiver], 0):
                         # Why not set them to zero? Because we incur a
                         # divide-by-zero during cntr calculation at the end of
                         # BP. How I handle this instead is I set node.cntr = 0
@@ -944,6 +944,28 @@ class Braket(BaseBraket):
             ket_T=self._ket.G.nodes[sender]["T"]
         )
 
+    def write_cntr_value(self, sanity_check: bool = False) -> None:
+        """
+        Normalizes messages s.t. the dot product of opposing messages on
+        any edge is one, calculates the contraction value, and writes to
+        `self.cntr`.
+        """
+        # sanity check
+        if sanity_check: assert self.intact
+        if self.msg is None: raise RuntimeError("No messages available.")
+
+        # contract tensors and messages, opposite messages, normalize messages.
+        self.normalize_messages(normalize_to="dotp", sanity_check=sanity_check)
+        self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
+
+        # With the current message normalization, the network value is the
+        # product of all node contraction values.
+        self.cntr = 1
+        for node, node_cntr in self.G.nodes(data="cntr"):
+            self.cntr *= node_cntr
+
+        return
+
     def BP(
             self,
             numiter: int = 500,
@@ -985,6 +1007,16 @@ class Braket(BaseBraket):
         """
         # sanity check
         if sanity_check: assert self.intact
+
+        if not normalize:
+            warnings.warn(
+                "".join((
+                    "BP without normalization might soon break, or be broken ",
+                    "alraedy, and should not be used. On trees, BP is exact ",
+                    "with normalization, too."
+                )),
+                FutureWarning
+            )
 
         if self.G.number_of_nodes() == 1:
             warnings.warn(
@@ -1046,23 +1078,9 @@ class Braket(BaseBraket):
                 self.iter_until_conv = len(eps_list)
                 break
 
-        # contract tensors and messages, opposite messages, normalize messages.
-        self.normalize_messages(normalize_to="dotp", sanity_check=sanity_check)
-        self.__contract_tensors_inbound_messages(sanity_check=sanity_check)
-
-        if normalize:
-            # the network value is the product of all node values, divided by
-            # all edge values.
-            self.cntr = 1
-            for node, node_cntr in self.G.nodes(data="cntr"):
-                self.cntr *= node_cntr
-
-        else:
-            # each node carries the network value
-            self.cntr = self.G.nodes[self._op.root]["cntr"]
-
-        #cntr_exact = self.contract()
-        #print(f"Rel. err. BP: {rel_err(cntr_exact,self.cntr)}")
+        # Contract tensors and messages, opposite messages, normalize messages,
+        # calculate total contraction value.
+        self.write_cntr_value(sanity_check=sanity_check)
 
         return
 

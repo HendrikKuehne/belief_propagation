@@ -16,7 +16,8 @@ from belief_propagation.utils import (
     network_message_check,
     crandn,
     write_exp_bonddim_to_graph,
-    multi_tensor_rank
+    multi_tensor_rank,
+    graph_compatible
 )
 
 class PEPS:
@@ -89,6 +90,42 @@ class PEPS:
 
         return val
 
+    def _permute_virtual_dimensions(
+            self,
+            G: nx.MultiGraph,
+            sanity_check: bool = False
+        ) -> None:
+        """
+        Changes the leg ordering to the one given in `G`.
+        """
+        # sanity check
+        if not network_message_check(G):
+            raise ValueError(
+                "Given graph does not contain a valid leg ordering."
+            )
+        if not graph_compatible(self.G, G, sanity_check=sanity_check):
+            raise ValueError("Given graph is not compatible with self.G.")
+
+        # transposing site tensors
+        for node in self.G.nodes():
+            N_neighbors = len(self.G.adj[node])
+            # assembling axis for transpose
+            axes = [None for _ in range(N_neighbors)] + [N_neighbors,]
+
+            for neighbor in self.G.adj[node]:
+                leg = G[node][neighbor][0]["legs"][node]
+                axes[leg] = self.G[node][neighbor][0]["legs"][node]
+
+            self[node] = np.transpose(self[node],axes=axes)
+
+        # updating leg orderings
+        for node1, node2 in self.G.edges():
+            self.G[node1][node2][0]["legs"] = G[node1][node2][0]["legs"]
+
+        if sanity_check: assert self.intact
+
+        return
+
     @property
     def nsites(self) -> int:
         """
@@ -99,22 +136,22 @@ class PEPS:
     @property
     def intact(self) -> bool:
         """
-        Checks if the MPS is intact:
+        Checks if the PEPS is intact:
         * Is the underlying network message-ready?
         * Is the size of every edge saved?
         * Are the physical legs the last dimension in each tensor?
         * Do the physical legs have the correct sizes?
         """
-        # are all the necessary attributes defined?
+        # Are all the necessary attributes defined?
         assert hasattr(self,"D")
         assert hasattr(self,"G")
 
-        # is the underlying network message-ready?
+        # Is the underlying network message-ready?
         if not network_message_check(self.G):
             warnings.warn("Network not intact.", RuntimeWarning)
             return False
 
-        # size attribute given on every edge?
+        # Size attribute given on every edge?
         for node1, node2, data in self.G.edges(data=True):
             if not "size" in data.keys():
                 warnings.warn(
@@ -140,7 +177,7 @@ class PEPS:
                 )
                 return False
 
-        # are the physical legs the last dimension in each tensor? Do the
+        # Are the physical legs the last dimension in each tensor? Do the
         # tensors have the correct physical dimensions?
         for node, T in self.G.nodes(data="T"):
             legs = [leg for leg in range(T.ndim)]
@@ -167,7 +204,7 @@ class PEPS:
                 )
                 return False
 
-            # correct size of physical leg?
+            # Correct size of physical leg?
             if not T.shape[-1] == self.D:
                 warnings.warn(
                     f"Hilbert space at node {node} has wrong size.",
@@ -472,7 +509,7 @@ class PEPS:
 
         return newPEPS
 
-    def __rmul__(self, x:float): return self.__mul__(x)
+    def __rmul__(self, x: float): return self.__mul__(x)
 
     def __repr__(
             self,

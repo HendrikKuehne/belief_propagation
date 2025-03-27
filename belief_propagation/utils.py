@@ -52,7 +52,7 @@ def crandn(
     Draw random samples from the standard complex normal (Gaussian)
     distribution.
     """
-    # 1/sqrt(2) is a normalization factor
+    # 1/sqrt(2) is a normalization factor.
     return (rng.normal(size=size) + 1j*rng.normal(size=size)) / np.sqrt(2)
 
 
@@ -78,7 +78,7 @@ def multi_kron(*ops, create_using: str = "numpy"):
 
     if "scipy" in create_using:
         if not all(scisparse.issparse(op) for op in ops):
-            raise RuntimeError("There are non-sparse operators.")
+            raise ValueError("There are non-sparse operators.")
 
         format = create_using.split(sep=".")[-1]
         if format not in ("bsr", "coo", "csc", "csr", "dia", "dok", "lil"):
@@ -150,13 +150,17 @@ def proportional(
     return np.allclose(div[0] * B, A)
 
 
-def is_hermitian(A,threshold: float = 1e-8,verbose: bool = False):
-    if np.allclose(A,A.T.conj(),atol=threshold):
+def is_hermitian(A, threshold: float = 1e-8, verbose: bool = False):
+    if np.allclose(A,A.T.conj(), atol=threshold):
         return True
+
     else:
         if verbose:
             diff = np.linalg.norm(A - A.T.conj())
-            warnings.warn(f"Difference from hermiticity: {diff:.5e}.")
+            warnings.warn(
+                f"Difference from hermiticity: {diff:.5e}.",
+                RuntimeWarning
+            )
         return False
 
 
@@ -199,7 +203,8 @@ def gen_eigval_problem(
     """
     cond = np.linalg.cond(B)
 
-    if cond > maxcond: # B is singular, employing Tikhonov-regularization
+    if cond > maxcond:
+        # B is singular; employing Tikhonov-regularization.
         B_inverse = np.linalg.inv(B + eps * np.eye(B.shape[0]))
         return scialg.eig(B_inverse @ A, overwrite_a=True)
     else:
@@ -240,14 +245,14 @@ def multi_tensor_rank(T: np.ndarray, threshold: float = 1e-8) -> Tuple[int]:
     rank = ()
     newaxes = [_ for _ in range(1, T.ndim)] + [0,]
     for l in range(T.ndim):
-        # l-mode matricization and it's singular value decomposition
+        # l-mode matricization and it's singular value decomposition.
         mat = np.reshape(T, newshape=(T.shape[0],-1))
         singvals = np.linalg.svd(mat, full_matrices=False, compute_uv=False)
         rank += (
             mat.shape[0] - np.sum(np.isclose(singvals, 0, atol=threshold)),
         )
 
-        # rolling axes for next matricization
+        # Rolling axes for next matricization
         T = np.transpose(T, axes=newaxes)
 
     return rank
@@ -322,38 +327,38 @@ def write_exp_bonddim_to_graph(
     N = G.number_of_nodes()
 
     if nx.is_tree(G):
-        # if the graph is a tree, setting bond dimensions exactly is easy:
+        # If the graph is a tree, setting bond dimensions exactly is easy:
         # the tree is cut along the respective edge, and the sizes of the
-        # resulting hilbert space determine the necessary bond dimension
+        # resulting hilbert space determine the necessary bond dimension.
         for node1,node2 in G.edges():
-            # setting bond dimension using tree
+            # Bipartition of the system using a tree.
             Gcopy = nx.MultiGraph(G.edges)
             Gcopy.remove_edge(node1, node2)
             comp = nx.node_connected_component(Gcopy, node1)
             N_subsystem = len(comp)
 
-            # setting the bond dimension
+            # Setting the bond dimension.
             chi = min(D**N_subsystem, D**(N - N_subsystem))
             G[node1][node2][0]["size"] = min(chi, max_chi)
 
         return
 
-    # if the graph is not a tree, we find a new breadth-first spanning tree
-    # for every edge, and then cut the respective edge. This is only a
-    # heuristic, but should prevent bond dimension bottlenecks. This
-    # procedure becomes exact on trees, since the spanning tree of a tree
-    # is unique
+    # If the graph is not a tree, we proceed as follows for a given edge: We
+    # find a breadth-first spanning tree that contains this edge, and then cut
+    # the respective edge, thereby getting a bipartition. This is only a
+    # heuristic, but should prevent bond dimension bottlenecks. This procedure
+    # becomes exact on trees, since the spanning tree of a tree is unique.
 
     for node1, node2 in G.edges():
-        # spanning tree that contains edge (node1,node2)
+        # Spanning tree that contains edge (node1, node2). Conversion to
+        # MultiGraph because connected components are not implemented on
+        # directed graphs.
         tree = nx.MultiGraph(nx.bfs_tree(G=G, source=node1).edges)
-        # conversion because connected components are not implemented on
-        # directed graphs
         tree.remove_edge(node1, node2)
         comp = nx.node_connected_component(tree, node1)
         N_subsystem = len(comp)
 
-        # setting the bond dimension
+        # Setting the bond dimension.
         chi = min(D**N_subsystem, D**(N - N_subsystem))
         G[node1][node2][0]["size"] = min(chi, max_chi)
 
@@ -364,15 +369,15 @@ def divide_graph(G: nx.MultiGraph) -> FrozenSet[FrozenSet[int]]:
     """
     Finds bipartition cuts of the graph `G`. A bipartition cut is a set
     of edges such that, if these edges are cut, the resulting graph is
-    disjoint. **EXPONENTIAL RUNTiME** This could be used to find a good
+    disjoint. **EXPONENTIAL RUNTIME** This could be used to find a good
     initial guess for the bond dimension on loopy geometries, but this
     method is prohibitively slow on all but the most basic graphs.
     """
-    # The thinking is as follows: For every edge (u,v), I look for a cut of the
+    # My thinking is as follows: For every edge (u, v), I look for a cut of the
     # graph such that u is contained in one component, and v in the other.
     # Since a graph might have loops, in order to find a cut of the graph, I'll
     # need to cut all the paths between u and v. The cuts associated with edge
-    # (u,v) are thus all possible ways of cutting all the paths between u and
+    # (u, v) are thus all possible ways of cutting all the paths between u and
     # v. All cuts are saved as sets since my algorithm generates many
     # duplicates.
     cuts = frozenset()
@@ -386,7 +391,7 @@ def divide_graph(G: nx.MultiGraph) -> FrozenSet[FrozenSet[int]]:
             )
             for path in paths
         )
-        """a single path consists of the edges as sets"""
+        """a single path consists of the edges as sets."""
 
         for edge_collection in itertools.product(*paths):
             cut = frozenset(edge_collection)
@@ -500,7 +505,7 @@ def get_disjoint_subsets_from_opchains(
     layers, and a tuple containing the multi-site layers
     (aka brick-wall layers).
     """
-    # layers of the hamiltonian are sets of operators, s.t. all operators
+    # Layers of the hamiltonian are sets of operators, s.t. all operators
     # within the layer commute. This is achieved by grouping spatially disjoint
     # operators together in the layers. Single-site operators will be grouped
     # separately.
@@ -509,7 +514,7 @@ def get_disjoint_subsets_from_opchains(
 
     for op_chain in op_chains:
         if len(op_chain.keys()) == 1:
-            # single-site operators will be grouped in one chain
+            # Single-site operators will be grouped in one chain.
             iLayer = 0
             while not is_disjoint_layer(singlesite_layers[iLayer], op_chain):
                 iLayer += 1
@@ -517,7 +522,7 @@ def get_disjoint_subsets_from_opchains(
             singlesite_layers[iLayer] += (op_chain,)
 
         else:
-            # single-site operators will be grouped in one chain
+            # Single-site operators will be grouped in one chain.
             iLayer = 0
             while not is_disjoint_layer(brick_wall_layers[iLayer], op_chain):
                 iLayer += 1
@@ -536,7 +541,7 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
     """
     Checks if the given tensor network `G` is intact.
     """
-    # this library only works with nx.MultiGraph
+    # This library only works with nx.MultiGraph objects.
     if not isinstance(G, nx.MultiGraph):
         raise TypeError("G must be a MultiGraph.")
 
@@ -545,10 +550,10 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
         warnings.warn("The graph G must be connected.", UserWarning)
         return False
 
-    # two legs in every edge's legs attribute?
+    # Two legs in every edge's legs attribute?
     for node1, node2, key in G.edges(keys=True):
         if G[node1][node2][key]["trace"]:
-            # trace edge
+            # Trace edge.
             if len(G[node1][node2][key]["indices"]) != 2:
                 warnings.warn(
                     "".join((
@@ -559,7 +564,7 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
                 )
                 return False
         else:
-            # default edge
+            # Default edge.
             if len(G[node1][node2][key]["legs"].keys()) != 2:
                 warnings.warn(
                     f"Wrong number of legs in edge ({node1}, {node2}, {key}).",
@@ -567,7 +572,7 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
                 )
                 return False
 
-    # all edges in the graph accounted for?
+    # All edges in the graph accounted for?
     for node in G.nodes:
         legs = [leg for leg in range(len(G.adj[node]))]
         for node1,node2,key in G.edges(node,keys=True):
@@ -575,7 +580,7 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
                 if not G[node1][node2][key]["trace"]:
                     legs.remove(G[node1][node2][key]["legs"][node])
                 else:
-                    # trace edge
+                    # Trace edge.
                     i1,i2 = G[node1][node2][key]["indices"]
                     legs.remove(i1)
                     legs.remove(i2)
@@ -647,7 +652,7 @@ def op_layer_intact_check(
         reference length is given under `target_chain_length`)
     """
     if test_disjoint:
-        # are the operator chains disjoint?
+        # Are the operator chains disjoint?
         if not is_disjoint_layer(layer=layer):
             warnings.warn("The operator chains are not disjoint.", UserWarning)
             return False
@@ -655,11 +660,11 @@ def op_layer_intact_check(
     D_set = set()
     length_set = set()
     for iChain, op_chain in enumerate(layer):
-        # saving operator chain length
+        # Saving operator chain length.
         length_set.add(len(op_chain))
 
         for node, T in op_chain.items():
-            # does the graph contain this node?
+            # Does the graph contain this node?
             if not G.has_node(node):
                 warnings.warn(
                     "".join((
@@ -670,7 +675,7 @@ def op_layer_intact_check(
                 )
                 return False
 
-            # is the operator square?
+            # Is the operator square?
             if not T.shape[0] == T.shape[1]:
                 warnings.warn(
                     "".join((
@@ -681,7 +686,7 @@ def op_layer_intact_check(
                 )
                 return False
 
-            # saving physical dimension
+            # Saving physical dimension.
             D_set.add(T.shape[0])
 
     if not len(D_set) == 1:

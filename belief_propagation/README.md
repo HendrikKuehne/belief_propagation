@@ -24,13 +24,11 @@
     * Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
     * Pancotti & Gray stack all the tensors and the messages s.t. the BP algorithm becomes a vector iteration ([arxiv:2306.15004](https://arxiv.org/abs/2306.15004))
     * :arrows_counterclockwise: parallelize using [Ray](https://docs.ray.io/en/latest/ray-overview/getting-started.html) - What I have done so far is actually slower than the straightforward implementation. The overhead seems to be too large, maybe I should think this through a little more thoroughly.
-  * **ToDo** Smarter discrimination between cases in `Braket.contract`.
   * **ToDo** Should I change the code s.t. messages are tensor stacks?
     * This would be a massive overhaul, requiring changes in many different files, but there could be cases where it would be useful to have the messages factorized.
     * :x: No! If I don't contract the physical dimensions, the bond dimensions in message tensor stacks would become huge during a message passing iteration.
 * **`dmrg.py`** DMRG on arbitrary graphs.
   * **ToDo** Optimize local updates; Lanczos algorithm? (In python implemented, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/))
-  * **ToDo** The implementation of the DMRG class is wildly inefficient (at least in terms of memory) because the overlap $\braket{\psi|\psi}$ and the expectation value $\braket{\psi|H|\psi}$ are both stored as full `Braket` objects, although they contain essentially the same data
-  * **ToDo** Normalize states after DMRG algorithm
+  * **ToDo** Normalize states after DMRG algorithm.
 
 [^2]: This other tree should be called `coupling_tree`, in contrast to the existing tree (`automaton_tree`, in the following). The automaton tree is contained in the coupling tree. This also necessitates a re-interpretation of inbound, passive and outbound legs: Inbound legs are upstream in the automaton tree, outbond legs are downstream in the coupling tree. Passive legs are upstream in the coupling tree, but are not contained in the automaton tree. Coupling goes out of every node along all outbound edges. This does not lead to double coupling along some edges because the coupling tree is directed; coupling flows downstream in the coupling tree.
