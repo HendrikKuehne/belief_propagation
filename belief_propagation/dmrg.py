@@ -121,7 +121,7 @@ class DMRG:
                     chi[neighbor]
                     for neighbor in self.overlap.G.adj[node]
                 ) + (
-                    self.D, self.D
+                    self.D[node], self.D[node]
                 ),
                 dtype=np.complex128
             )
@@ -137,7 +137,7 @@ class DMRG:
                     )
                     for neighbor in self.overlap.G.adj[node]
                 ) + (
-                    slice(self.D), slice(self.D)
+                    slice(self.D[node]), slice(self.D[node])
                 )
                 H[index] = expval.op[node]
 
@@ -211,7 +211,7 @@ class DMRG:
         )
 
         H = np.einsum(*args, out_legs, optimize=True)
-        H = np.reshape(H, (vir_dim * self.D, vir_dim * self.D))
+        H = np.reshape(H, (vir_dim * self.D[node], vir_dim * self.D[node]))
 
         if sanity_check:
             assert is_hermitian(H, threshold=threshold, verbose=False)
@@ -276,10 +276,10 @@ class DMRG:
             vir_dim *= self.overlap.ket.G[node][neighbor][0]["size"]
 
         # Identity for the physical dimension.
-        args += (self.overlap.op.I, (3 * nLegs, 3*nLegs + 1))
+        args += (self.overlap.op.I(node=node), (3 * nLegs, 3*nLegs + 1))
 
         N = np.einsum(*args, out_legs, optimize=True)
-        N = np.reshape(N, (vir_dim * self.D, vir_dim * self.D))
+        N = np.reshape(N, (vir_dim * self.D[node], vir_dim * self.D[node]))
 
         if sanity_check: assert is_hermitian(N, threshold=threshold)
 
@@ -426,10 +426,10 @@ class DMRG:
             for neighbor in self.overlap.G.adj[node]:
                 leg = self.overlap.G[node][neighbor][0]["legs"][node]
                 newshape[leg] = self.overlap.ket.G[node][neighbor][0]["size"]
-            newshape += [self.overlap.D,]
+            newshape += [self.D[node],]
 
             # Re-shaping statevector into site tensor.
-            T = np.reshape(eigvecs[:,np.argmin(eigvals)], newshape)
+            T = np.reshape(eigvecs[:, np.argmin(eigvals)], newshape)
 
             # Inserting the new tensor and gauging the current node.
             self[node] = T
@@ -598,6 +598,11 @@ class DMRG:
         return self._msg
 
     @property
+    def D(self) -> Dict[int, int]:
+        """Physical dimension at every node."""
+        return self.overlap.D
+
+    @property
     def converged(self) -> bool:
         """Whether the messages are converged."""
         return (self.overlap.converged
@@ -651,15 +656,8 @@ class DMRG:
             if expval.D != self.D: return False
         if not self.overlap.intact: return False
 
-        # Are the physical dimensions the same?
-        if not self.overlap.D == self.D:
-            warnings.warn(
-                "Physical dimensions do not match.",
-                UserWarning
-            )
-            return False
-
-        # Are expval graphs and overlap graph compatible?
+        # Are expval graphs and overlap graph compatible, in terms of geometry
+        # and physical dimensions?
         for i, expval in enumerate(self.expvals):
             if not graph_compatible(expval.G, self.overlap.G):
                 warnings.warn(
@@ -721,74 +719,6 @@ class DMRG:
 
         return True
 
-    def __init__(
-            self,
-            oplist: Tuple[PEPO],
-            psi_init: PEPS = None,
-            chi: int = None,
-            sanity_check: bool = False,
-            **kwargs
-        ):
-        """
-        Initialisation of a `DMRG` object, where the state has bond
-        dimension `chi`. The initial state is chosen randomly, if it is
-        not given. `kwargs` are passed to `PEPS.init_random`.
-        
-        For `oplist = (H1,H2,...)`, this object runs single-site DMRG on
-        the Hamiltonian `H = H1 + H2 + ...`.
-        """
-        # sanity check
-        if sanity_check:
-            for op in oplist:
-                assert op.intact
-                if not oplist[0].D == op.D:
-                    raise ValueError(
-                        "All operators must have the same physical dimension."
-                    )
-
-            if psi_init is not None:
-                assert psi_init.intact
-                assert oplist[0].D == psi_init.D
-
-            if (psi_init is None) and (chi is None):
-                raise ValueError("".join((
-                    "No instructions on how to define an initial state; ",
-                    "psi_init and chi cannot both be None."
-                )))
-
-        # If not given, initial state is chosen randomly.
-        if psi_init is None:
-            psi_init = PEPS.init_random(
-                G=op.G,
-                D=oplist[0].D,
-                chi=chi,
-                **kwargs
-            )
-
-        self.D = oplist[0].D
-        """Physical dimension."""
-
-        self.expvals: Tuple[Braket] = tuple(
-            Braket.Expval(psi=psi_init, op=op, sanity_check=sanity_check)
-            for op in oplist
-        )
-        """`Braket`-objects for every operator."""
-        self.overlap: Braket = Braket.Overlap(psi1=psi_init, psi2=psi_init)
-        """Norm of the current state."""
-
-        self._msg: Dict[int, Dict[int, np.ndarray]] = None
-        """
-        Messages on the total expval. Formed as direct products of
-        expval messages.
-        """
-        self._T_totalH: Dict[int, np.ndarray] = None
-        """
-        Local tensors of the total hamiltonian. Formed as direct sums of
-        constituent operator tensors.
-        """
-
-        if sanity_check: assert self.intact
-
     def __getitem__(self, node: int) -> np.ndarray:
         """
         Subscripting with a node gives the ket tensor at this node.
@@ -824,6 +754,70 @@ class DMRG:
                 "converged." if self.converged else "not converged."
             ))
 
+    def __init__(
+            self,
+            oplist: Tuple[PEPO],
+            psi_init: PEPS = None,
+            chi: int = None,
+            sanity_check: bool = False,
+            **kwargs
+        ):
+        """
+        Initialisation of a `DMRG` object, where the state has bond
+        dimension `chi`. The initial state is chosen randomly, if it is
+        not given. `kwargs` are passed to `PEPS.init_random`.
+        
+        For `oplist = (H1, H2, ...)`, this object runs single-site DMRG
+        on the Hamiltonian `H = H1 + H2 + ...`.
+        """
+        # sanity check
+        if sanity_check:
+            for op in oplist:
+                assert op.intact
+                if not oplist[0].D == op.D:
+                    raise ValueError(
+                        "All operators must have the same physical dimension."
+                    )
+
+            if psi_init is not None:
+                assert psi_init.intact
+
+            if (psi_init is None) and (chi is None):
+                raise ValueError("".join((
+                    "No instructions on how to define an initial state; ",
+                    "psi_init and chi cannot both be None."
+                )))
+
+        # If not given, initial state is chosen randomly.
+        if psi_init is None:
+            psi_init = PEPS.init_random(
+                G=op.G,
+                D=oplist[0].D,
+                chi=chi,
+                **kwargs
+            )
+
+        self.expvals: Tuple[Braket] = tuple(
+            Braket.Expval(psi=psi_init, op=op, sanity_check=sanity_check)
+            for op in oplist
+        )
+        """`Braket`-objects for every operator."""
+        self.overlap: Braket = Braket.Overlap(psi1=psi_init, psi2=psi_init)
+        """Norm of the current state."""
+
+        self._msg: Dict[int, Dict[int, np.ndarray]] = None
+        """
+        Messages on the total expval. Formed as direct products of
+        expval messages.
+        """
+        self._T_totalH: Dict[int, np.ndarray] = None
+        """
+        Local tensors of the total hamiltonian. Formed as direct sums of
+        constituent operator tensors.
+        """
+
+        if sanity_check: assert self.intact
+
 
 class LoopSeriesDMRG:
     """
@@ -857,7 +851,7 @@ class LoopSeriesDMRG:
 
             # Scaffolding for the local hamiltonian tensor.
             H = np.zeros(
-                shape=virt_bond_dims + (self.D, self.D),
+                shape=virt_bond_dims + (self.D[node], self.D[node]),
                 dtype=np.complex128
             )
 
@@ -874,7 +868,7 @@ class LoopSeriesDMRG:
                     )
                     for leg in range(len(self._psi.G.adj[node]))
                 ) + (
-                    slice(self.D), slice(self.D)
+                    slice(self.D[node]), slice(self.D[node])
                 )
                 H[index] = op[node]
 
@@ -948,7 +942,7 @@ class LoopSeriesDMRG:
             chi for chi in self._env_totalH[node].shape[:nLegs]
         ))
 
-        H = np.reshape(H, (vir_dim * self.D, vir_dim * self.D))
+        H = np.reshape(H, (vir_dim * self.D[node], vir_dim * self.D[node]))
 
         if sanity_check:
             assert is_hermitian(H, threshold=threshold, verbose=True)
@@ -1012,7 +1006,7 @@ class LoopSeriesDMRG:
             self._env_overlap[node][relevant_slice],
             tuple(range(nLegs)) + tuple(range(2*nLegs, 3*nLegs)),
             # Identity for the physical dimension.
-            np.eye(self._psi.D),
+            np.eye(self.D[node]),
             (3 * nLegs, 3*nLegs + 1)
         )
 
@@ -1023,7 +1017,7 @@ class LoopSeriesDMRG:
             chi for chi in self._env_overlap[node].shape[:nLegs]
         ))
 
-        N = np.reshape(N, (vir_dim * self.D, vir_dim * self.D))
+        N = np.reshape(N, (vir_dim * self.D[node], vir_dim * self.D[node]))
 
         if sanity_check: assert is_hermitian(N, threshold=threshold)
 
@@ -1116,7 +1110,7 @@ class LoopSeriesDMRG:
         # We need a converged set of messages; running BP iterations.
         self.__BP(sanity_check=sanity_check, **kwargs)
 
-        if nodes is None: nodes = tuple(self._psi)
+        if nodes is None: nodes = tuple(self.psi)
 
         allbrakets = self.brakets
 
@@ -1128,6 +1122,7 @@ class LoopSeriesDMRG:
         # Calculating the environments in the overlap.
         self._env_overlap = loop_series_environments(
             braket=allbrakets[-1],
+            excitations=self.excitations,
             nodes=nodes,
             max_order=self.max_order,
             sanity_check=sanity_check
@@ -1192,14 +1187,14 @@ class LoopSeriesDMRG:
             )
 
             # Finding the correct shape for the new site tensor.
-            newshape = [np.nan for _ in self._psi.G.adj[node]]
-            for neighbor in self._psi.G.adj[node]:
+            newshape = [np.nan for _ in self.psi.G.adj[node]]
+            for neighbor in self.psi.G.adj[node]:
                 leg = self._psi.G[node][neighbor][0]["legs"][node]
-                newshape[leg] = self._psi.G[node][neighbor][0]["size"]
-            newshape += [self._psi.D,]
+                newshape[leg] = self.psi.G[node][neighbor][0]["size"]
+            newshape += [self.D[node],]
 
             # Re-shaping the statevector into a site tensor.
-            T = np.reshape(eigvecs[:,np.argmin(eigvals)], newshape)
+            T = np.reshape(eigvecs[:, np.argmin(eigvals)], newshape)
 
             # Inserting the new tensor and gauging the current node.
             self[node] = T
@@ -1402,6 +1397,11 @@ class LoopSeriesDMRG:
         return cntr
 
     @property
+    def D(self) -> Dict[int, int]:
+        """Physical dimension at every node."""
+        return self.psi.D
+
+    @property
     def nsites(self) -> int:
         """
         Number of sites of the system.
@@ -1420,7 +1420,7 @@ class LoopSeriesDMRG:
         * Checking if all excitations are below the maximum order.
         """
         # Is the state intact?
-        if not self._psi.intact: return False
+        if not self.psi.intact: return False
 
         for i, op in enumerate(self.oplist):
             # Is this operator intact?
@@ -1431,19 +1431,9 @@ class LoopSeriesDMRG:
                 )
                 return False
 
-           # Are the physical dimensions the same?
-            if not op.D == self._psi.D:
-                warnings.warn(
-                    "".join((
-                        f"Physical dimensions of operator {i} and state psi ",
-                        "do not match."
-                    )),
-                    UserWarning
-                )
-                return False
-
-            # Are state graph and this operator graph compatible?
-            if not graph_compatible(self._psi.G, op.G):
+            # Are state graph and this operator graph compatible, in terms of
+            # geometry and physical dimension?
+            if not graph_compatible(self.psi.G, op.G):
                 warnings.warn(
                     f"Graphs of state and operator {i} not compatible.",
                     UserWarning
@@ -1462,7 +1452,7 @@ class LoopSeriesDMRG:
         if self._msg_overlap is not None:
             for node1, node2 in self._psi.G.edges():
                 for sender, receiver in itertools.permutations((node1, node2)):
-                    size = self._psi.G[sender][receiver][0]["size"]
+                    size = self.psi.G[sender][receiver][0]["size"]
 
                     if not check_msg_intact(
                         msg=self._msg_overlap[sender][receiver],
@@ -1528,6 +1518,48 @@ class LoopSeriesDMRG:
 
         return allbrakets
 
+    def __getitem__(self, node: int) -> np.ndarray:
+        """
+        Subscripting with a node gives the ket tensor at this node.
+        """
+        return self._psi[node]
+
+    def __setitem__(self, node: int, T: np.ndarray) -> None:
+        """
+        Changing local tensors in the state directly. Convergence
+        marker will be set to `False`.
+        """
+        # updating the tensor stacks in all braket objects
+        self._psi[node] = T
+        self._converged = False
+
+        return
+
+    def __repr__(self) -> str:
+        return "".join(
+            (
+                f"LoopSeriesDMRG problem on {self.nsites} sites.",
+                "\nKet: " + str(self._psi) + "\nHamiltonians: "
+            ) + (
+                "".join(("\n",str(op)))
+                for op in self.oplist
+            ) + (
+                "\nMessages are ",
+                "converged." if self.converged else "not converged."
+            ))
+
+    def __len__(self) -> int: return self.nsites
+
+    def __iter__(self) -> Iterator[int]:
+        """
+        Iterator over the nodes in the graph `self.G`.
+        """
+        return iter(self._psi.G.nodes(data=False))
+
+    def __contains__(self, node: int) -> bool:
+        """Does this DMRG problem involve the node `node`?"""
+        return (node in self.psi) and all(node in op for op in self.oplist)
+
     def __init__(
             self,
             oplist: Tuple[PEPO],
@@ -1582,9 +1614,6 @@ class LoopSeriesDMRG:
         self._psi: PEPS = psi_init
         """The current state of the system."""
 
-        self.D: int = self._psi.D
-        """Physical dimension."""
-
         self.max_order: int = max_order
         """The order of the expansion in loop series excitations."""
 
@@ -1624,47 +1653,53 @@ class LoopSeriesDMRG:
 
         if sanity_check: assert self.intact
 
-    def __getitem__(self, node: int) -> np.ndarray:
-        """
-        Subscripting with a node gives the ket tensor at this node.
-        """
-        return self._psi[node]
-
-    def __setitem__(self, node: int, T: np.ndarray) -> None:
-        """
-        Changing local tensors in the state directly. Convergence
-        marker will be set to `False`.
-        """
-        # updating the tensor stacks in all braket objects
-        self._psi[node] = T
-        self._converged = False
-
         return
 
-    def __repr__(self) -> str:
-        return "".join(
-            (
-                f"LoopSeriesDMRG problem on {self.nsites} sites.",
-                "\nKet: " + str(self._psi) + "\nHamiltonians: "
-            ) + (
-                "".join(("\n",str(op)))
-                for op in self.oplist
-            ) + (
-                "\nMessages are ",
-                "converged." if self.converged else "not converged."
-            ))
 
-    def __len__(self) -> int: return self.nsites
+def __msg_direct_sum(
+        braket: Braket,
+        nodes: Tuple[int] = None,
+        sanity_check: bool = False
+    ) -> Dict[int, np.ndarray]:
+    """
+    Calculates the environments at the sites from `nodes` by taking the
+    tensor product of the inbound messages.
+    """
+    # sanity check
+    if sanity_check: assert braket.intact
 
-    def __iter__(self) -> Iterator[int]:
-        """
-        Iterator over the nodes in the graph `self.G`.
-        """
-        return iter(self._psi.G.nodes(data=False))
+    if nodes is None: nodes = tuple(braket)
+    environments = {}
 
-    def __contains__(self, node: int) -> bool:
-        """Does this DMRG problem involve the node `node`?"""
-        return (node in self._psi) and all(node in op for op in self.oplist)
+    for node in nodes:
+        nLegs = len(braket.G.adj[node])
+
+        if 3 * nLegs > np.MAXDIMS:
+            # This node has too many neighbors; numpy would run out of
+            # array dimensions.
+            raise RuntimeError("".join((
+                f"Node {node} has {nLegs} neighbors, which would lead to ",
+                f"an environment with {3 * nLegs} dimensions. Numpy can ",
+                f"only handle arrays with up to {np.MAXDIMS} dimensions."
+            )))
+
+        # Assembling einsum arguments.
+        out_legs = tuple(range(3 * nLegs))
+        args = ()
+        for neighbor in braket.G.adj[node]:
+            leg = braket.G[node][neighbor][0]["legs"][node]
+            args += (
+                braket.msg[neighbor][node],
+                (leg, nLegs + leg, 2*nLegs + leg)
+            )
+        env = ctg.einsum(*args, out_legs)
+
+        # Normalization to contraction value.
+        env *= (braket.cntr / braket.G.nodes[node]["cntr"])
+
+        environments[node] = env
+
+    return environments
 
 
 def loop_series_environments(
@@ -1677,8 +1712,7 @@ def loop_series_environments(
     ) -> Dict[int, np.ndarray]:
     """
     Calculates the environments at the sites from `nodes`. If `nodes
-    = None` (default), calculates environments at every site. `kwargs`
-    are passed to BP iterations.
+    = None` (default), calculates environments at every site.
 
     The environment at a node is a tensor with `3 * len(adj[node])`
     legs. It's legs come in three groups: First the bra legs, followed
@@ -1695,42 +1729,16 @@ def loop_series_environments(
             RuntimeWarning
         )
 
-    if nodes is None: nodes = tuple(braket)
-    environments = {}
-
     if max_order == 0:
         # Loop series environments with zero-weight excitations involve only
         # the BP vacuum, i.e. the messages from the BP iteration. The
         # environments are the tensor products of the messages.
-        for node in nodes:
-            nLegs = len(braket.G.adj[node])
 
-            if 3 * nLegs > np.MAXDIMS:
-                # This node has too many neighbors; numpy would run out of
-                # array dimensions.
-                raise RuntimeError("".join((
-                    f"Node {node} has {nLegs} neighbors, which would lead to ",
-                    f"an environment with {3 * nLegs} dimensions. Numpy can ",
-                    f"only handle arrays with up to {np.MAXDIMS} dimensions."
-                )))
-
-            # Assembling einsum arguments.
-            out_legs = tuple(range(3 * nLegs))
-            args = ()
-            for neighbor in braket.G.adj[node]:
-                leg = braket.G[node][neighbor][0]["legs"][node]
-                args += (
-                    braket.msg[neighbor][node],
-                    (leg, nLegs + leg, 2*nLegs + leg)
-                )
-            env = ctg.einsum(*args, out_legs)
-
-            # Normalization to contraction value.
-            env *= (braket.cntr / braket.G.nodes[node]["cntr"])
-
-            environments[node] = env
-
-        return environments
+        return __msg_direct_sum(
+            braket=braket,
+            nodes=nodes,
+            sanity_check=sanity_check
+        )
 
     raise NotImplementedError
 

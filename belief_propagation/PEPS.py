@@ -75,7 +75,7 @@ class PEPS:
 
         return type(self)(G=newG, sanity_check=sanity_check)
 
-    def legs_dict(self, node: int,sanity_check: bool = False) -> dict:
+    def legs_dict(self, node: int, sanity_check: bool = False) -> dict:
         """
         Returns the `legs` attributes of the adjacent edges of `node`
         in a dictionary structure: `legs_dict[neighbor]` is the
@@ -116,7 +116,7 @@ class PEPS:
                 leg = G[node][neighbor][0]["legs"][node]
                 axes[leg] = self.G[node][neighbor][0]["legs"][node]
 
-            self[node] = np.transpose(self[node],axes=axes)
+            self[node] = np.transpose(self[node], axes=axes)
 
         # updating leg orderings
         for node1, node2 in self.G.edges():
@@ -142,10 +142,6 @@ class PEPS:
         * Are the physical legs the last dimension in each tensor?
         * Do the physical legs have the correct sizes?
         """
-        # Are all the necessary attributes defined?
-        assert hasattr(self,"D")
-        assert hasattr(self,"G")
-
         # Is the underlying network message-ready?
         if not network_message_check(self.G):
             warnings.warn("Network not intact.", RuntimeWarning)
@@ -179,7 +175,15 @@ class PEPS:
 
         # Are the physical legs the last dimension in each tensor? Do the
         # tensors have the correct physical dimensions?
-        for node, T in self.G.nodes(data="T"):
+        for node, data in self.G.nodes(data=True):
+            if not "T" in data.keys():
+                raise ValueError(f"No tensor in node {node}.")
+            if not "D" in data.keys():
+                raise ValueError(f"No physical dimension in node {node}.")
+
+            T = data["T"]
+            D = data["D"]
+
             legs = [leg for leg in range(T.ndim)]
             for node1, node2, key in self.G.edges(node, keys=True):
                 try:
@@ -205,26 +209,36 @@ class PEPS:
                 return False
 
             # Correct size of physical leg?
-            if not T.shape[-1] == self.D:
+            if not T.shape[-1] == D:
                 warnings.warn(
-                    f"Hilbert space at node {node} has wrong size.",
+                    "".join((
+                        f"Physical dimension mismatch at node {node}. ",
+                        f"Expected {D}, tensor has {T.shape[-1]}."
+                    )),
                     RuntimeWarning
                 )
                 return False
 
         return True
 
+    @property
+    def D(self) -> Dict[int, int]:
+        """Physical dimension at every node."""
+        return {
+            node: self.G.nodes[node]["D"]
+            for node in self
+        }
+
     @classmethod
     def init_random(
             cls,
             G: nx.MultiGraph,
-            D: int,
+            D: Union[int, Dict[int, int]],
             chi: int,
             rng:np.random.Generator = np.random.default_rng(),
             real: bool = False,
             bond_dim_strategy: str = "uniform",
             sanity_check: bool = False,
-            **kwargs
         ) -> "PEPS":
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
@@ -239,7 +253,7 @@ class PEPS:
         else:
             randn = lambda size: crandn(size,rng)
 
-        G = cls.prepare_graph(G)
+        G = cls.prepare_graph(G, D=D)
 
         # determining bond dimensions
         cls.set_bond_dimensions(
@@ -255,7 +269,7 @@ class PEPS:
                 G[node][neighbor][0]["legs"][node] = i
 
             # constructing the shape of the tensor at this site
-            dim = [None for i in G.adj[node]] + [D,]
+            dim = [None for i in G.adj[node]] + [G.nodes[node]["D"],]
             for i, neighbor in enumerate(G.adj[node]):
                 leg = G[node][neighbor][0]["legs"][node]
                 dim[leg] = G[node][neighbor][0]["size"]
@@ -276,7 +290,7 @@ class PEPS:
         dimensions of size one to the site tensors. `G` needs to contain
         a tensor on every site, and the `legs` attribute on every edge.
         """
-        newG = cls.prepare_graph(G, keep_legs=True)
+        newG = cls.prepare_graph(G, keep_legs=True, D=1)
 
         # appending a dummy physical dimension with size one to the tensors
         for node in G.nodes:
@@ -291,15 +305,21 @@ class PEPS:
         return cls(G=newG, sanity_check=sanity_check)
 
     @classmethod
-    def Dummy(cls, G: nx.MultiGraph, sanity_check: bool = False) -> "PEPS":
+    def Dummy(
+            cls,
+            G: nx.MultiGraph,
+            dtype=np.complex128,
+            sanity_check: bool = False
+        ) -> "PEPS":
         """
         Returns a dummy PEPS on graph `G` with physical dimension one.
         """
-        G = cls.prepare_graph(G=G)
+        G = cls.prepare_graph(G=G, D=1)
         # adding tensors
         for node in G.nodes:
             G.nodes[node]["T"] = np.ones(
-                shape = [1 for _ in range(len(G.adj[node])+1)]
+                shape = [1 for _ in range(len(G.adj[node]) + 1)],
+                dtype=dtype
             )
 
         # adding sizes to edges
@@ -335,23 +355,25 @@ class PEPS:
                     "State and graph do not agree in the nodes that they ",
                     "contain."
                 )))
-            if any(
-                [state[node].ndim != 1 for node in G.nodes()]
-            ):
+            if any(state[node].ndim != 1 for node in G.nodes()):
                 raise ValueError("All local states must be pure states.")
 
             psi = cls.Dummy(G=G, sanity_check=sanity_check)
 
             for node in psi:
+                # Re-sizing the tensor from psi, s.t. the tensor from the state
+                # dictionary can be inserted.
                 old_shape = list(psi[node].shape)
                 old_shape[-1] = state[node].shape[0]
                 newT = np.resize(psi[node], old_shape)
-                norm = np.sqrt(np.dot(state[node].conj(),state[node]))
+
+                # Inserting the normalized state.
+                norm = np.sqrt(np.dot(state[node].conj(), state[node]))
                 newT[...,:] = state[node] / norm if normalize else state[node]
                 psi[node] = newT
 
-            # new physical dimension
-            psi.D = state[node].shape[0]
+                # Saving physical dimension.
+                psi.G.nodes[node]["D"] = state[node].shape[0]
 
             if sanity_check: assert psi.intact
 
@@ -368,11 +390,13 @@ class PEPS:
             G: nx.MultiGraph,
             keep_legs: bool = False,
             keep_size: bool = False,
+            D: Union[int, Dict[int, int]] = None,
             sanity_check: bool = False
         ) -> nx.MultiGraph:
         """
         Creates a shallow copy of G, and adds the keys `legs`, `trace`
-        and `indices` to the edges.
+        and `indices` to the edges. If `D` is given, adds physical
+        dimensions to the nodes.
 
         To be used in `__init__` of subclasses of `PEPO`: `G` is the
         graph from which the operator inherits it's underlying graph.
@@ -395,6 +419,29 @@ class PEPS:
                 for i, neighbor in enumerate(newG.adj[node]):
                     newG[node][neighbor][0]["legs"][node] = i
 
+        if D is not None:
+            if np.isscalar(D):
+                # Preparing physical dimensions.
+                D = {node: D for node in G}
+
+            else:
+                # Sanity check for physical dimensions.
+                if not isinstance(D, dict):
+                    raise ValueError("".join((
+                        "Physical dimensions must be given as dictionary, ",
+                        "where the local physical dimension is given for ",
+                        "every node."
+                    )))
+
+                if not nx.utils.nodes_equal(
+                    nodes1=G.nodes(),
+                    nodes2=D.keys()
+                ):
+                    raise ValueError("Nodes in D don't match nodes in graph.")
+
+            for node in G:
+                newG.nodes[node]["D"] = D[node]
+
         if sanity_check: assert network_message_check(newG)
 
         return newG
@@ -403,7 +450,7 @@ class PEPS:
     def set_bond_dimensions(
             G: nx.MultiGraph,
             bond_dim_strategy: str,
-            D: int = None,
+            D: Union[int, Dict[int, int]] = None,
             max_chi: int = None
         ) -> None:
         """
@@ -420,12 +467,15 @@ class PEPS:
         `D` is the physical dimension, and `max_chi` is the bond
         dimension cutoff.
         """
-        if bond_dim_strategy not in ("exp_cutoff", "exp") and D is None:
+        if bond_dim_strategy in ("exp_cutoff", "exp") and D is None:
             raise ValueError("".join((
                 "Bond dimension strategy ",
                 bond_dim_strategy,
                 " requires physical dimension."
             )))
+
+        if np.isscalar(D):
+            D = {node: D for node in G}
 
         if bond_dim_strategy == "uniform":
             for node1, node2, key in G.edges(keys=True):
@@ -433,10 +483,22 @@ class PEPS:
             return
 
         if bond_dim_strategy == "exp":
+            #if not np.isscalar(D):
+            #    raise NotImplementedError("".join((
+            #        "PEPS.set_bond_dimensions is not implemented for bond ",
+            #        "dimensions that change between nodes."
+            #    )))
+
             write_exp_bonddim_to_graph(G=G, D=D)
             return
 
         if bond_dim_strategy == "exp_cutoff":
+            #if not np.isscalar(D):
+            #    raise NotImplementedError("".join((
+            #        "PEPS.set_bond_dimensions is not implemented for bond ",
+            #        "dimensions that change between nodes."
+            #    )))
+
             if max_chi is None:
                 raise ValueError("".join((
                     "Bond dimension strategy ",
@@ -452,26 +514,6 @@ class PEPS:
             bond_dim_strategy,
             " not implemented."
         )))
-
-    def __init__(self, G:nx.MultiGraph, sanity_check: bool = False) -> None:
-        """
-        Initialisation from a graph that contains site tensors.
-        """
-        # sanity check
-        if sanity_check: assert network_message_check(G)
-        if not isinstance(G, nx.MultiGraph):
-            raise TypeError("G must be a MultiGraph.")
-
-        # inferring physical dimension
-        self.D: int = tuple(T.shape[-1] for _, T in G.nodes(data="T"))[0]
-        """Physical dimension."""
-
-        self.G: nx.MultiGraph = G
-        """Grapth that contains PEPS local tensors."""
-
-        if sanity_check: assert self.intact
-
-        return
 
     def __getitem__(self, node:int) -> np.ndarray:
         """
@@ -518,7 +560,6 @@ class PEPS:
         ) -> str:
         out = "".join((
             f"State on {self.nsites} sites.",
-            f" Local Hilbert Space of size {self.D}.",
             " PEPS is ",
             ("intact." if self.intact else "not intact.")))
 
@@ -556,6 +597,30 @@ class PEPS:
     def __contains__(self, node: int) -> bool:
         """Does the graph `self.G` contain the node `node`?"""
         return self.G.has_node(node)
+
+    def __init__(self, G: nx.MultiGraph, sanity_check: bool = False) -> None:
+        """
+        Initialisation from a graph that contains site tensors.
+        """
+        # sanity check
+        if sanity_check: assert network_message_check(G)
+        if not isinstance(G, nx.MultiGraph):
+            raise TypeError("G must be a MultiGraph.")
+
+        # inferring physical dimension
+        for node, T in G.nodes(data="T"):
+            G.nodes[node]["D"] = T.shape[-1]
+
+        self.G: nx.MultiGraph = G
+        """
+        Graph that contains PEPO local tensors, leg ordering, virtual
+        bond dimension sizes, and physical dimensions.
+        """
+
+        if sanity_check: assert self.intact
+
+        return
+
 
 if __name__ == "__main__":
     pass

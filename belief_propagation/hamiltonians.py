@@ -14,7 +14,7 @@ __all__ = [
 
 import copy
 import warnings
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union
 
 import numpy as np
 import networkx as nx
@@ -30,6 +30,7 @@ class TFI(PauliPEPO):
 
     def __ising_PEPO_tensor_without_coupling(
             self,
+            node: int,
             N_pas: int,
             N_out: int,
             g: float
@@ -44,8 +45,9 @@ class TFI(PauliPEPO):
         # sanity check
         assert N_pas >= 0
         assert N_out >= 0
+        assert node in self
 
-        T = self.traversal_tensor(chi=3, N_pas=N_pas, N_out=N_out)
+        T = self.traversal_tensor(node=node, chi=3, N_pas=N_pas, N_out=N_out)
 
         # transverse field
         index = ((0,)
@@ -57,10 +59,10 @@ class TFI(PauliPEPO):
 
     def __add_ising_coupling(self, node1: int, node2: int, Jz: float) -> None:
         """
-        Adds Ising-type coupling to the edge `(node1,node2)`. This means
-        that both decay stages (of the finite state automaton) are added
-        to this edge, NOT that an operator `Jz * sz * sz` is added to
-        the Hamiltonian!
+        Adds Ising-type coupling to the edge `(node1, node2)`. This
+        means that both decay stages (of the finite state automaton) are
+        added to this edge, NOT that an operator `Jz * sz * sz` is added
+        to the Hamiltonian!
         """
         # Why is the construction of the PEPO this convoluted? Why do I not
         # assemble the tensors in `__ising_PEPO_tensor_without_coupling`,
@@ -130,7 +132,12 @@ class TFI(PauliPEPO):
         """
         super().__init__()
 
-        self.G = PEPO.prepare_graph(G=G, chi=3, sanity_check=sanity_check)
+        self.G = PEPO.prepare_graph(
+            G=G,
+            chi=3,
+            D=2,
+            sanity_check=sanity_check
+        )
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
@@ -152,7 +159,7 @@ class TFI(PauliPEPO):
             # passive legs and the outgoing legs follow, and the last two
             # dimensions are the physical legs
             T = self.__ising_PEPO_tensor_without_coupling(
-                N_pas=N_pas, N_out=N_out, g=g
+                node=node, N_pas=N_pas, N_out=N_out, g=g
             )
 
             if node == self.root:
@@ -161,13 +168,13 @@ class TFI(PauliPEPO):
                 T = np.moveaxis(T, 0, -3)
 
             # re-shaping PEPO tensor to match the graph leg ordering
-            T = self._canonical_to_correct_legs(T, node)
+            T = self._canonical_to_correct_legs(T=T, node=node)
 
             self[node] = T
 
         # adding incoming and outgoing coupling to every node but the root
         for node1, node2 in self.G.edges():
-            self.__add_ising_coupling(node1, node2, Jz=J)
+            self.__add_ising_coupling(node1=node1, node2=node2, Jz=J)
 
         # contracting boundary legs
         self.contract_boundaries()
@@ -240,6 +247,7 @@ class Heisenberg(PauliPEPO):
 
     def __heisenberg_PEPO_tensor_without_coupling(
             self,
+            node: int,
             N_pas: int,
             N_out: int,
             g: float
@@ -255,8 +263,9 @@ class Heisenberg(PauliPEPO):
         # sanity check
         assert N_pas >= 0
         assert N_out >= 0
+        assert node in self
 
-        T = self.traversal_tensor(chi=5, N_pas=N_pas, N_out=N_out)
+        T = self.traversal_tensor(node=node, chi=5, N_pas=N_pas, N_out=N_out)
 
         # transverse field
         index = ((0,)
@@ -372,7 +381,7 @@ class Heisenberg(PauliPEPO):
         """
         super().__init__()
 
-        self.G = PEPO.prepare_graph(G=G, chi=5, sanity_check=sanity_check)
+        self.G = PEPO.prepare_graph(G=G, chi=5, D=2, sanity_check=sanity_check)
 
         # root node is node with smallest degree
         self.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
@@ -394,7 +403,7 @@ class Heisenberg(PauliPEPO):
             # passive legs and the outgoing legs follow, and the last two
             # dimensions are the physical legs.
             T = self.__heisenberg_PEPO_tensor_without_coupling(
-                N_pas=N_pas, N_out=N_out, g=g
+                node=node, N_pas=N_pas, N_out=N_out, g=g
             )
 
             if node == self.root:
@@ -403,13 +412,19 @@ class Heisenberg(PauliPEPO):
                 T = np.moveaxis(T, 0, -3)
 
             # re-shaping PEPO tensor to match the graph leg ordering
-            T = self._canonical_to_correct_legs(T, node)
+            T = self._canonical_to_correct_legs(T=T, node=node)
 
             self.G.nodes[node]["T"] = T
 
         # adding incoming and outgoing coupling to every node but the root
         for node1,node2 in self.G.edges():
-            self.__add_heisenberg_coupling(node1, node2, Jx, Jy, Jz)
+            self.__add_heisenberg_coupling(
+                node1=node1,
+                node2=node2,
+                Jx=Jx,
+                Jy=Jy,
+                Jz=Jz
+            )
 
         # contracting boundary legs
         self.contract_boundaries()
@@ -421,15 +436,15 @@ class Heisenberg(PauliPEPO):
 
 def Zero(
         G: nx.MultiGraph,
-        D: int,
+        D: Union[int, Dict[int, int]],
         dtype=np.complex128,
         sanity_check: bool = False
     ) -> PEPO:
     """
     Returns a zero-valued PEPO on graph `G`. Physical dimension `D`.
     """
-    op = PEPO(D=D)
-    op.G = PEPO.prepare_graph(G=G, chi=1)
+    op = PEPO()
+    op.G = PEPO.prepare_graph(G=G, chi=1, D=D)
 
     # root node is node with smallest degree
     op.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
@@ -445,7 +460,7 @@ def Zero(
     for node in op:
         op[node] = np.zeros(
             shape = (tuple(1 for _ in range(len(G.adj[node])))
-                     + (op.D, op.D)),
+                     + (op.D[node], op.D[node])),
             dtype=dtype
         )
 
@@ -456,7 +471,7 @@ def Zero(
 
 def Identity(
         G: nx.MultiGraph,
-        D: int,
+        D: Union[int, Dict[int, int]],
         dtype=np.complex128,
         sanity_check: bool = False
     ) -> PEPO:
@@ -466,7 +481,8 @@ def Identity(
     Id = Zero(G=G, D=D, dtype=dtype, sanity_check=sanity_check)
 
     # adding local identities
-    for node in Id: Id[node][...,:,:] = Id.I
+    for node in Id:
+        Id[node][...,:,:] = Id.I(node=node)
 
     if nx.is_tree(G):
         # enabling tree traversal checks
@@ -494,8 +510,8 @@ def posneg_TFI(
     Z_pos = np.array([[1, 0], [0, 0]])
     Z_neg = np.array([[0, 0], [0, -1]])
 
-    pos_op = PEPO(D=2)
-    neg_op = PEPO(D=2)
+    pos_op = PEPO()
+    neg_op = PEPO()
     # why not PauliPEPO? Because pos_op and neg_op will contain operators that
     # are not pauli matrices (e.g. projectors), so the sanity check of
     # PauliPEPO would not work
@@ -506,7 +522,7 @@ def posneg_TFI(
     decay states, and 3 is the vacuum state.
     """
 
-    G = PEPO.prepare_graph(G=G, chi=chi, sanity_check=sanity_check)
+    G = PEPO.prepare_graph(G=G, chi=chi, D=2, sanity_check=sanity_check)
     pos_op.G = copy.deepcopy(G)
     neg_op.G = copy.deepcopy(G)
 
@@ -533,8 +549,12 @@ def posneg_TFI(
         # PEPO tensor, where the first dimension is the incoming leg, the
         # passive legs and the outgoing legs follow, and the last two
         # dimensions are the physical legs
-        pos_T = pos_op.traversal_tensor(chi=chi, N_pas=N_pas, N_out=N_out)
-        neg_T = neg_op.traversal_tensor(chi=chi, N_pas=N_pas, N_out=N_out)
+        pos_T = pos_op.traversal_tensor(
+            node=node, chi=chi, N_pas=N_pas, N_out=N_out
+        )
+        neg_T = neg_op.traversal_tensor(
+            node=node, chi=chi, N_pas=N_pas, N_out=N_out
+        )
 
         # transverse field
         index = ((0,)
@@ -550,8 +570,8 @@ def posneg_TFI(
             neg_T = np.moveaxis(neg_T, 0, -3)
 
         # re-shaping PEPO tensor to match the graph leg ordering.
-        pos_op[node] = pos_op._canonical_to_correct_legs(pos_T, node)
-        neg_op[node] = neg_op._canonical_to_correct_legs(neg_T, node)
+        pos_op[node] = pos_op._canonical_to_correct_legs(T=pos_T, node=node)
+        neg_op[node] = neg_op._canonical_to_correct_legs(T=neg_T, node=node)
 
     # adding incoming and outgoing coupling to every node but the root.
     for node1, node2 in G.edges():
@@ -623,7 +643,7 @@ def operator_chain(
         )
 
     # extracting physical dimension
-    D = tuple(ops.values())[0].shape[0]
+    D = {node: op.shape[0] for node, op in ops.items()}
 
     H = Identity(G=G, D=D, sanity_check=sanity_check)
 
@@ -631,13 +651,14 @@ def operator_chain(
         # sanity check
         if not G.has_node(node):
             raise ValueError(f"Node {node} not contained in graph.")
-        if not op.shape == (D, D):
+        if not op.shape == (D[node], D[node]):
             raise ValueError("".join((
                 f"Operator on node {node} has wrong shape: Expected ",
-                f"({D},{D}), got " + str(op.shape) + "."
+                f"({D[node]}, {D[node]}), got " + str(op.shape) + "."
             )))
 
-        index = tuple(0 for _ in H.G.adj[node]) + (slice(D), slice(D))
+        index = (tuple(0 for _ in H.G.adj[node])
+                 + (slice(D[node]), slice(D[node])))
         H[node][index] = op
 
     # since we inserted non-identity operators, the tree traversal checks are
@@ -655,15 +676,14 @@ def operator_layer(
         sanity_check: bool = False
     ) -> PEPO:
     """
-    A PEPO that contains disjoint operator chains. The operator chains
-    are contained in the `layers` argument.
+    A PEPO that contains disjoint operator chains.
     """
     warnings.warn(
         "".join((
-            "So far, this method simply adds operator chains. There is a more",
-            "method: if the operator chains are disjoint, they can be ",
-            "compressed into a PEPO with smaller bond dimension. This has ",
-            "yet to be implemented."
+            "So far, this method simply adds operator chains. There is a ",
+            "more elegant method: if the operator chains are disjoint, they ",
+            "can be compressed into a PEPO with smaller bond dimension. This ",
+            "has yet to be implemented."
         )),
         FutureWarning
     )
@@ -676,16 +696,11 @@ def operator_layer(
         test_disjoint=True
     )
 
-    # infering physical dimension and length of operator chains.
-    first_key = tuple(op_chains[0].keys())[0]
-    D = op_chains[0][first_key].shape[-1]
-    op_chain_length = len(op_chains[0])
-
     op = operator_chain(G=G, ops=op_chains[0], sanity_check=sanity_check)
 
     for ops in op_chains[1:]:
         op = op + operator_chain(
-            G=G, ops=op_chains[0], sanity_check=sanity_check
+            G=G, ops=ops, sanity_check=sanity_check
         )
 
     if sanity_check: assert op.intact

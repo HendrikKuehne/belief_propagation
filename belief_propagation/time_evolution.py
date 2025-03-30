@@ -124,10 +124,11 @@ def __PEPO_exp_single_site_op_chains(
     assert op_layer_intact_check(
         G=G, layer=op_chain_sum, target_chain_length=1, test_disjoint=True
     )
+    if not all("D" in data.keys() for node, data in G.nodes(data=True)):
+        raise ValueError("No physical dimensions saved in graph.")
 
-    # infering physical dimension
-    first_key = tuple(op_chain_sum[0].keys())[0]
-    D = op_chain_sum[0][first_key].shape[-1]
+    # Getting physical dimensions.
+    D = {node: D for node, D in G.nodes(data="D")}
 
     op = Identity(G=G, D=D, sanity_check=sanity_check)
     op.check_tree = False
@@ -155,10 +156,11 @@ def __PEPO_exp_two_site_op_chains(
     assert op_layer_intact_check(
         G=G, layer=op_chain_sum, target_chain_length=2, test_disjoint=True
     )
+    if not all("D" in data.keys() for node, data in G.nodes(data=True)):
+        raise ValueError("No physical dimensions saved in graph.")
 
-    # infering physical dimension.
-    first_key = tuple(op_chain_sum[0].keys())[0]
-    D = op_chain_sum[0][first_key].shape[-1]
+    # Getting physical dimensions.
+    D = {node: D for node, D in G.nodes(data="D")}
 
     op = Identity(G=G, D=D, sanity_check=sanity_check)
 
@@ -167,51 +169,52 @@ def __PEPO_exp_two_site_op_chains(
         node1, node2 = op_chain.keys()
         exp_op = scialg.expm(np.kron(op_chain[node1], op_chain[node2]))
 
-        # re-shaping and transposing
+        # Re-shaping and transposing.
         exp_op = exp_op.reshape(
-            D, D, D, D
+            D[node1], D[node2], D[node1], D[node2]
         ).transpose(
             0, 2, 1, 3
         ).reshape(
-            D**2,D**2
+            D[node1]**2, D[node2]**2
         )
 
-        # SVD to separate legs from different nodes.
+        # SVD to separate legs from different nodes. U will be inserted into
+        # node1, Vh will be inserted into node2.
         U, singvals, Vh = scialg.svd(
             exp_op, full_matrices=False, overwrite_a=True
         )
         U = U @ np.diag(np.sqrt(singvals))
         Vh = np.diag(np.sqrt(singvals)) @ Vh
 
-        # new bond dimension.
+        # New bond dimension.
         chi = len(singvals)
 
-        # enlarging PEPO tensor in node1.
+        # Enlarging PEPO tensor in node1.
         shape1 = list(op[node1].shape)
         leg1 = op.G[node1][node2][0]["legs"][node1]
         shape1[leg1] = chi
         op[node1] = np.resize(op[node1], new_shape=shape1)
-        # enlarging PEPO tensor in node2.
+        # Enlarging PEPO tensor in node2.
         shape2 = list(op[node2].shape)
         leg2 = op.G[node1][node2][0]["legs"][node2]
         shape2[leg2] = chi
         op[node2] = np.resize(op[node2], new_shape=shape2)
 
-        U = U.reshape(D, D, chi)
-        Vh = Vh.reshape(chi, D, D)
+        U = U.reshape(D[node1], D[node1], chi)
+        Vh = Vh.reshape(chi, D[node2], D[node2])
 
         # Defining the indices at which matrix exponentials will be inserted.
         index1 = lambda i: tuple(
             i if iAdj == leg1 else 0
             for iAdj, _ in enumerate(op.G.adj[node1])
         ) + (
-            slice(D), slice(D)
+            slice(D[node1]), slice(D[node1])
         )
         index2 = lambda i: tuple(
             i if iAdj == leg2 else 0 for
             iAdj, _ in enumerate(op.G.adj[node2])
         ) + (
-            slice(D), slice(D)
+            slice(D[node2]), slice(D[node2])
         )
 
         # inserting matrix expoentials.

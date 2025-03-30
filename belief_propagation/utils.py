@@ -311,55 +311,53 @@ def fidelity(psi: np.ndarray, subspace: Tuple[np.ndarray]) -> float:
 
 def write_exp_bonddim_to_graph(
         G: nx.MultiGraph,
-        D: int,
+        D: Dict[int, int],
         max_chi: int = np.inf
     ) -> None:
     """
     Writes bond dimension to the edges of `G`, that is required for
-    exact solutions. `G` is modified in-place. `D` is the physical
-    dimension. Bond dimension is cut off at `chi_max`.
+    exact solutions. Saves bond dimension in `size` attrivute of edges
+    of `G`. `D` contains the physical dimension for every node in `G`.
+    `G` is modified in-place.
 
     On loopy networks, the required bond dimension is obtained from
     a spanning tree of a graph. This is a heuristic, that is designed
     to prevent bond dimension bottlenecks. Results are exact on edges
     that are not part of a loop.
     """
-    N = G.number_of_nodes()
+    # sanity check
+    if not all(node in D.keys() for node in G.nodes()):
+        raise ValueError("There are nodes without physical dimension.")
+
+    # If the graph is a tree, setting bond dimensions exactly is easy: the tree
+    # is cut along the respective edge, and the sizes of the hilbert spaces on
+    # the left and right of the cut determine the necessary bond dimension.
+    # If the graph is not a tree, we find a breadth-first spanning tree that
+    # contains this edge, and then cut the respective edge, thereby getting a
+    # bipartition. This is only a heuristic, but should prevent bond dimension
+    # bottlenecks. This procedure becomes exact on trees, since the spanning
+    # tree of a tree is unique.
 
     if nx.is_tree(G):
-        # If the graph is a tree, setting bond dimensions exactly is easy:
-        # the tree is cut along the respective edge, and the sizes of the
-        # resulting hilbert space determine the necessary bond dimension.
-        for node1,node2 in G.edges():
-            # Bipartition of the system using a tree.
-            Gcopy = nx.MultiGraph(G.edges)
-            Gcopy.remove_edge(node1, node2)
-            comp = nx.node_connected_component(Gcopy, node1)
-            N_subsystem = len(comp)
-
-            # Setting the bond dimension.
-            chi = min(D**N_subsystem, D**(N - N_subsystem))
-            G[node1][node2][0]["size"] = min(chi, max_chi)
-
-        return
-
-    # If the graph is not a tree, we proceed as follows for a given edge: We
-    # find a breadth-first spanning tree that contains this edge, and then cut
-    # the respective edge, thereby getting a bipartition. This is only a
-    # heuristic, but should prevent bond dimension bottlenecks. This procedure
-    # becomes exact on trees, since the spanning tree of a tree is unique.
+        get_divide_tree = lambda G_, node_: nx.MultiGraph(G_.edges())
+    else:
+        get_divide_tree = lambda G_, node_: nx.MultiGraph(
+            nx.bfs_tree(G=G_, source=node_)
+        )
 
     for node1, node2 in G.edges():
-        # Spanning tree that contains edge (node1, node2). Conversion to
-        # MultiGraph because connected components are not implemented on
-        # directed graphs.
-        tree = nx.MultiGraph(nx.bfs_tree(G=G, source=node1).edges)
-        tree.remove_edge(node1, node2)
-        comp = nx.node_connected_component(tree, node1)
-        N_subsystem = len(comp)
+        # Bipartition of the system using a tree.
+        Gcopy = get_divide_tree(G_=G, node_=node1)
+        Gcopy.remove_edge(node1, node2)
+        comp1 = nx.node_connected_component(Gcopy, node1)
+        comp2 = nx.node_connected_component(Gcopy, node2)
+
+        # Hilbert space sizes on each side of the cut.
+        D_left = np.prod([D[node] for node in comp1])
+        D_right = np.prod([D[node] for node in comp2])
 
         # Setting the bond dimension.
-        chi = min(D**N_subsystem, D**(N - N_subsystem))
+        chi = min(D_left, D_right)
         G[node1][node2][0]["size"] = min(chi, max_chi)
 
     return
@@ -657,8 +655,9 @@ def op_layer_intact_check(
             warnings.warn("The operator chains are not disjoint.", UserWarning)
             return False
 
-    D_set = set()
+    D = {}
     length_set = set()
+
     for iChain, op_chain in enumerate(layer):
         # Saving operator chain length.
         length_set.add(len(op_chain))
@@ -686,15 +685,18 @@ def op_layer_intact_check(
                 )
                 return False
 
-            # Saving physical dimension.
-            D_set.add(T.shape[0])
-
-    if not len(D_set) == 1:
-        warnings.warn(
-            "Multiple different physical dimensions in operator chains.",
-            UserWarning
-        )
-        return False
+            # Are the physical dimensions equal?
+            if node in D.keys():
+                if not D[node] == T.shape[0]:
+                    warnings.warn(
+                        "".join((
+                            f"Physical dimension mismatch in node {node}."
+                        )),
+                        RuntimeWarning
+                    )
+                    return False
+            else:
+                D[node] = T.shape[0]
 
     if target_chain_length is not None: test_same_length = True
 
@@ -742,15 +744,24 @@ def graph_compatible(
     """
     Tests if `G1` and `G2` can be combined into a sandwich, that is if
     their geometry is the same. This amounts to checking if every edge
-    in `G1` is contained in `G2`.
+    in `G1` is contained in `G2` and, if present, if the physical
+    dimensions match.
     """
     # sanity check
     if sanity_check:
         assert network_message_check(G1)
         assert network_message_check(G2)
 
+    # Do nodes and edges match?
     if not nx.utils.nodes_equal(G1.nodes(), G2.nodes()): return False
     if not nx.utils.edges_equal(G1.edges(), G2.edges()): return False
+
+    # Do the physical dimensions match?
+    if (all("D" in data for _, data in G1.nodes(data=True))
+        and all("D" in data for _, data in G2.nodes(data=True))):
+        for node in G1:
+            if G1.nodes[node]["D"] != G2.nodes[node]["D"]:
+                return False
 
     return True
 

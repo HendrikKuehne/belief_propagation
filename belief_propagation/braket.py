@@ -16,7 +16,7 @@ __all__ = [
 import copy
 import warnings
 import itertools
-from typing import Iterator, Tuple, Dict, Union, List
+from typing import Iterator, Tuple, Dict, Union, List, Iterable
 
 import numpy as np
 import networkx as nx
@@ -141,15 +141,24 @@ class BaseBraket:
         """
         Exact contraction. `kwargs` are passed to `ctg.HyperOptimizer`.
         """
-        # I'm using a guess to distinguish between cases where I should use a
-        # HyperOptimizer object, and where I shouldn't. Optimal contraction
-        # path construction with HyperOptimizers incurs a significant
-        # computational overhead, and is only recommended for large networks.
 
+        # Assmebling cotengra contraction information.
         inputs, shapes, arrays, size_dict = braket_to_ctg_arguments(
             braket=self,
             sanity_check=sanity_check
         )
+        # Slicing singleton dimensions.
+        inputs, shapes, arrays, size_dict = slice_singleton_dimensions(
+            inputs=inputs,
+            shapes=shapes,
+            arrays=arrays,
+            size_dict=size_dict
+        )
+
+        # I'm using a guess to distinguish between cases where I should use a
+        # HyperOptimizer object, and where I shouldn't. Optimal contraction
+        # path construction with HyperOptimizers incurs a significant
+        # computational overhead, and is only recommended for large networks.
 
         if self.nsites < 100:
             eq = ctg.utils.inputs_output_to_eq(inputs=inputs, output=())
@@ -188,6 +197,8 @@ class BaseBraket:
         """
         Whether the braket is intact or not. This includes:
         * Is the network `G` message-ready?
+        * Do the graphs in bra, operator, ket and the internal graph
+        match?
         * Are `bra`, `op`, and `ket` themselves intact?
         * Do the physical dimensions match?
         * Do all the messages contain finite values?
@@ -195,24 +206,30 @@ class BaseBraket:
         assert hasattr(self, "_bra")
         assert hasattr(self, "_op")
         assert hasattr(self, "_ket")
-        assert hasattr(self, "D")
 
+        # Is the internal graph message-ready?
         if not network_message_check(self.G): return False
 
-        if not self._bra.intact: return False
-        if not self._op.intact: return False
-        if not self._ket.intact: return False
-
-        # Do the physical dimensions match?
-        if not (self._bra.D == self.D
-                and self._ket.D == self.D
-                and self._op.D == self.D
+        # Do the internal graphs match, in terms of geometry and physical
+        # dimension?
+        for G, name in zip(
+            (self.bra.G, self.op.G, self.ket.G),
+            ("bra", "op", "ket")
         ):
-            warnings.warn(
-                "Physical dimensions in braket do not match.",
-                RuntimeWarning
-            )
-            return False
+            if not graph_compatible(self.G, G):
+                warnings.warn(
+                    "".join((
+                        "Graph in ",
+                        name,
+                        " does not match internal graph."
+                    )),
+                    RuntimeWarning
+                )
+                return False
+
+        if not self.bra.intact: return False
+        if not self.op.intact: return False
+        if not self.ket.intact: return False
 
         return True
 
@@ -220,6 +237,14 @@ class BaseBraket:
     def converged(self) -> bool:
         """Whether the messages in `self.msg` are converged."""
         return self._converged
+
+    @property
+    def D(self) -> Dict[int, int]:
+        """Physical dimension at every node."""
+        return {
+            node: self.G.nodes[node]["D"]
+            for node in self
+        }
 
     @property
     def ket(self) -> PEPS:
@@ -278,13 +303,13 @@ class BaseBraket:
     @staticmethod
     def prepare_graph(
             G: nx.MultiGraph,
-            keep_legs: bool = False
+            keep_legs: bool = False,
+            D: Union[int, Dict[int, int]] = None
         ) -> nx.MultiGraph:
         """
         Creates a shallow copy of `G`, and adds the keys `legs`,
-        `trace`, and `indices` to the edges.
-
-        This can be used to remove unwanted data from a graph.
+        `trace`, and `indices` to the edges. If given, adds the physical
+        dimensions to the graph.
         """
         # shallow copy of G
         newG = nx.MultiGraph(G.edges())
@@ -293,7 +318,29 @@ class BaseBraket:
             newG[node1][node2][0]["legs"] = legs if keep_legs else {}
             newG[node1][node2][0]["trace"] = False
             newG[node1][node2][0]["indices"] = None
-            newG[node1][node2][0]["msg"] = {}
+
+        if D is not None:
+            if np.isscalar(D):
+                # Preparing physical dimensions.
+                D = {node: D for node in G}
+
+            else:
+                # Sanity check for physical dimensions.
+                if not isinstance(D, dict):
+                    raise ValueError("".join((
+                        "Physical dimensions must be given as dictionary, ",
+                        "where the local physical dimension is given for ",
+                        "every node."
+                    )))
+
+                if not nx.utils.nodes_equal(
+                    nodes1=G.nodes(),
+                    nodes2=D.keys()
+                ):
+                    raise ValueError("Nodes in D don't match nodes in graph.")
+
+            for node in G:
+                newG.nodes[node]["D"] = D[node]
 
         return newG
 
@@ -358,43 +405,12 @@ class BaseBraket:
             **kwargs
         )
 
-    def __init__(
-            self,
-            bra: PEPS,
-            op: PEPO,
-            ket: PEPS,
-            sanity_check: bool = False
-        ) -> None:
-        # sanity check
-        if sanity_check:
-            assert graph_compatible(bra.G, ket.G, sanity_check=sanity_check)
-            assert graph_compatible(bra.G, op.G, sanity_check=sanity_check)
-            assert bra.D == op.D and ket.D == op.D
-
-        self.G: nx.MultiGraph = PEPO.prepare_graph(ket.G, True)
-        self._bra: PEPS = bra
-        self._op: PEPO = op
-        self._ket: PEPS = ket
-        self.D: int = op.D
-        """Physical dimension."""
-
-        self._converged: bool = False
-        """Whether the messages in `self.msg` are converged."""
-        # This attribute does not really belong in BaseBraket, of course; I
-        # included it here to be able to have the property setters in this base
-        # class. After all, the whole point of this base class was to avoid
-        # clutter in the BP code.
-
-        if sanity_check: assert self.intact
-
-        return
-
     def __getitem__(self, node:int) -> Tuple[np.ndarray]:
         """
         Subscripting with a node gives the tensor stack
         `(bra[node], op[node], ket[node])` at that node.
         """
-        return (self._bra[node], self._op[node], self._ket[node])
+        return (self.bra[node], self.op[node], self.ket[node])
 
     def __setitem__(self, node: int, Tstack: Tuple[np.ndarray]) -> None:
         """
@@ -405,6 +421,11 @@ class BaseBraket:
                 "Tensor stacks must consist of three tensors. received "
                 ,f"{len(Tstack)} tensors."
             )))
+        if not (Tstack[0].shape[-1] == Tstack[1].shape[-2]
+                and Tstack[2].shape[-1] == Tstack[1].shape[-1]):
+            raise ValueError(
+                "Physical dimension mismatch in tensor stack."
+            )
 
         self._bra[node] = Tstack[0]
         self._op[node] = Tstack[1]
@@ -417,8 +438,7 @@ class BaseBraket:
 
     def __repr__(self) -> str:
         return "".join((
-            f"Braket on {self.nsites} sites. Physical dimension {self.D}. "
-            ,f"Braket is ",
+            f"Braket on {self.nsites} sites. Braket is ",
             "intact." if self.intact else "not intact."
         ))
 
@@ -432,7 +452,7 @@ class BaseBraket:
 
     def __contains__(self, node: int) -> bool:
         """Does the graph `self.G` contain the node `node`?"""
-        return (node in self.bra) and (node in self.op) and (node in self.ket)
+        return node in self.G
 
     def __eq__(self, rhs: "BaseBraket") -> bool:
         """
@@ -473,6 +493,43 @@ class BaseBraket:
 
         return True
 
+    def __init__(
+            self,
+            bra: PEPS,
+            op: PEPO,
+            ket: PEPS,
+            sanity_check: bool = False
+        ) -> None:
+        # sanity check
+        if sanity_check:
+            assert graph_compatible(bra.G, ket.G, sanity_check=sanity_check)
+            assert graph_compatible(bra.G, op.G, sanity_check=sanity_check)
+            assert bra.D == op.D and ket.D == op.D
+
+        self.G: nx.MultiGraph = self.__class__.prepare_graph(
+            G=op.G,
+            keep_legs=True,
+            D=op.D,
+        )
+        """
+        Graph that contains leg ordering, and physical dimensions.
+        """
+
+        self._bra: PEPS = bra
+        self._op: PEPO = op
+        self._ket: PEPS = ket
+
+        self._converged: bool = False
+        """Whether the messages in `self.msg` are converged."""
+        # This attribute does not really belong in BaseBraket, of course; I
+        # included it here to be able to have the property setters in this base
+        # class. After all, the whole point of this base class was to avoid
+        # clutter in the BP code.
+
+        if sanity_check: assert self.intact
+
+        return
+
 
 class Braket(BaseBraket):
     """
@@ -503,13 +560,13 @@ class Braket(BaseBraket):
 
         for node1, node2 in self.G.edges():
             for sender, receiver in itertools.permutations(
-                (node1,node2)
+                (node1, node2)
             ):
                 if len(self.G.adj[sender]) > 1:
                     # ket and bra leg indices, and sizes
-                    bra_size = self._bra.G[sender][receiver][0]["size"]
-                    op_size = self._op.G[sender][receiver][0]["size"]
-                    ket_size = self._ket.G[sender][receiver][0]["size"]
+                    bra_size = self.bra.G[sender][receiver][0]["size"]
+                    op_size = self.op.G[sender][receiver][0]["size"]
+                    ket_size = self.ket.G[sender][receiver][0]["size"]
                     # new message
                     self.msg[sender][receiver] = self.get_new_message(
                         bra_size=bra_size,
@@ -522,9 +579,9 @@ class Braket(BaseBraket):
                     # sending node is leaf node
                     self.msg[sender][receiver] = ctg.einsum(
                         "ij,kjl,rl->ikr",
-                        self._bra.G.nodes[sender]["T"],
-                        self._op.G.nodes[sender]["T"],
-                        self._ket.G.nodes[sender]["T"]
+                        self.bra.G.nodes[sender]["T"],
+                        self.op.G.nodes[sender]["T"],
+                        self.ket.G.nodes[sender]["T"]
                     )
 
         if normalize:
@@ -552,48 +609,23 @@ class Braket(BaseBraket):
         if sanity_check: assert self.intact
         if not self.G.has_edge(sender, receiver, key=0):
             raise ValueError(
-                f"Edge ({sender},{receiver}) not present in graph."
+                f"Edge ({sender}, {receiver}) not present in graph."
             )
 
         # The outcoming message on one edge is the result of absorbing all
-        # incoming messages on all other edges into the tensor sandwich
-        nLegs = len(self.G.adj[sender])
-        args = ()
-        """Arguments for einsum"""
-
-        out_legs = list(range(3 * nLegs))
-
-        for neighbor in self.G.adj[sender]:
-            if neighbor == receiver: continue
-
-            args += (
-                self.msg[neighbor][sender],
-                (
-                    self._bra.G[sender][neighbor][0]["legs"][sender], # bra leg
-                    nLegs + self._op.G[sender][neighbor][0]["legs"][sender], # operator leg
-                    2 * nLegs + self._ket.G[sender][neighbor][0]["legs"][sender], # ket leg
-                )
-            )
-            out_legs.remove(self._bra.G[sender][neighbor][0]["legs"][sender])
-            out_legs.remove(nLegs + self._op.G[sender][neighbor][0]["legs"][sender])
-            out_legs.remove(2*nLegs + self._ket.G[sender][neighbor][0]["legs"][sender])
-
-        args += (
-            # bra tensor
-            self._bra.G.nodes[sender]["T"],
-            tuple(range(nLegs)) + (3 * nLegs,),
-            # operator tensor
-            self._op.G.nodes[sender]["T"],
-            (tuple(nLegs + iLeg for iLeg in range(nLegs))
-             + (3 * nLegs, 3*nLegs + 1)),
-            # ket tensor
-            self._ket.G.nodes[sender]["T"],
-            tuple(2*nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs + 1,),
+        # incoming messages on all other edges into the tensor stack.
+        neighbors = tuple(
+            node 
+            for node in self.G.adj[sender]
+            if node != receiver
         )
 
-        msg = np.einsum(*args, out_legs, optimize=True)
-
-        return msg
+        return contract_tensor_inbound_messages(
+            braket=self,
+            node=sender,
+            neighbors=neighbors,
+            sanity_check=sanity_check
+        )
 
     def __pass_msg_through_edges(self, sanity_check: bool) -> None:
         """
@@ -612,7 +644,7 @@ class Braket(BaseBraket):
 
                 # applying the transformation
                 self.msg[sender][receiver] = np.einsum(
-                    "ijkabc, abc -> ijk",
+                    "ijkabc,abc->ijk",
                     self._edge_T[sender][receiver],
                     self.msg[sender][receiver]
                 )
@@ -1103,9 +1135,9 @@ class Braket(BaseBraket):
             )
 
         vec_size = (
-            self._bra.G[sender][receiver][0]["size"],
-            self._op.G[sender][receiver][0]["size"],
-            self._ket.G[sender][receiver][0]["size"]
+            self.bra.G[sender][receiver][0]["size"],
+            self.op.G[sender][receiver][0]["size"],
+            self.ket.G[sender][receiver][0]["size"]
         )
         if not T.shape == 2*vec_size:
             raise ValueError("".join((
@@ -1116,16 +1148,16 @@ class Braket(BaseBraket):
                 "."
             )))
 
-        # inserting T
-        if np.isnan(self._edge_T[sender][receiver]).any():
-            # no transformation on this edge so far
+        # Inserting T.
+        if np.isnan(self.edge_T[sender][receiver]).any():
+            # No transformation on this edge so far.
             self._edge_T[sender][receiver] = T
         else:
-            # transformations are executed successively
+            # Transformations are executed successively.
             self._edge_T[sender][receiver] = np.einsum(
                 "abcijk,ijklmn->abclmn",
                 T,
-                self._edge_T[sender][receiver]
+                self.edge_T[sender][receiver]
             )
 
         return
@@ -1134,7 +1166,7 @@ class Braket(BaseBraket):
             self,
             real: bool = False,
             d: float = 1e-3,
-            msg_init: str = "zero-normal",
+            method: str = "zero-normal",
             sanity_check: bool = False,
             rng: np.random.Generator = np.random.default_rng()
         ) -> None:
@@ -1157,7 +1189,7 @@ class Braket(BaseBraket):
                 delta_msg = self.get_new_message(
                     *self.msg[sender][receiver].shape,
                     real=real,
-                    method=msg_init,
+                    method=method,
                     rng=rng
                 )
                 # adjusting the strength of the perturbation
@@ -1188,9 +1220,9 @@ class Braket(BaseBraket):
             for sender in self.msg.keys():
                 for receiver in self.msg[sender].keys():
                     target_shape = (
-                        self._bra.G[sender][receiver][0]["size"],
-                        self._op.G[sender][receiver][0]["size"],
-                        self._ket.G[sender][receiver][0]["size"]
+                        self.bra.G[sender][receiver][0]["size"],
+                        self.op.G[sender][receiver][0]["size"],
+                        self.ket.G[sender][receiver][0]["size"]
                     )
 
                     if not check_msg_intact(
@@ -1203,17 +1235,17 @@ class Braket(BaseBraket):
 
         for node1, node2 in self.G.edges():
             for sender, receiver in itertools.permutations((node1, node2)):
-                if np.isnan(self._edge_T[sender][receiver]).any():
+                if np.isnan(self.edge_T[sender][receiver]).any():
                     # No transformation on this edge.
                     continue
 
-                if not self._edge_T[sender][receiver].shape == (
-                    self._bra.G[node1][node2][0]["size"],
-                    self._op.G[node1][node2][0]["size"],
-                    self._ket.G[node1][node2][0]["size"],
-                    self._bra.G[node1][node2][0]["size"],
-                    self._op.G[node1][node2][0]["size"],
-                    self._ket.G[node1][node2][0]["size"],
+                if not self.edge_T[sender][receiver].shape == (
+                    self.bra.G[node1][node2][0]["size"],
+                    self.op.G[node1][node2][0]["size"],
+                    self.ket.G[node1][node2][0]["size"],
+                    self.bra.G[node1][node2][0]["size"],
+                    self.op.G[node1][node2][0]["size"],
+                    self.ket.G[node1][node2][0]["size"],
                 ):
                     warnings.warn(
                         "".join((
@@ -1245,15 +1277,15 @@ class Braket(BaseBraket):
         ) -> np.ndarray:
         """
         Generates a new message with shape
-        `[bra_size,op_size,ket_size]`.
+        `(bra_size, op_size, ket_size)`.
         """
-        # random number generation
+        # Random number generation.
         if real:
             randn = lambda size: rng.standard_normal(size)
         else:
             randn = lambda size: crandn(size,rng)
 
-        # random matrix generation
+        # Random matrix generation.
         if real:
             matrixgen = lambda N: scistats.ortho_group.rvs(dim=N, size=1)
         else:
@@ -1265,7 +1297,7 @@ class Braket(BaseBraket):
             msg = np.zeros(shape=(bra_size, op_size, ket_size), dtype=dtype)
 
             if method == "normal":
-                # positive-semidefinite and hermitian
+                # Positive-semidefinite and hermitian.
                 for i in range(op_size):
                     A = randn(size=(bra_size, bra_size))
                     msg[:,i,:] = A.T.conj() @ A
@@ -1273,7 +1305,7 @@ class Braket(BaseBraket):
                 return msg
 
             if method == "unitary":
-                # positive-semidefinite and hermitian
+                # Positive-semidefinite and unitary.
                 for i in range(op_size):
                     eigvals = rng.uniform(low=0,high=1,size=bra_size)
                     U = matrixgen(bra_size)
@@ -1282,7 +1314,7 @@ class Braket(BaseBraket):
                 return msg
 
             if method == "zero-normal":
-                # positive-semidefinite, hermitian, sums to zero
+                # Positive-semidefinite, hermitian, sums to zero.
                 msg = Braket.get_new_message(
                     bra_size=bra_size,
                     op_size=op_size,
@@ -1296,6 +1328,13 @@ class Braket(BaseBraket):
             raise ValueError("Message initialisation method " + method + " not implemented.")
 
         return randn(size=(bra_size, op_size, ket_size))
+
+    def __repr__(self):
+        return "".join((
+            super().__repr__(),
+            " Messages are ",
+            "converged." if self.converged else "not converged."
+        ))
 
     def __init__(
             self,
@@ -1343,17 +1382,9 @@ class Braket(BaseBraket):
 
         return
 
-    def __repr__(self):
-        return "".join((
-            super().__repr__(),
-            " Messages are ",
-            "converged." if self.converged else "not converged."
-        ))
-
 
 def braket_to_ctg_arguments(
         braket: Braket,
-        slice_singletons: bool = True,
         sanity_check: bool = False
     ) -> Tuple[
         List[List[str]],
@@ -1365,23 +1396,28 @@ def braket_to_ctg_arguments(
     Given a `Braket` object, assembles and returns the cotengra
     arguments `inputs`, `shapes`, `arrays` and `size_dict`. If
     `slice_singletons = True` (default), singleton dimensions are
-    sliced.
+    sliced. The returned lists are sorted by ascending node labels.
+
+    Refer to the [cotengra documentation](https://cotengra.readthedocs.io/en/latest/basics.html)
+    for an introduction to how the return values represent a
+    contraction.
     """
     # sanity check
     if sanity_check: assert braket.intact
 
     if braket.nsites == 1:
+        node = braket.op.root
         # The network is trivial.
         inputs = [["a",], ["a", "b"], ["b",]]
         shapes = [
-            [braket._bra.D,],
-            [braket._op.D, braket._op.D],
-            [braket._ket.D,]
+            [braket._bra.D[node],],
+            [braket._op.D[node], braket._op.D[node]],
+            [braket._ket.D[node],]
         ]
-        arrays = list(braket[braket.op.root])
+        arrays = list((braket[node],))
         size_dict = {
-            "a": braket._bra.D,
-            "b": braket._ket.D
+            "a": braket._bra.D[node],
+            "b": braket._ket.D[node]
         }
 
         return inputs, shapes, arrays, size_dict
@@ -1394,7 +1430,7 @@ def braket_to_ctg_arguments(
     N = 0
 
     for node1, node2 in braket.G.edges():
-        for i, layer in enumerate((braket._bra, braket._op, braket._ket)):
+        for i, layer in enumerate((braket.bra, braket.op, braket.ket)):
             # Enumerating the virtual edges in the network.
             edge_size = layer.G[node1][node2][0]["size"]
             layer.G[node1][node2][0]["label"] = ctg.get_symbol(N + i)
@@ -1405,20 +1441,20 @@ def braket_to_ctg_arguments(
 
     for node in braket:
         # Enumerating the physical edges in the network.
-        braket._bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
-        braket._op.G.nodes[node]["label"] = [
+        braket.bra.G.nodes[node]["label"] = [ctg.get_symbol(N),]
+        braket.op.G.nodes[node]["label"] = [
             ctg.get_symbol(N), ctg.get_symbol(N+1)
         ]
-        braket._ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
+        braket.ket.G.nodes[node]["label"] = [ctg.get_symbol(N+1),]
 
         # Extracting the size of every edge.
-        size_dict[ctg.get_symbol(N)] = braket.D
-        size_dict[ctg.get_symbol(N + 1)] = braket.D
+        size_dict[ctg.get_symbol(N)] = braket.D[node]
+        size_dict[ctg.get_symbol(N + 1)] = braket.D[node]
         N += 2
 
     # Extracting the einsum arguments.
-    for node in braket:
-        for layer in (braket._bra.G, braket._op.G, braket._ket.G):
+    for node in sorted(braket):
+        for layer in (braket.bra.G, braket.op.G, braket.ket.G):
             # Tensor at this site.
             arrays += [layer.nodes[node]["T"],]
 
@@ -1439,6 +1475,21 @@ def braket_to_ctg_arguments(
 
             inputs += [legs,]
 
+    return inputs, shapes, arrays, size_dict
+
+
+def slice_singleton_dimensions(
+        inputs: List[List[str]],
+        shapes: List[List[int]],
+        arrays: List[np.ndarray],
+        size_dict: Dict[int, int]
+    ) -> Tuple[
+        List[List[str]],
+        List[List[int]],
+        List[np.ndarray],
+        Dict[str, int]
+    ]:
+    """Slices singleton in the given cotengra contraction data."""
     # If we use cotengra to contract a braket that was created using
     # Braket.Cntr - i.e. one that contains dummies in self.bra and self.ket -
     # the code so far might fail. The reason is that the size objectives of
@@ -1453,32 +1504,29 @@ def braket_to_ctg_arguments(
     # edges in the tree that have size one. Slicing an edge with size one is
     # free, after all (e.g. incurs no additional computational cost).
 
-    if slice_singletons:
-        # Slicing singleton dimensions comes at no computational cost, but it
-        # is necessary in some scenarios to ensure that cotengra runs properly.
-        for i, T in enumerate(arrays):
-            singleton_dims = tuple(j for j in range(T.ndim) if T.shape[j] == 1)
+    for i, T in enumerate(arrays):
+        singleton_dims = tuple(j for j in range(T.ndim) if T.shape[j] == 1)
 
-            if len(singleton_dims) == 0:
-                # This tensor has no singleton dimension; continuing.
-                continue
+        if len(singleton_dims) == 0:
+            # This tensor has no singleton dimension; continuing.
+            continue
 
-            idx = tuple(slice(size) if size > 1 else 0 for size in T.shape)
-            singleton_dim_labels = tuple(inputs[i][j] for j in singleton_dims)
+        idx = tuple(slice(size) if size > 1 else 0 for size in T.shape)
+        singleton_dim_labels = tuple(inputs[i][j] for j in singleton_dims)
 
-            # Removing the singleton dimensions from the inputs and the size
-            # dictionary.
-            inputs_ = copy.deepcopy(inputs[i])
-            for label in singleton_dim_labels:
-                inputs_.remove(label)
-                size_dict.pop(label, None)
-            inputs[i] = inputs_
+        # Removing the singleton dimensions from the inputs and the size
+        # dictionary.
+        inputs_ = copy.deepcopy(inputs[i])
+        for label in singleton_dim_labels:
+            inputs_.remove(label)
+            size_dict.pop(label, None)
+        inputs[i] = inputs_
 
-            # Removing the singleton dimensions from the array.
-            arrays[i] = arrays[i][idx]
+        # Removing the singleton dimensions from the array.
+        arrays[i] = arrays[i][idx]
 
-            # Removing the singleton dimensions from the shapes.
-            shapes[i] = arrays[i].shape
+        # Removing the singleton dimensions from the shapes.
+        shapes[i] = arrays[i].shape
 
     return inputs, shapes, arrays, size_dict
 
@@ -1486,7 +1534,7 @@ def braket_to_ctg_arguments(
 def contract_tensor_inbound_messages(
         braket: Braket,
         node: int,
-        neighbors: Tuple[int] = None,
+        neighbors: Iterable[int] = None,
         sanity_check: bool = False
     ) -> Union[float, np.ndarray]:
     """
@@ -1532,7 +1580,7 @@ def contract_tensor_inbound_messages(
         tuple(2*nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs + 1,)
     )
 
-    node_cntr = ctg.einsum(*args, optimize="greedy")
+    node_cntr = ctg.einsum(*args)
 
     return node_cntr
 
@@ -1591,7 +1639,7 @@ def __contract_tstack_physical_index(tstack: Tuple[np.ndarray]) -> np.ndarray:
 def contract_braket_physical_indices(
         braket: Union[Braket, BaseBraket],
         sanity_check: bool = False
-    ) -> Union[Braket, BaseBraket, nx.MultiGraph]:
+    ) -> Union[Braket, BaseBraket]:
     """
     Contracts the physical indices at each site. Returns a new braket,
     where the network is contained in `newbraket.ket`. Edge

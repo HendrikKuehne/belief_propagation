@@ -161,7 +161,7 @@ class PEPO:
             ] + [
                 ctg.get_symbol(N_edges + i),
                 ctg.get_symbol(N_edges + self.G.number_of_nodes() + i)
-            ] # last two indices are the physical legs
+            ] # Last two indices are the physical legs.
 
             for _, neighbor, edge_label in self.G.edges(
                 nbunch=node,
@@ -172,22 +172,19 @@ class PEPO:
             inputs += (legs,)
             tensors += (T,)
 
-        # output ordering
+        # Output ordering.
         output = tuple(
             ctg.get_symbol(i)
             for i in range(N_edges, N_edges + 2 * self.G.number_of_nodes())
         )
 
-        # getting the einsum expression, and contracting
+        # Getting the einsum expression, and contracting.
         expr = ctg.utils.inputs_output_to_eq(inputs=inputs, output=output)
         H = ctg.einsum(expr, *tensors)
-        H = np.reshape(
-            H,
-            newshape=(
-                self.D ** self.G.number_of_nodes(),
-                self.D ** self.G.number_of_nodes()
-            )
-        )
+
+        # Re-shaping into a dense matrix.
+        total_D = np.prod(tuple(self.D.values()))
+        H = np.reshape(H, newshape=(total_D, total_D))
 
         return H
 
@@ -213,16 +210,17 @@ class PEPO:
             # algorithm heavily relies on.
             chains = self.operator_chains(sanity_check=sanity_check)
 
-            H = scisparse.csr_array((self.D**self.nsites, self.D**self.nsites))
+            total_D = np.prod(tuple(self.D.values()))
+            H = scisparse.csr_array((total_D, total_D))
             nodes = tuple(sorted(self))
 
             for chain in chains:
                 ops = tuple(
                     scisparse.coo_array(chain[node]) if node in chain.keys()
-                    else scisparse.eye_array(self.D,format="coo")
+                    else scisparse.eye_array(self.D[node], format="coo")
                     for node in nodes[::-1]
                 )
-                H += multi_kron(*ops,create_using="scipy.coo")
+                H += multi_kron(*ops, create_using="scipy.coo")
 
             return H.tocsr()
 
@@ -277,13 +275,10 @@ class PEPO:
             )
             # Contraction using einsum.
             H = sparse.einsum(einsum_expr, *tensors)
-            H = sparse.reshape(
-                H,
-                shape=(
-                    self.D ** self.G.number_of_nodes(),
-                    self.D ** self.G.number_of_nodes()
-                )
-            )
+
+            # Re-shaping into a dense matrix.
+            total_D = np.prod(tuple(self.D.values()))
+            H = sparse.reshape(H, shape=(total_D, total_D))
 
             return H.to_scipy_sparse()
 
@@ -307,7 +302,7 @@ class PEPO:
         Prints all components of the tensor at node `node`.
         """
         # sanity check
-        assert node in self.G
+        assert node in self
 
         legs_in = tuple(
             self.G[node][neighbor][0]["legs"][node]
@@ -320,14 +315,15 @@ class PEPO:
 
         print("".join((
             f"Displaying node {node}:" + "\n    ",
-            f"legs {legs_in} incoming" + "\n    ",
-            f"legs {legs_out} outgoing" + "\n"
+            f"Physical dimension {self.D[node]}," + "\n    ",
+            f"legs {legs_in} incoming," + "\n    ",
+            f"legs {legs_out} outgoing." + "\n"
         )))
         for virtual_index in itertools.product(*[
             range(self[node].shape[i])
             for i in range(self[node].ndim - 2)
         ]):
-            index = virtual_index + (slice(0,self.D), slice(0,self.D))
+            index = virtual_index + (slice(self.D[node]), slice(self.D[node]))
 
             if not np.allclose(self.G.nodes[node]["T"][index], 0):
                 print(index[:-2], ":\n" ,self[node][index], "\n")
@@ -351,14 +347,15 @@ class PEPO:
 
     def traversal_tensor(
             self,
+            node: int,
             chi: Union[int, Iterable[int]],
             N_pas: int,
             N_out: int,
             dtype=np.complex128
         ) -> np.ndarray:
         """
-        Returns the minimum tensor for PEPOs, that is, a tensor that
-        ensures correct tree traversal.
+        Returns the minimum tensor for PEPO at node `node`, that is, a
+        tensor that ensures correct tree traversal.
 
         `T` has the canonical leg ordering: The first leg is the
         incoming leg, afterwards follow the passive legs, and finally
@@ -370,9 +367,11 @@ class PEPO:
         # sanity check
         assert N_pas >= 0
         assert N_out >= 0
+        assert node in self
 
         if isinstance(chi, int):
             return self.traversal_tensor(
+                node=node,
                 chi=tuple(chi for _ in range(1 + N_pas + N_out)),
                 N_pas=N_pas,
                 N_out=N_out,
@@ -390,7 +389,7 @@ class PEPO:
                 )
 
             T = np.zeros(
-                shape=[chi_ for chi_ in chi] + [self.D, self.D],
+                shape=[chi_ for chi_ in chi] + [self.D[node], self.D[node]],
                 dtype=dtype
             )
 
@@ -400,20 +399,20 @@ class PEPO:
                     chi_ - 1
                     for chi_ in chi
                 ) + [
-                    slice(0, self.D), slice(0, self.D)
+                    slice(self.D[node]), slice(self.D[node])
                 ]
                 index[0] = 0
                 index[1 + N_pas + i_out] = 0
-                T[tuple(index)] = self.I
+                T[tuple(index)] = self.I(node)
 
             # vacuum index
             index = tuple(
                 chi_ - 1
                 for chi_ in chi
             ) + (
-                slice(0, self.D), slice(0, self.D)
+                slice(self.D[node]), slice(self.D[node])
             )
-            T[index] = self.I
+            T[index] = self.I(node)
 
             return T
 
@@ -459,7 +458,7 @@ class PEPO:
         for iChain, chain in enumerate(operator_chains):
             # any identities in the chain?
             is_id = {
-                node: np.allclose(self[node][chain[node]], self.I)
+                node: np.allclose(self[node][chain[node]], self.I(node))
                 for node in chain.keys()
             }
 
@@ -523,7 +522,7 @@ class PEPO:
                     edges_to_indices=edges_to_indices,
                     sanity_check=sanity_check
                 ) + (
-                    slice(0, self.D), slice(0, self.D)
+                    slice(self.D[node]), slice(self.D[node])
                 )
 
             # Saving the chain.
@@ -532,7 +531,7 @@ class PEPO:
 
             return
 
-        # which edges have we not yet visited?
+        # Which edges have we not yet visited?
         if len(edges_to_indices) == 0:
             next_edges = tuple(edge for edge in self.G.edges(nbunch=self.root))
         else:
@@ -552,18 +551,21 @@ class PEPO:
         # which nodes belonog to the unvisited edges?
         next_nodes = set().union(*[set(edge) for edge in next_edges])
 
+        # Iterating over all virtual index combinations of the next (unvisited)
+        # edges.
         for neighbor_indices in itertools.product(*[
             range(self.G[edge[0]][edge[1]][0]["size"])
             for edge in next_edges]
         ):
-            # preparing the next iteration
+            # Preparing the chain that will be passed to the next recursion
+            # level.
             new_edges_to_indices = copy.deepcopy(edges_to_indices)
 
-            # adding new edge indices
+            # Adding new edge indices.
             for i, edge in enumerate(next_edges):
                 new_edges_to_indices[frozenset(edge)] = neighbor_indices[i]
 
-            # do these indices contain a zero-valued local operator?
+            # Do these indices contain a zero-valued local operator?
             zero_valued_chain = False
             for node in next_nodes:
                 if all_edges_present(
@@ -578,8 +580,9 @@ class PEPO:
                         edges_to_indices=new_edges_to_indices,
                         sanity_check=sanity_check
                     ) + (
-                        slice(0, self.D), slice(0,self.D)
+                        slice(self.D[node]), slice(self.D[node])
                     )
+
                     if np.allclose(self[node][index], 0):
                         # zero-valued index; this operator chain is zero;
                         # stopping recursion
@@ -674,31 +677,37 @@ class PEPO:
         if not graph_compatible(self.G, G, sanity_check=sanity_check):
             raise ValueError("Given graph is not compatible with self.G.")
 
-        # transposing site tensors
+        # Transposing site tensors.
         for node in self.G.nodes():
             N_neighbors = len(self.G.adj[node])
             # assembling axis for transpose
             axes = ([None for _ in range(N_neighbors)]
-                    + [N_neighbors, N_neighbors+1])
+                    + [N_neighbors, N_neighbors + 1])
 
             for neighbor in self.G.adj[node]:
                 leg = G[node][neighbor][0]["legs"][node]
                 axes[leg] = self.G[node][neighbor][0]["legs"][node]
 
-            self[node] = np.transpose(self[node],axes=axes)
+            self[node] = np.transpose(self[node], axes=axes)
 
         # updating leg orderings
-        for node1,node2 in self.G.edges():
+        for node1, node2 in self.G.edges():
             self.G[node1][node2][0]["legs"] = G[node1][node2][0]["legs"]
 
         if sanity_check: assert self.intact
 
         return
 
-    @property
-    def I(self) -> np.ndarray:
-        """Identity matrix with the dimensions `(self.D, self.D)`."""
-        return np.eye(self.D)
+    def I(self, node: int) -> np.ndarray:
+        """
+        Identity matrix with the dimensions `(self.D[node],
+        self.D[node])`.
+        """
+        # sanity check
+        if not node in self:
+            raise ValueError(f"Graph does not contain node {node}.")
+
+        return np.eye(self.D[node])
 
     @property
     def nsites(self) -> int:
@@ -718,7 +727,6 @@ class PEPO:
         * is the information flow in the tree intact?
         """
         # Are all the necessary attributes defined?
-        assert hasattr(self, "D")
         assert hasattr(self, "G")
         assert hasattr(self, "tree")
         assert hasattr(self, "root")
@@ -745,7 +753,15 @@ class PEPO:
                 return False
 
         # Are the physical legs the last dimension in each tensor?
-        for node, T in self.G.nodes(data="T"):
+        for node, data in self.G.nodes(data=True):
+            if not "T" in data.keys():
+                raise ValueError(f"No tensor in node {node}.")
+            if not "D" in data.keys():
+                raise ValueError(f"No physical dimension in node {node}.")
+
+            T = data["T"]
+            D = data["D"]
+
             legs = [leg for leg in range(T.ndim)]
             # Accounting for virtual dimensions.
             for node1, node2, key in self.G.edges(node, keys=True):
@@ -774,9 +790,13 @@ class PEPO:
                 )
                 return False
 
-            if not (T.shape[-2] == self.D and T.shape[-1] == self.D):
+            if not (T.shape[-2] == D and T.shape[-1] == D):
                 warnings.warn(
-                    f"Hilbert space at node {node} has wrong size.",
+                    "".join((
+                        f"Physical dimension mismatch at node {node}. ",
+                        f"Expected ({D}, {D}), tensor has ",
+                        f"({T.shape[-2]}, {T.shape[-1]})."
+                    )),
                     RuntimeWarning
                 )
                 return False
@@ -804,9 +824,9 @@ class PEPO:
                         else -1
                         for _ in range(self[node].ndim - 2)
                     ) + (
-                        slice(0, self.D), slice(0, self.D)
+                        slice(self.D[node]), slice(self.D[node])
                     )
-                    if not np.allclose(self[node][index], self.I):
+                    if not np.allclose(self[node][index], self.I(node=node)):
                         warnings.warn(
                             "".join((
                                 "Wrong indices for particle state ",
@@ -818,8 +838,8 @@ class PEPO:
 
                 # Checking if the vacuum state is passed along.
                 index = (tuple(-1 for _ in range(self[node].ndim - 2))
-                         + (slice(0, self.D), slice(0, self.D)))
-                if not np.allclose(self[node][index], self.I):
+                         + (slice(self.D[node]), slice(self.D[node])))
+                if not np.allclose(self[node][index], self.I(node=node)):
                     warnings.warn(
                         "".join((
                             "Wrong indices for vacuum state passthrough in ",
@@ -848,9 +868,9 @@ class PEPO:
                         else -1
                         for _ in range(self[node].ndim - 2)
                     ) + (
-                        slice(0, self.D), slice(0, self.D)
+                        slice(self.D[node]), slice(self.D[node])
                     )
-                    if np.allclose(self[node][index], self.I):
+                    if np.allclose(self[node][index], self.I(node=node)):
                         warnings.warn(
                             "".join((
                                 "Particle state passed along passive ",
@@ -867,8 +887,14 @@ class PEPO:
         """
         A PEPO is hermitian, if all it's site tensors are hermitian.
         """
-        # this test fails when I multiply two TFI PEPOs using PEPO.__matmul__,
-        # although dense matrix of TFI @ TFI is hermitian; TODO revise this
+        warnings.warn(
+            "".join((
+                "This hermiticity test fails when I multiply two TFI PEPOs ",
+                "using PEPO.__matmul__, although the dense matrix of TFI @ ",
+                "TFI is hermitian; TODO revise this"
+            )),
+            RuntimeWarning
+        )
 
         # site tensors hermitian?
         for node in self.G.nodes():
@@ -882,23 +908,34 @@ class PEPO:
 
         return True
 
+    @property
+    def D(self) -> Dict[int, int]:
+        """Physical dimension at every node."""
+        return {
+            node: self.G.nodes[node]["D"]
+            for node in self
+        }
+
     @staticmethod
-    def view_tensor(T:np.ndarray):
+    def view_tensor(T: np.ndarray):
         """
-        Prints all extractable information from tensor `T`
+        Prints all extractable information from PEPO tensor `T`.
         """
         D = T.shape[-1]
         # sanity check
-        for i in range(T.ndim):
-            if i >= T.ndim - 2:
-                assert T.shape[i] == D
+        for i in range(T.ndim - 2, T.ndim):
+            if not T.shape[i] == D:
+                raise ValueError("".join((
+                    f"Tensor T has wrong shape in leg {i}. Expected {D}, "
+                    f"got {T.shape[i]}."
+                )))
 
         # printing cellular automaton components
         for virtual_index in itertools.product(*[
             range(T.shape[i])
             for i in range(T.ndim - 2)
         ]):
-            index = virtual_index + (slice(0, D), slice(0, D))
+            index = virtual_index + (slice(D), slice(D))
 
             if not np.allclose(T[index], 0):
                 print(index[:-2], ":\n", T[index], "\n")
@@ -907,12 +944,14 @@ class PEPO:
     def prepare_graph(
             G: nx.MultiGraph,
             chi: int = None,
+            D: Union[int, Dict[int, int]] = None,
             sanity_check: bool = False
         ) -> nx.MultiGraph:
         """
         Creates a shallow copy of G, and adds the keys `legs`, `trace`
-        and `indices` to the edges. If `np.isnan(chi)` is False, the
-        size `chi` will be added to each edge.
+        and `indices` to the edges. If given, the size `chi` will be
+        added to each edge. If Given, physical dimensions will be added
+        to the nodes.
 
         The leg ordering is preserved, `trace` is set to `False` and,
         accordingly, `indices` to `None`.
@@ -924,7 +963,7 @@ class PEPO:
         newG = nx.MultiGraph(G.edges())
 
         # adding additional information to every edge
-        for node1, node2, legs in newG.edges(data="legs", keys=False):
+        for node1, node2 in newG.edges(keys=False):
             newG[node1][node2][0]["trace"] = False
             newG[node1][node2][0]["indices"] = None
             newG[node1][node2][0]["legs"] = {}
@@ -948,6 +987,29 @@ class PEPO:
                 for node1, node2 in newG.edges(keys=False):
                     newG[node1][node2][0]["size"] = chi
 
+        if D is not None:
+            if np.isscalar(D):
+                # Preparing physical dimensions.
+                D = {node: D for node in G}
+
+            else:
+                # Sanity check for physical dimensions.
+                if not isinstance(D, dict):
+                    raise ValueError("".join((
+                        "Physical dimensions must be given as dictionary, ",
+                        "where the local physical dimension is given for ",
+                        "every node."
+                    )))
+
+                if not nx.utils.nodes_equal(
+                    nodes1=G.nodes(),
+                    nodes2=D.keys()
+                ):
+                    raise ValueError("Nodes in D don't match nodes in graph.")
+
+            for node in G:
+                newG.nodes[node]["D"] = D[node]
+
         if sanity_check: assert network_message_check(newG)
 
         return newG
@@ -965,13 +1027,15 @@ class PEPO:
         a tree `tree` that determines the graph traversal by the finite
         state automaton.
         """
-        # inferring physical dimension
-        D = tuple(T.shape[-1] for node, T in G.nodes(data="T"))[0]
-        # inferring root node
+        # Inferring physical dimension.
+        for node, T in G.nodes(data="T"):
+            G.nodes[node]["D"] = T.shape[-1]
+
+        # Inferring root node.
         root = sorted(tuple(tree.nodes), key=lambda x:len(tree.pred[x]))[0]
 
         # initialising the new PEPO
-        op = cls(D=D)
+        op = cls()
         op.G = G
         op.tree = tree
         op.root = root
@@ -979,25 +1043,6 @@ class PEPO:
 
         if sanity_check: assert op.intact
         return op
-
-    def __init__(self, D: int) -> None:
-        self.D = D
-        """Physical dimension."""
-        self.G: nx.MultiGraph
-        """Grapth that contains PEPO local tensors."""
-        self.tree: nx.DiGraph
-        """Spanning tree of the graph."""
-        self.root: int
-        """Root node of the spanning tree."""
-        self.check_tree: bool = True
-        """
-        False if this PEPO is the result of a summation. Means that the
-        tree traversal checks in `self.intact` are disabled.
-        """
-        # TODO: I don't like that I have to disable the tree traversal checks;
-        # maybe find a workaround?
-
-        return
 
     def __getitem__(self, node: int) -> np.ndarray:
         """
@@ -1043,11 +1088,11 @@ class PEPO:
         if not np.isscalar(x): raise ValueError("x must be a scalar.")
         newPEPO = copy.deepcopy(self)
 
-        # since we are inserting additional factors into the PEPO, the tree
-        # traversal check will fail
+        # If we insert additional factors into the PEPO, the tree traversal
+        # check will fail.
         newPEPO.check_tree = False
 
-        # what we ae really doing is multiplying every operator chain by x;
+        # What we are really doing is multiplying every operator chain by x;
         # this is more computationaly intensive, but has the advantage that the
         # sanity check still works (otherwise, identity operators would be
         # multiplied by x, which makes the sanity check fail)
@@ -1075,29 +1120,27 @@ class PEPO:
             # do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024)
             # (https://doi.org/10.1126/sciadv.adk4321)
 
-            # returns newPEPO, where newPEPO = self @ psi
+            # Returns newPEPO, where newPEPO = self @ psi.
 
             # sanity checks
             if not graph_compatible(self.G, psi.G, sanity_check=True):
                 raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
 
             if not same_legs(self.G, psi.G):
-                # permute lhs virtual dimensions s.t. they match the leg
-                # ordering of the rhs
+                # Permute lhs virtual dimensions s.t. they match the leg
+                # ordering of the rhs.
                 self._permute_virtual_dimensions(psi.G)
 
             newPEPO = copy.deepcopy(self)
 
-            # new sizes
-            for node1, node2 in newPEPO.G.edges():
-                rhs_edge_size = psi.G[node1][node2][0]["size"]
+            # New sizes.
+            for node1, node2, rhs_edge_size in psi.G.edges(data="size"):
                 newPEPO.G[node1][node2][0]["size"] *= rhs_edge_size
 
-            # multiplying site tensors
+            # Multiplying site tensors.
             for node in self.G.nodes():
                 N_neighbors = len(self.G.adj[node])
 
-                # multiplying site tensors
                 lhs_legs = (tuple(range(N_neighbors))
                             + (2*N_neighbors + 2, 2*N_neighbors + 1))
                 rhs_legs = (tuple(range(N_neighbors, 2 * N_neighbors))
@@ -1106,7 +1149,7 @@ class PEPO:
                     i + j*N_neighbors
                     for i, j in itertools.product(
                         range(N_neighbors),
-                        (0,1)
+                        (0, 1)
                     )
                 ) + (
                     2*N_neighbors + 2, 2*N_neighbors
@@ -1118,14 +1161,14 @@ class PEPO:
                     out_legs
                 )
 
-                # preparing a re-shape
+                # Preparing a re-shape.
                 newshape = ([None for _ in range(N_neighbors)]
-                            + [newPEPO.D, newPEPO.D])
+                            + [newPEPO.D[node], newPEPO.D[node]])
                 for neighbor in newPEPO.G.adj[node]:
                     leg = newPEPO.G[node][neighbor][0]["legs"][node]
                     newshape[leg] = newPEPO.G[node][neighbor][0]["size"]
 
-                # inserting the re-shaped tensor
+                # Inserting the re-shaped tensor.
                 newPEPO[node] = np.reshape(T, newshape=newshape)
 
             return newPEPO
@@ -1135,7 +1178,7 @@ class PEPO:
             # do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024)
             # (https://doi.org/10.1126/sciadv.adk4321)
 
-            # the action of self on psi is computed, and the new PEPS is
+            # The action of self on psi is computed, and the new PEPS is
             # returned. It will inherit the leg ordering from psi.
 
             # sanity checks
@@ -1143,30 +1186,28 @@ class PEPO:
                 raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
 
             if not same_legs(self.G, psi.G):
-                # permute PEPO virtual dimensions s.t. they match the leg
-                # ordering of the PEPS
+                # Permute PEPO virtual dimensions s.t. they match the leg
+                # ordering of the PEPS.
                 self._permute_virtual_dimensions(psi.G)
 
             newPEPS = copy.deepcopy(psi)
 
-            # new sizes
-            for node1,node2 in newPEPS.G.edges():
-                rhs_edge_size = self.G[node1][node2][0]["size"]
+            # New sizes.
+            for node1, node2, rhs_edge_size in self.G.edges(data="size"):
                 newPEPS.G[node1][node2][0]["size"] *= rhs_edge_size
 
-            # multiplying site tensors
+            # Multiplying site tensors.
             for node in self.G.nodes():
                 N_neighbors = len(self.G.adj[node])
 
-                # multiplying site tensors
                 op_legs = (tuple(range(N_neighbors))
                            + (2*N_neighbors + 1, 2*N_neighbors))
                 ket_legs = tuple(range(N_neighbors, 2*N_neighbors + 1))
                 out_legs = tuple(
                     i + j*N_neighbors
-                    for i,j in itertools.product(
+                    for i, j in itertools.product(
                         range(N_neighbors),
-                        (0,1)
+                        (0, 1)
                     )
                 ) + (
                     2*N_neighbors + 1,
@@ -1177,13 +1218,13 @@ class PEPO:
                     out_legs
                 )
 
-                # preparing a re-shape
-                newshape = [None for _ in range(N_neighbors)] + [newPEPS.D,]
+                # Preparing a re-shape.
+                newshape = [None for _ in range(N_neighbors)] + [newPEPS.D[node],]
                 for neighbor in newPEPS.G.adj[node]:
                     leg = newPEPS.G[node][neighbor][0]["legs"][node]
                     newshape[leg] = newPEPS.G[node][neighbor][0]["size"]
 
-                # inserting the re-shaped tensor
+                # Inserting the re-shaped tensor.
                 newPEPS[node] = np.reshape(T, newshape=newshape)
 
             return newPEPS
@@ -1191,18 +1232,19 @@ class PEPO:
         if isinstance(psi, np.ndarray):
             # sanity check
             if not psi.ndim == 1: raise ValueError("psi must be a vector.")
-            if not psi.shape[0] == self.D ** self.nsites:
+            total_D = np.prod(tuple(self.D.values()))
+            if not psi.shape[0] == total_D:
                 raise ValueError("".join((
                     "psi has the wrong number of ",
-                    f"components. Expected {self.D ** self.nsites}, got ",
+                    f"components. Expected {total_D}, got ",
                     f"{psi.shape[0]}."
                 )))
 
-            # re-shaping. Order of sites will be determined by the order in
-            # which self.G.nodes() iterates through the graph
+            # re-shaping. Order of sites will be determined by ascending order
+            # of node labels.
             psi = np.reshape(
                 psi,
-                newshape=[self.D for _ in range(self.nsites)]
+                newshape=[self.D[node] for node in sorted(self)]
             )
 
             # enumerating the edges in the graph
@@ -1256,18 +1298,8 @@ class PEPO:
         # of what's going on.
 
         # sanity check
-        if not nx.utils.nodes_equal(lhs.G.nodes(), rhs.G.nodes()):
-            raise ValueError(
-                "Operands have different geometries; nodes do not match."
-            )
-        if not nx.utils.edges_equal(lhs.G.edges(), rhs.G.edges()):
-            raise ValueError(
-                "Operands have different geometries; edges do not match."
-            )
-        if not lhs.D == rhs.D:
-            raise ValueError(
-                "Operands must have the same physical dimensions."
-            )
+        if not graph_compatible(lhs.G, rhs.G):
+            raise ValueError("Graphs of lhs and rhs cannot be combined.")
         if not nx.utils.graphs_equal(lhs.tree, rhs.tree):
             warnings.warn(
                 "".join((
@@ -1281,7 +1313,7 @@ class PEPO:
             # Permute dimensions of lhs to make both PEPOs compatible.
             lhs._permute_virtual_dimensions(rhs.G)
 
-        res = PEPO(D=lhs.D)
+        res = PEPO()
         res.root = lhs.root
         res.tree = lhs.tree
 
@@ -1290,7 +1322,7 @@ class PEPO:
         # see TODO in README.
 
         # Graph for the result with correct legs and sizes.
-        res.G = PEPO.prepare_graph(lhs.G)
+        res.G = PEPO.prepare_graph(lhs.G, D=lhs.D)
 
         # Saving new sizes in the edges.
         for node1, node2 in res.G.edges():
@@ -1303,14 +1335,14 @@ class PEPO:
                  + rhs.G[node][neighbor][0]["size"])
                 for neighbor in res.G.adj[node]
             ) + (
-                res.D, res.D
+                res.D[node], res.D[node]
             )
             T = np.zeros(shape=shape, dtype=np.complex128)
             index_lhs = tuple(
-                slice(0, lhs.G[node][neighbor][0]["size"])
+                slice(lhs.G[node][neighbor][0]["size"])
                 for neighbor in res.G.adj[node]
             ) + (
-                slice(0, res.D), slice(0, res.D)
+                slice(res.D[node]), slice(res.D[node])
             )
             index_rhs = tuple(
                 slice(
@@ -1320,7 +1352,7 @@ class PEPO:
                 )
                 for neighbor in res.G.adj[node]
             ) + (
-                slice(0, res.D), slice(0, res.D)
+                slice(res.D[node]), slice(res.D[node])
             )
             T[index_lhs] = lhs.G.nodes[node]["T"]
             T[index_rhs] = rhs.G.nodes[node]["T"]
@@ -1333,8 +1365,7 @@ class PEPO:
 
     def __repr__(self) -> str:
         return "".join((
-            f"Operator on {self.nsites} sites with Hilbert space of size ",
-            f"{self.D} at each. PEPO is ",
+            f"Operator on {self.nsites} sites. PEPO is ",
             "intact." if self.intact else "not intact."
         ))
 
@@ -1349,6 +1380,26 @@ class PEPO:
     def __contains__(self, node: int) -> bool:
         """Does the graph `self.G` contain the node `node`?"""
         return self.G.has_node(node)
+
+    def __init__(self) -> None:
+        self.G: nx.MultiGraph
+        """
+        Graph that contains PEPO local tensors, leg ordering, virtual
+        bond dimension sizes, and physical dimensions.
+        """
+        self.tree: nx.DiGraph
+        """Spanning tree of the graph."""
+        self.root: int
+        """Root node of the spanning tree."""
+        self.check_tree: bool = True
+        """
+        False if this PEPO is the result of a summation. Means that the
+        tree traversal checks in `self.intact` are disabled.
+        """
+        # TODO: I don't like that I have to disable the tree traversal checks;
+        # maybe find a workaround?
+
+        return
 
 
 class PauliPEPO(PEPO):
@@ -1373,7 +1424,7 @@ class PauliPEPO(PEPO):
         """
         if not super().intact: return False
 
-        if not self.D == 2:
+        if not all(self.D[node] == 2 for node in self):
             warnings.warn("Physical dimension unequal to two.", RuntimeWarning)
             return False
 
@@ -1383,13 +1434,13 @@ class PauliPEPO(PEPO):
                 range(T.shape[i])
                 for i in range(T.ndim - 2)
             ]):
-                index = virtual_index + (slice(0, self.D), slice(0, self.D))
+                index = virtual_index + (slice(2), slice(2))
 
                 if np.allclose(T[index], 0): continue
 
                 proportional_to_pauli = [
                     proportional(T[index], op, 10)
-                    for op in (self.X, self.Y, self.Z, self.I)
+                    for op in (self.X, self.Y, self.Z, self.I(node=node))
                 ]
 
                 if not any(proportional_to_pauli):
@@ -1405,7 +1456,7 @@ class PauliPEPO(PEPO):
         return True
 
     def __init__(self) -> None:
-        super().__init__(2)
+        super().__init__()
 
         return
 

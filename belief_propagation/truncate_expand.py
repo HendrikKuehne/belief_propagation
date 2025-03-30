@@ -313,7 +313,7 @@ def L2BP_compression(
     """
     if sanity_check: assert psi.intact
 
-    # preparing target edge sizes
+    # Preparing target edge sizes.
     if not isinstance(min_bond_dim, nx.MultiGraph):
         min_bond_dim = PEPO.prepare_graph(
             G=psi.G, chi=min_bond_dim, sanity_check=sanity_check
@@ -332,7 +332,7 @@ def L2BP_compression(
             "Maximum bond dimension and state have non-compatible graphs."
         )
 
-    # checking compatibility of sizes in min_bond_dim and max_bond_dim.
+    # Checking compatibility of sizes in min_bond_dim and max_bond_dim.
     for node1, node2 in psi.G.edges():
         if (min_bond_dim[node1][node2][0]["size"]
             > max_bond_dim[node1][node2][0]["size"]):
@@ -347,7 +347,7 @@ def L2BP_compression(
             )
             max_bond_dim[node1][node2][0]["size"] = np.inf
 
-    # handling kwargs.
+    # Handling kwargs.
     if "iterator_desc_prefix" in kwargs.keys():
         kwargs["iterator_desc_prefix"] = "".join((
             kwargs["iterator_desc_prefix"],
@@ -357,6 +357,7 @@ def L2BP_compression(
         kwargs["iterator_desc_prefix"] = "L2BP compression"
 
     if overlap is not None:
+        # Sanity check for braket.
         if not isinstance(overlap, Braket):
             raise ValueError("Overlap is not a braket object!")
         if sanity_check: assert overlap.intact
@@ -368,26 +369,26 @@ def L2BP_compression(
             overlap = None
 
     if overlap is None:
-        # BP iteration
+        # BP iteration, to obtain converged messages.
         overlap = Braket.Overlap(psi, psi, sanity_check=sanity_check)
         overlap.BP(**kwargs, verbose=verbose, sanity_check=sanity_check)
 
     all_singvals = {}
 
-    # newly compressed state
+    # Newly compressed state, which we will return later.
     newpsi = copy.deepcopy(psi)
 
-    # runtime diagnosis
+    # Runtime information.
     old_sizes = ()
     new_sizes = ()
 
-    # compressing every edge.
+    # Compressing every edge.
     for node1, node2 in psi.G.edges():
         size = overlap.ket.G[node1][node2][0]["size"]
         ndim1 = psi.G.nodes[node1]["T"].ndim
         ndim2 = psi.G.nodes[node2]["T"].ndim
 
-        # get messages
+        # Get messages.
         msg_12 = np.reshape(
             overlap.msg[node1][node2][:,0,:], newshape=(size, size)
         )
@@ -395,9 +396,9 @@ def L2BP_compression(
             overlap.msg[node2][node1][:,0,:], newshape=(size, size)
         )
 
-        # splitting the messages.
-        eigvals1,W1 = scialg.eig(msg_12, overwrite_a=True)
-        eigvals2,W2 = scialg.eig(msg_21, overwrite_a=True)
+        # Splitting the messages, using SVD.
+        eigvals1, W1 = scialg.eig(msg_12, overwrite_a=True)
+        eigvals2, W2 = scialg.eig(msg_21, overwrite_a=True)
         R1 = np.diag(np.sqrt(eigvals1)) @ W1.conj().T
         R2 = np.diag(np.sqrt(eigvals2)) @ W2.conj().T
 
@@ -406,20 +407,22 @@ def L2BP_compression(
             R1 @ R2, full_matrices=False, overwrite_a=True
         )
 
-        # saving singular values
+        # Saving singular values.
         all_singvals[frozenset((node1, node2))] = singvals
 
-        # for numerical stability, we have to drop all zero singular values.
+        # For numerical stability, we have to drop all zero singular values.
         nonzero_mask = singvals != 0
-        # singular values we want to keep, based on singval_threshold.
+        # Singular values we want to keep, based on singval_threshold.
         threshold_mask = np.logical_not(
             np.isclose(singvals, 0, atol=singval_threshold)
         )
-        # singular values we want to keep, based on the maximum size of this
+        # Singular values we want to keep, based on the maximum size of this
         # edge.
         maxsize_mask = (np.arange(len(singvals))
                         < max_bond_dim[node1][node2][0]["size"])
 
+        # We only keep singular values where all of the above conditions are
+        # met.
         keep_mask = np.logical_and(
             np.logical_and(
                 nonzero_mask,
@@ -428,7 +431,7 @@ def L2BP_compression(
             maxsize_mask
         )
 
-        # saving values for diagnostics
+        # Saving values for runtime information.
         old_sizes += (len(keep_mask),)
         new_sizes += (sum(keep_mask),)
 
@@ -436,7 +439,7 @@ def L2BP_compression(
             raise RuntimeError(f"Edge ({node1}, {node2}) is zero-valued.")
 
         if np.sum(keep_mask) < min_bond_dim[node1][node2][0]["size"]:
-            # the singular value threshold is too restrictive
+            # The singular value threshold is too restrictive.
             for i in range(min(
                 min_bond_dim[node1][node2][0]["size"],
                 sum(nonzero_mask)
@@ -447,7 +450,7 @@ def L2BP_compression(
         Vh = Vh[keep_mask,:]
         singvals = singvals[keep_mask]
 
-        # projectors
+        # Projectors on the SVD subspace that we keep.
         P1 = np.einsum(
             "ij,jk,kl->il",
             R2,
@@ -463,7 +466,7 @@ def L2BP_compression(
             optimize=True
         )
 
-        # absorbing projector 1 into node 1
+        # Absorbing projector 1 into node 1.
         Tlegs = tuple(range(ndim1))
         Plegs = (overlap.ket.G[node1][node2][0]["legs"][node1], ndim1)
         outlegs = list(range(ndim1))
@@ -475,7 +478,7 @@ def L2BP_compression(
             optimize=True
         )
 
-        # absorbing projector 2 into node 2
+        # Absorbing projector 2 into node 2.
         Tlegs = tuple(range(ndim2))
         Plegs = (ndim2, overlap.ket.G[node1][node2][0]["legs"][node2])
         outlegs = list(range(ndim2))
@@ -487,10 +490,11 @@ def L2BP_compression(
             optimize=True
         )
 
-        # updating size of edge
+        # Updating size of edge.
         newpsi.G[node1][node2][0]["size"] = P1.shape[1]
 
     if verbose:
+        # Printing runtime information.
         compression_ratios = tuple(
             (old_sizes[i] - new_sizes[i]) / old_sizes[i]
             for i in range(len(old_sizes)))
@@ -529,7 +533,7 @@ def QR_gauging(
     if sanity_check: assert psi.intact
 
     if tree is None:
-        # orthogonality center will be the node with the largest number of
+        # Orthogonality center will be the node with the largest number of
         # neighborhoods.
         ortho_center = 0
         max_degree = 0
@@ -539,11 +543,13 @@ def QR_gauging(
                 max_degree = len(psi.G.adj[node])
         tree = nx.bfs_tree(G=psi.G, source=ortho_center)
     else:
+        # Sanity check for tree.
         if not isinstance(tree, nx.DiGraph):
             raise ValueError("tree must be an oriented graph.")
         if not nx.is_tree(tree):
             raise ValueError("Given spanning tree is not actually a tree.")
-        # finding the orthogonality center.
+
+        # Finding the orthogonality center.
         ortho_center = None
         for node in tree.nodes():
             if tree.in_degree(node) == 0:
@@ -554,19 +560,19 @@ def QR_gauging(
 
     newpsi = copy.deepcopy(psi)
 
-    # QR decompositions in upstream direction of the tree
+    # QR decompositions in upstream direction of the tree.
     for node in nx.dfs_postorder_nodes(tree, source=ortho_center):
         if node not in nodes: continue
 
         if node == ortho_center:
-            # we have reached the source
+            # We have reached the source.
             continue
 
-        # finding the upstream neighbor
         assert tree.in_degree(node) == 1
+        # Finding the upstream neighbor.
         pred = [_ for _ in tree.pred[node]][0]
 
-        # exposing the upstream leg of the site tensor, and re-shaping
+        # Exposing the upstream leg of the site tensor, and re-shaping.
         T_exposed = np.moveaxis(
             newpsi[node],
             source=newpsi.G[pred][node][0]["legs"][node],
@@ -578,10 +584,10 @@ def QR_gauging(
             newshape=(-1, newpsi.G[pred][node][0]["size"])
         )
 
-        # QR decomposition
+        # QR decomposition.
         Q, R = np.linalg.qr(T_exposed, mode="reduced")
 
-        # re-shaping Q, and inserting into the state.
+        # Re-shaping Q, and inserting into the state.
         Q = np.reshape(Q, newshape=oldshape)
         Q = np.moveaxis(
             Q,
@@ -590,7 +596,7 @@ def QR_gauging(
         )
         newpsi[node] = Q
 
-        # absorbing R into upstream node.
+        # Absorbing R into upstream node.
         upstream_legs = tuple(range(newpsi[pred].ndim))
         out_legs = tuple(
             newpsi[pred].ndim if i == newpsi.G[pred][node][0]["legs"][pred]
@@ -622,7 +628,11 @@ def feynman_cut(
 
     if isinstance(obj, PEPS):
         oldG = copy.deepcopy(obj. G)
+
+        # Exposing the edge for easier access.
         expose_edge(oldG, node1=node1, node2=node2, sanity_check=sanity_check)
+
+        # Defining slice indices.
         leg1 = oldG[node1][node2][0]["legs"][node1]
         leg2 = oldG[node1][node2][0]["legs"][node2]
         idx1 = lambda i: tuple(
@@ -639,16 +649,24 @@ def feynman_cut(
         res_objs = ()
         for i in range(obj.G[node1][node2][0]["size"]):
             newG = copy.deepcopy(oldG)
-            newG.remove_edge(node1,node2,key=0)
+            newG.remove_edge(node1, node2, key=0)
+
+            # Slicing edge.
             newG.nodes[node1]["T"] = oldG.nodes[node1]["T"][idx1(i)]
             newG.nodes[node2]["T"] = oldG.nodes[node2]["T"][idx2(i)]
-            res_objs += (PEPS(newG, sanity_check=sanity_check),)
+
+            # Saving the new state.
+            res_objs += (PEPS(G=newG, sanity_check=sanity_check),)
 
         return res_objs
 
     if isinstance(obj, PEPO):
         oldG = copy.deepcopy(obj.G)
+
+        # Exposing the edge for easier access.
         expose_edge(oldG, node1=node1, node2=node2, sanity_check=sanity_check)
+
+        # Defining slice indices.
         leg1 = oldG[node1][node2][0]["legs"][node1]
         leg2 = oldG[node1][node2][0]["legs"][node2]
         idx1 = lambda i: tuple(
@@ -666,11 +684,15 @@ def feynman_cut(
         for i in range(obj.G[node1][node2][0]["size"]):
             newG = copy.deepcopy(oldG)
             newG.remove_edge(node1,node2,key=0)
+
+            # Slicing edge.
             newG.nodes[node1]["T"] = oldG.nodes[node1]["T"][idx1(i)]
             newG.nodes[node2]["T"] = oldG.nodes[node2]["T"][idx2(i)]
+
+            # Saving the new operator.
             res_objs += (PEPO.from_graphs(
-                newG,
-                obj.tree,
+                G=newG,
+                tree=obj.tree,
                 check_tree=False,
                 sanity_check=sanity_check
             ),)
@@ -678,6 +700,8 @@ def feynman_cut(
         return res_objs
 
     if isinstance(obj,Braket):
+        # Cutting an edge is defined as cutting the respective edge in the
+        # constituent bra, operator, and ket.
         bra_cuts = feynman_cut(
             obj.bra, node1, node2, sanity_check=sanity_check
         )
@@ -689,8 +713,14 @@ def feynman_cut(
         )
 
         res_objs = ()
+        # Combining all possible slices.
         for bra, op, ket in itertools.product(bra_cuts, op_cuts, ket_cuts):
-            res_objs += (Braket(bra, op, ket, sanity_check=sanity_check),)
+            res_objs += (Braket(
+                bra=bra,
+                op=op,
+                ket=ket,
+                sanity_check=sanity_check
+            ),)
 
         return res_objs
 
@@ -790,7 +820,7 @@ def loop_series_contraction(
         exc_weight = excitation.number_of_edges()
         iterator.set_postfix_str(f"Current exc. weight = {exc_weight}")
 
-        cntr_ = __compute_BP_excitation(
+        cntr_ = __compute_BP_excitation_densebraket(
             braket=densebraket,
             excitation=excitation,
             sanity_check=sanity_check
@@ -825,7 +855,7 @@ def __check_contracted_physical_dims(
     return True
 
 
-def __compute_BP_excitation(
+def __compute_BP_excitation_densebraket(
         braket: Braket,
         excitation: nx.MultiGraph,
         sanity_check: bool = False,
@@ -835,8 +865,8 @@ def __compute_BP_excitation(
     Computes the contribution of the excitation `excitation`. Method
     taken from [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
     `excitation` contains the excited edges, `braket` contains the
-    tensor network, the projectors and the messages. `kwargs` are passed
-    to `Braket.contract`.
+    tensor network with contracted physical dimensions, the projectors
+    and the messages. `kwargs` are passed to `Braket.contract`.
     """
     assert __check_contracted_physical_dims(braket, sanity_check=sanity_check)
 
@@ -849,7 +879,7 @@ def __compute_BP_excitation(
         # For disjoint excitations, the contribution is the product of the
         # components.
         return np.prod(tuple(
-            __compute_BP_excitation(
+            __compute_BP_excitation_densebraket(
                 braket=braket,
                 excitation=exc,
                 sanity_check=sanity_check,
@@ -890,6 +920,126 @@ def __compute_BP_excitation(
             neighbor = (set(braket.G.adj[node])
                         - (set(G.adj[node]))).pop()
             leg = braket.G[node][neighbor][0]["legs"][node]
+
+            # Inserting a new node that contains the respective message, and
+            # connecting it to the graph.
+            G.add_node(
+                node_for_adding=next_node_label,
+                T=braket.msg[neighbor][node][0,0,:]
+            )
+            G.add_edge(
+                u_for_edge=node,
+                v_for_edge=next_node_label,
+                legs={node: leg, next_node_label: 0},
+            )
+
+    # Inserting projectors as nodes on the excited edges.
+    for node1, node2 in excitation.edges():
+        # Parameters of this edge, and the node we will add: edge legs, size,
+        # and the label of the next node.
+        leg1 = G[node1][node2][0]["legs"][node1]
+        leg2 = G[node1][node2][0]["legs"][node2]
+        next_node_label = max(node_ for node_ in G) + 1
+
+        # Adding a node that contains the projector, and connecting it to the
+        # graph.
+        G.add_node(
+            node_for_adding=next_node_label,
+            T=braket.edge_T[node1][node2][0,0,:,0,0,:]
+        )
+        G.add_edge(
+            u_for_edge=node1,
+            v_for_edge=next_node_label,
+            legs={node1: leg1, next_node_label: 1},
+        )
+        G.add_edge(
+            u_for_edge=node2,
+            v_for_edge=next_node_label,
+            legs={node2: leg2, next_node_label: 0},
+        )
+
+        # Removing the old edge.
+        G.remove_edge(node1, node2)
+
+    # Constructing a new braket for this excitation, and contracting it to get
+    # the contribution of this excitation.
+    exc_braket = Braket.Cntr(G=G, sanity_check=sanity_check)
+    cntr = exc_braket.contract(sanity_check=sanity_check, **kwargs)
+
+    return cntr
+
+
+def __compute_BP_excitation(
+        braket: Braket,
+        excitation: nx.MultiGraph,
+        sanity_check: bool = False,
+        **kwargs
+    ) -> float:
+    """
+    Computes the contribution of the excitation `excitation`. Method
+    taken from [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
+    `excitation` contains the excited edges, `braket` contains the
+    tensor network, the projectors and the messages. `kwargs` are passed
+    to `Braket.contract`.
+    """
+    raise NotImplementedError("WORK IN PROGRESS")
+
+    if not nx.is_connected(G=excitation):
+        connected_excitations = tuple(
+            excitation.subgraph(component)
+            for component in nx.connected_components(excitation)
+        )
+
+        # For disjoint excitations, the contribution is the product of the
+        # components.
+        return np.prod(tuple(
+            __compute_BP_excitation(
+                braket=braket,
+                excitation=exc,
+                sanity_check=sanity_check,
+                **kwargs
+            )
+            for exc in connected_excitations
+        ))
+
+    # How will this work under the hood? We truncate the network. All edges
+    # that are not contained in the excitation will be removed, and new edges
+    # will be added that connect the messages that flow into the excitation.
+    # On the excitations edges we add the projectors.
+
+    # The set of nodes inside the excitation, and the set of edges that are not
+    # excited.
+    excitation_nodes = set(excitation.nodes())
+    non_excitation_nodes = set(braket.G.nodes()) - excitation_nodes
+    non_excitation_edges = nx.MultiGraph(incoming_graph_data=braket.G.edges())
+    non_excitation_edges.remove_edges_from(excitation.edges())
+
+    # The graphs that we will use to construct a new braket.
+    G_bra = copy.deepcopy(braket.bra.G)
+    G_op = copy.deepcopy(braket.op.G)
+    G_ket = copy.deepcopy(braket.ket.G)
+
+    # Removing nodes and edges that are not present in the excitation.
+    for G in (G_bra, G_op, G_ket):
+        G.remove_edges_from(non_excitation_edges.edges())
+        G.remove_nodes_from(non_excitation_nodes)
+
+    for node in excitation_nodes:
+        # Inserting messages as new sites in the graph.
+        while G.nodes[node]["T"].ndim > len(G.adj[node]):
+            # If this is the case, there are dangling tensor legs to which no
+            # message is attached. Identifying the dangling neighbor, and the
+            # tensor leg it connects to.
+            next_node_label = max(node_ for node_ in G) + 1
+            neighbor = (set(braket.G.adj[node])
+                        - (set(G.adj[node]))).pop()
+            leg = braket.G[node][neighbor][0]["legs"][node]
+
+            # The new node will contain a message that is inbound to the
+            # excitation. Since messages are dense tensors, the message will be
+            # inserted into the operator graph, and it's dimensions will be
+            # permuted s.t. the operator leg is the first leg.
+            #op_T = 
 
             # Inserting a new node that contains the respective message, and
             # connecting it to the graph.
