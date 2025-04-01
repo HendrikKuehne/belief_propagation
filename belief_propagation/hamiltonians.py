@@ -49,7 +49,7 @@ class TFI(PauliPEPO):
 
         T = self.traversal_tensor(node=node, chi=3, N_pas=N_pas, N_out=N_out)
 
-        # transverse field
+        # Transverse field.
         index = ((0,)
                  + tuple(-1 for _ in range(N_pas + N_out))
                  + (slice(2), slice(2)))
@@ -85,7 +85,7 @@ class TFI(PauliPEPO):
             child = node2
             parent = node1
 
-        # first particle decay stage at this edge; at parent node.
+        # First particle decay stage at this edge; at parent node.
         if parent != self.root:
             grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
             index = tuple(
@@ -95,7 +95,7 @@ class TFI(PauliPEPO):
                 for i in range(self[parent].ndim - 2)
             ) + (slice(2), slice(2))
         else:
-            # the incoming leg of the root node is a boundary leg, and thus
+            # The incoming leg of the root node is a boundary leg, and thus
             # located just before the physical legs. This is why this case
             # distinction is necessary.
             index = tuple(
@@ -105,7 +105,7 @@ class TFI(PauliPEPO):
             ) + (0, slice(2), slice(2))
         self[parent][index] = Jz * self.Z
 
-        # second particle decay stage at this edge; at child node
+        # Second particle decay stage at this edge; at child node.
         index = tuple(
             1 if i == self.G[parent][child][0]["legs"][child]
             else 2
@@ -139,20 +139,20 @@ class TFI(PauliPEPO):
             sanity_check=sanity_check
         )
 
-        # root node is node with smallest degree
+        # Root node is node with smallest degree.
         self.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
 
-        # depth-first search tree
-        self.tree = nx.dfs_tree(G,self.root)
+        # Depth-first search tree.
+        self.tree = nx.dfs_tree(G, self.root)
 
-        # adding PEPO tensors (without coupling)
+        # Adding PEPO tensors (without coupling).
         for node in self:
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
             N_pas = len(self.G.adj[node]) - N_out - N_in
 
             if N_out == 0:
-                # node is a leaf
+                # Node is a leaf.
                 N_out = 1
 
             # PEPO tensor, where the first dimension is the incoming leg, the
@@ -163,20 +163,20 @@ class TFI(PauliPEPO):
             )
 
             if node == self.root:
-                # root node; we need to put the (incoming) boundary leg between
-                # the virtual dimensions and the physical dimensions
+                # Root node; we need to put the (incoming) boundary leg between
+                # the virtual dimensions and the physical dimensions.
                 T = np.moveaxis(T, 0, -3)
 
-            # re-shaping PEPO tensor to match the graph leg ordering
+            # Re-shaping PEPO tensor to match the graph leg ordering
             T = self._canonical_to_correct_legs(T=T, node=node)
 
             self[node] = T
 
-        # adding incoming and outgoing coupling to every node but the root
+        # Adding incoming and outgoing coupling to every node but the root.
         for node1, node2 in self.G.edges():
             self.__add_ising_coupling(node1=node1, node2=node2, Jz=J)
 
-        # contracting boundary legs
+        # Contracting boundary legs.
         self.contract_boundaries()
 
         if sanity_check: assert self.intact
@@ -204,12 +204,12 @@ class TFI(PauliPEPO):
         H = np.zeros(shape=(2**N, 2**N))
         I = np.eye(2)
 
-        # transverse field
+        # Transverse field.
         for i in range(N):
             ops = tuple(PauliPEPO.X if _ == i else I for _ in range(N))
             H += h * multi_kron(*ops)
 
-        # two-body terms
+        # Two-body terms.
         for ops in (
             (I, I, I, I, PauliPEPO.Z, PauliPEPO.Z),
             (I, I, I, PauliPEPO.Z, PauliPEPO.Z, I),
@@ -228,11 +228,11 @@ class TFI(PauliPEPO):
         H = np.zeros(shape=(2**N, 2**N))
         I = np.eye(2)
 
-        # coupling terms
+        # Coupling terms.
         for i in range(N-1):
             ops = tuple(PauliPEPO.Z if _ in (i, i+1) else I for _ in range(N))
             H += J * multi_kron(*ops)
-        # transverse field
+        # Transverse field.
         for i in range(N):
             ops = tuple(PauliPEPO.X if _ == i else I for _ in range(N))
             H += h * multi_kron(*ops)
@@ -267,7 +267,7 @@ class Heisenberg(PauliPEPO):
 
         T = self.traversal_tensor(node=node, chi=5, N_pas=N_pas, N_out=N_out)
 
-        # transverse field
+        # Transverse field.
         index = ((0,)
                  + tuple(-1 for _ in range(N_pas + N_out))
                  + (slice(2), slice(2)))
@@ -299,7 +299,7 @@ class Heisenberg(PauliPEPO):
             child = node2
             parent = node1
 
-        # first particle decay stage at this edge; at parent node.
+        # First particle decay stage at this edge; at parent node.
         if parent != self.root:
             grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
             x_index = tuple(
@@ -340,7 +340,7 @@ class Heisenberg(PauliPEPO):
         self.G.nodes[parent]["T"][y_index] = Jy * self.Y
         self.G.nodes[parent]["T"][z_index] = Jz * self.Z
 
-        # second particle decay stage at this edge; at child node
+        # Second particle decay stage at this edge; at child node.
         x_index = tuple(
             1 if i == self.G[parent][child][0]["legs"][child]
             else 4
@@ -383,20 +383,20 @@ class Heisenberg(PauliPEPO):
 
         self.G = PEPO.prepare_graph(G=G, chi=5, D=2, sanity_check=sanity_check)
 
-        # root node is node with smallest degree
+        # Root node is node with smallest degree.
         self.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
 
-        # depth-first search tree
+        # Depth-first search tree.
         self.tree = nx.dfs_tree(G, self.root)
 
-        # adding PEPO tensors (without coupling)
+        # Adding PEPO tensors (without coupling).
         for node in self:
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
             N_pas = len(self.G.adj[node]) - N_out - N_in
 
             if N_out == 0:
-                # node is a leaf
+                # Node is a leaf.
                 N_out = 1
 
             # PEPO tensor, where the first dimension is the incoming leg, the
@@ -407,16 +407,16 @@ class Heisenberg(PauliPEPO):
             )
 
             if node == self.root:
-                # root node; we need to put the (incoming) boundary leg at the
+                # Root node; we need to put the (incoming) boundary leg at the
                 # last place within the virtual dimensions.
                 T = np.moveaxis(T, 0, -3)
 
-            # re-shaping PEPO tensor to match the graph leg ordering
+            # Re-shaping PEPO tensor to match the graph leg ordering.
             T = self._canonical_to_correct_legs(T=T, node=node)
 
             self.G.nodes[node]["T"] = T
 
-        # adding incoming and outgoing coupling to every node but the root
+        # Adding incoming and outgoing coupling to every node but the root.
         for node1,node2 in self.G.edges():
             self.__add_heisenberg_coupling(
                 node1=node1,
@@ -426,7 +426,7 @@ class Heisenberg(PauliPEPO):
                 Jz=Jz
             )
 
-        # contracting boundary legs
+        # Contracting boundary legs.
         self.contract_boundaries()
 
         if sanity_check: assert self.intact
@@ -446,17 +446,17 @@ def Zero(
     op = PEPO()
     op.G = PEPO.prepare_graph(G=G, chi=1, D=D)
 
-    # root node is node with smallest degree
+    # Root node is node with smallest degree.
     op.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
 
-    # depth-first search tree
+    # Depth-first search tree.
     op.tree = nx.dfs_tree(G, op.root)
 
-    # since the PEPO contains only zeros, the tree traversal checks are not
+    # Since the PEPO contains only zeros, the tree traversal checks are not
     # applicable.
     op.check_tree = False
 
-    # adding local operators
+    # Adding local operators.
     for node in op:
         op[node] = np.zeros(
             shape = (tuple(1 for _ in range(len(G.adj[node])))
@@ -480,12 +480,12 @@ def Identity(
     """
     Id = Zero(G=G, D=D, dtype=dtype, sanity_check=sanity_check)
 
-    # adding local identities
+    # Adding local identities.
     for node in Id:
         Id[node][...,:,:] = Id.I(node=node)
 
     if nx.is_tree(G):
-        # enabling tree traversal checks
+        # Enabling tree traversal checks.
         Id.check_tree = True
 
     if sanity_check: assert Id.intact
@@ -504,7 +504,7 @@ def posneg_TFI(
     part of the TFI and the other contains the negative-semidefinite
     part.
     """
-    # spectral decompositions of X and Z
+    # Spectral decompositions of X and Z.
     X_pos = np.ones(shape=(2, 2)) / 2
     X_neg = np.array([[-1, 1], [1, -1]]) / 2
     Z_pos = np.array([[1, 0], [0, 0]])
@@ -512,9 +512,9 @@ def posneg_TFI(
 
     pos_op = PEPO()
     neg_op = PEPO()
-    # why not PauliPEPO? Because pos_op and neg_op will contain operators that
+    # Why not PauliPEPO? Because pos_op and neg_op will contain operators that
     # are not pauli matrices (e.g. projectors), so the sanity check of
-    # PauliPEPO would not work
+    # PauliPEPO would not work.
 
     chi = 4
     """
@@ -526,29 +526,29 @@ def posneg_TFI(
     pos_op.G = copy.deepcopy(G)
     neg_op.G = copy.deepcopy(G)
 
-    # root node is node with smallest degree
+    # Root node is node with smallest degree.
     root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
     pos_op.root = root
     neg_op.root = root
 
-    # depth-first search trees
+    # Depth-first search trees.
     tree = nx.dfs_tree(G, root)
     pos_op.tree = copy.deepcopy(tree)
     neg_op.tree = copy.deepcopy(tree)
 
-    # adding PEPO tensors (without coupling)
+    # Adding PEPO tensors (without coupling).
     for node in G.nodes():
         N_in = len(tree.pred[node])
         N_out = len(tree.succ[node])
         N_pas = len(G.adj[node]) - N_out - N_in
 
         if N_out == 0:
-            # node is a leaf
+            # Node is a leaf.
             N_out = 1
 
         # PEPO tensor, where the first dimension is the incoming leg, the
         # passive legs and the outgoing legs follow, and the last two
-        # dimensions are the physical legs
+        # dimensions are the physical legs.
         pos_T = pos_op.traversal_tensor(
             node=node, chi=chi, N_pas=N_pas, N_out=N_out
         )
@@ -556,7 +556,7 @@ def posneg_TFI(
             node=node, chi=chi, N_pas=N_pas, N_out=N_out
         )
 
-        # transverse field
+        # Transverse field.
         index = ((0,)
                  + tuple(-1 for _ in range(N_pas + N_out))
                  + (slice(2), slice(2)))
@@ -564,28 +564,28 @@ def posneg_TFI(
         neg_T[index] = g * X_neg
 
         if node == root:
-            # root node; we need to put the (incoming) boundary leg between the
+            # Root node; we need to put the (incoming) boundary leg between the
             # virtual dimensions and the physical dimensions.
             pos_T = np.moveaxis(pos_T, 0, -3)
             neg_T = np.moveaxis(neg_T, 0, -3)
 
-        # re-shaping PEPO tensor to match the graph leg ordering.
+        # Re-shaping PEPO tensor to match the graph leg ordering.
         pos_op[node] = pos_op._canonical_to_correct_legs(T=pos_T, node=node)
         neg_op[node] = neg_op._canonical_to_correct_legs(T=neg_T, node=node)
 
-    # adding incoming and outgoing coupling to every node but the root.
+    # Adding incoming and outgoing coupling to every node but the root.
     for node1, node2 in G.edges():
         if node1 in tree.succ[node2]:
-            # node1 is downstream from node2
+            # Node1 is downstream from node2.
             child = node1
             parent = node2
         else:
-            # node2 is downstream from node1, or the edge is not contained in
+            # Node2 is downstream from node1, or the edge is not contained in
             # the tree (in which case the order does not matter).
             child = node2
             parent = node1
 
-        # first particle decay stages at this edge; at parent node.
+        # First particle decay stages at this edge; at parent node.
         if parent != root:
             grandparent = tuple(_ for _ in tree.pred[parent].keys())[0]
             index = lambda x: tuple(
@@ -595,7 +595,7 @@ def posneg_TFI(
                 for i in range(pos_op[parent].ndim - 2)
             ) + (slice(2), slice(2))
         else:
-            # the incoming leg of the root node is a boundary leg, and thus
+            # The incoming leg of the root node is a boundary leg, and thus
             # located just before the physical legs. This is why this case
             # distinction is necessary.
             index = lambda x: tuple(
@@ -608,7 +608,7 @@ def posneg_TFI(
         neg_op[parent][index(1)] = J * Z_pos
         neg_op[parent][index(2)] = J * Z_neg
 
-        # final particle decay stage at this edge; at child node
+        # Final particle decay stage at this edge; at child node.
         index = lambda x: tuple(
             x if i == G[parent][child][0]["legs"][child]
             else -1
@@ -619,7 +619,7 @@ def posneg_TFI(
         neg_op[child][index(1)] = Z_neg
         neg_op[child][index(2)] = Z_pos
 
-    # contracting boundary legs
+    # Contracting boundary legs.
     pos_op.contract_boundaries()
     neg_op.contract_boundaries()
 
@@ -642,7 +642,7 @@ def operator_chain(
             "operator_chain() received empty operator chain."
         )
 
-    # extracting physical dimension
+    # Extracting physical dimension.
     D = {node: op.shape[0] for node, op in ops.items()}
 
     H = Identity(G=G, D=D, sanity_check=sanity_check)
@@ -661,8 +661,8 @@ def operator_chain(
                  + (slice(D[node]), slice(D[node])))
         H[node][index] = op
 
-    # since we inserted non-identity operators, the tree traversal checks are
-    # not applicable
+    # Since we inserted non-identity operators, the tree traversal checks are
+    # not applicable.
     H.check_tree = False
 
     if sanity_check: assert H.intact

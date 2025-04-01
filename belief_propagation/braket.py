@@ -10,7 +10,9 @@ herein implements the Belief Propagation algorithm.
 __all__ = [
     "Braket",
     "contract_tensor_inbound_messages",
-    "contract_braket_physical_indices"
+    "contract_braket_physical_indices",
+    "edge_transf_to_tensor_stack",
+    "assemble_excitation_braket"
 ]
 
 import copy
@@ -21,6 +23,7 @@ from typing import Iterator, Tuple, Dict, Union, List, Iterable
 import numpy as np
 import networkx as nx
 import cotengra as ctg
+import scipy.linalg as scialg
 import scipy.stats as scistats
 import ray
 import tqdm
@@ -1394,9 +1397,7 @@ def braket_to_ctg_arguments(
     ]:
     """
     Given a `Braket` object, assembles and returns the cotengra
-    arguments `inputs`, `shapes`, `arrays` and `size_dict`. If
-    `slice_singletons = True` (default), singleton dimensions are
-    sliced. The returned lists are sorted by ascending node labels.
+    arguments `inputs`, `shapes`, `arrays` and `size_dict`.
 
     Refer to the [cotengra documentation](https://cotengra.readthedocs.io/en/latest/basics.html)
     for an introduction to how the return values represent a
@@ -1482,14 +1483,19 @@ def slice_singleton_dimensions(
         inputs: List[List[str]],
         shapes: List[List[int]],
         arrays: List[np.ndarray],
-        size_dict: Dict[int, int]
+        size_dict: Dict[int, int],
+        exclude: Tuple[int] = ()
     ) -> Tuple[
         List[List[str]],
         List[List[int]],
         List[np.ndarray],
         Dict[str, int]
     ]:
-    """Slices singleton in the given cotengra contraction data."""
+    """
+    Slices singleton in the given cotengra contraction data. Optionally,
+    parts of the input can be excluded from slicing via the argument
+    'exclude'.
+    """
     # If we use cotengra to contract a braket that was created using
     # Braket.Cntr - i.e. one that contains dummies in self.bra and self.ket -
     # the code so far might fail. The reason is that the size objectives of
@@ -1505,6 +1511,10 @@ def slice_singleton_dimensions(
     # free, after all (e.g. incurs no additional computational cost).
 
     for i, T in enumerate(arrays):
+        if i in exclude:
+            # This input is excluded fro slicing.
+            continue
+
         singleton_dims = tuple(j for j in range(T.ndim) if T.shape[j] == 1)
 
         if len(singleton_dims) == 0:
@@ -1529,6 +1539,111 @@ def slice_singleton_dimensions(
         shapes[i] = arrays[i].shape
 
     return inputs, shapes, arrays, size_dict
+
+
+def edge_transf_to_tensor_stack(T: np.ndarray) -> Tuple[np.ndarray]:
+    """
+    Given a linear edge transformation `T` from a braket, splits it into
+    three tensors via two SVDs. This transforms the edge transformation
+    into a tensor stack that could be inserted into a braket.
+    """
+    # sanity check
+    if not (T.shape[0] == T.shape[3]
+            and T.shape[1] == T.shape[4]
+            and T.shape[2] == T.shape[5]):
+        raise ValueError("Leg size mismatch in tensor T.")
+
+    bra_size = T.shape[0]
+    op_size = T.shape[1]
+    ket_size = T.shape[2]
+
+    # Transposing T, s.t. the in- and out legs of each layer are consecutive.
+    T_ = np.transpose(T, axes=(0, 3, 1, 4, 2, 5))
+
+    # Splitting between operator legs and ket legs.
+    T_ = np.reshape(T_, newshape=(bra_size**2 * op_size**2, ket_size**2))
+    U, singvals, Vh = scialg.svd(
+        a=T_,
+        full_matrices=False,
+        overwrite_a=True
+    )
+    D_op_ket = len(singvals)
+    T_bra_op = np.einsum("ij,j->ij" ,U, np.sqrt(singvals))
+    T_ket = np.einsum("i,ij->ij", np.sqrt(singvals), Vh)
+
+    # Re-shaping T_bra_op s.t. bra legs and operator legs are separated.
+    T_bra_op = np.reshape(
+        a=T_bra_op,
+        newshape=(bra_size**2, op_size**2 * D_op_ket)
+    )
+
+    # Splitting between bra legs and operator legs.
+    U, singvals, Vh = scialg.svd(
+        a=T_bra_op,
+        full_matrices=False,
+        overwrite_a=True
+    )
+    D_bra_op = len(singvals)
+    T_bra = np.einsum("ij,j->ij", U, np.sqrt(singvals))
+    T_op = np.einsum("i,ij->ij", np.sqrt(singvals), Vh)
+
+    # Re-shaping an transposing T_bra T_op and T_ket s.t. they form a tensor
+    # stack.
+    T_bra = np.reshape(T_bra, newshape=(bra_size, bra_size, D_bra_op))
+    T_op = np.transpose(
+        np.reshape(
+            T_op,
+            newshape=(D_bra_op, op_size, op_size, D_op_ket)
+        ),
+        axes=(1, 2, 0, 3)
+    )
+    T_ket = np.transpose(
+        np.reshape(
+            T_ket,
+            newshape=(D_op_ket, ket_size, ket_size)
+        ),
+        axes=(1, 2, 0)
+    )
+
+    # Braket objects require bra, op and ket to have the same physical
+    # dimension at any respective node. If the physical dimensions from the
+    # SVDs do not match, we have to enlarge them.
+
+    if D_bra_op != D_op_ket:
+        D_larger = max(D_bra_op, D_op_ket)
+        # Adding zeros to the physical dimension of the bra tensor.
+        T_bra_larger = np.zeros(
+            shape=(bra_size, bra_size, D_larger),
+            dtype=np.complex128
+        )
+        bra_slice = (slice(bra_size), slice(bra_size), slice(D_bra_op))
+        T_bra_larger[bra_slice] = T_bra
+
+        # Adding zeros to the physical dimension of the operator tensor.
+        T_op_larger = np.zeros(
+            shape=(op_size, op_size, D_larger, D_larger),
+            dtype=np.complex128
+        )
+        op_slice = (
+            slice(op_size),
+            slice(op_size),
+            slice(D_bra_op),
+            slice(D_op_ket)
+        )
+        T_op_larger[op_slice] = T_op
+
+        # Adding zeros to the physical dimension of the ket tensor.
+        T_ket_larger = np.zeros(
+            shape=(ket_size, ket_size, D_larger),
+            dtype=np.complex128
+        )
+        ket_slice = (slice(ket_size), slice(ket_size), slice(D_op_ket))
+        T_ket_larger[ket_slice] = T_ket
+
+        return T_bra_larger, T_op_larger, T_ket_larger
+
+    else:
+        return T_bra, T_op, T_ket
 
 
 def contract_tensor_inbound_messages(
@@ -1769,6 +1884,165 @@ def BP_excitations(
         )),)
 
     return excitations
+
+
+def assemble_excitation_braket(
+        braket: Braket,
+        excitation: nx.MultiGraph,
+        sanity_check: bool = False,
+        **kwargs
+    ) -> tuple[Braket]:
+    """
+    Assembles the brakets that contain the excitation `excitation`.
+    Brakets are returned as a tuple, with as many brakets as there are
+    disjoint components to the excitation. The product of the
+    contraction values of the brakets gives the contribution of the
+    excitation.
+    
+    Method taken from
+    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108). `excitation`
+    contains the excited edges, `braket` contains the tensor network,
+    the projectors and the messages. `kwargs` are passed to
+    `Braket.contract`.
+    """
+
+    if not nx.is_connected(G=excitation):
+        # The excitation is not connected; finding connected components.
+        connected_excitations = tuple(
+            excitation.subgraph(component)
+            for component in nx.connected_components(excitation)
+        )
+
+        # For disjoint excitations, the contribution is the product of the
+        # components.
+        return sum(
+            (assemble_excitation_braket(
+                braket=braket,
+                excitation=exc,
+                sanity_check=sanity_check,
+                **kwargs
+            )
+            for exc in connected_excitations),
+            start=()
+        )
+
+    # How will this work under the hood? We truncate the network. All edges
+    # that are not contained in the excitation will be removed, and new edges
+    # will be added that connect the messages that flow into the excitation.
+    # On the excitations edges we add the projectors.
+
+    # The set of nodes inside the excitation, and the set of edges that are not
+    # excited.
+    excitation_nodes = set(excitation.nodes())
+    non_excitation_nodes = set(braket.G.nodes()) - excitation_nodes
+    non_excitation_edges = nx.MultiGraph(incoming_graph_data=braket.G.edges())
+    non_excitation_edges.remove_edges_from(excitation.edges())
+
+    # The graphs that we will use to construct a new braket.
+    G_bra = copy.deepcopy(braket.bra.G)
+    G_op = copy.deepcopy(braket.op.G)
+    G_ket = copy.deepcopy(braket.ket.G)
+
+    # Removing nodes and edges that are not present in the excitation.
+    for G in (G_bra, G_op, G_ket):
+        G.remove_edges_from(non_excitation_edges.edges())
+        G.remove_nodes_from(non_excitation_nodes)
+
+    for node in excitation_nodes:
+        non_contained_neighbors = set(braket.G.adj[node]) - set(G_op.adj[node])
+        # Inserting messages as new sites in the graph.
+        while len(non_contained_neighbors) > 0:
+            # If this is the case, there are dangling tensor legs to which no
+            # message is attached. Identifying the dangling neighbor, and the
+            # tensor leg it connects to.
+            next_node_label = max(node_ for node_ in G) + 1
+            neighbor = non_contained_neighbors.pop()
+
+            # The new node will contain a message that is inbound to the
+            # excitation. Since messages are dense tensors, the message will be
+            # inserted into the operator graph, and it's dimensions will be
+            # permuted s.t. the operator leg is the first leg.
+            op_T = np.transpose(braket.msg[neighbor][node], axes=(1, 0, 2))
+
+            # Inserting a new node that contains the respective message.
+            G_op.add_node(
+                node_for_adding=next_node_label,
+                T=op_T
+            )
+            G_bra.add_node(
+                node_for_adding=next_node_label,
+                T=np.eye(op_T.shape[-2])
+            )
+            G_ket.add_node(
+                node_for_adding=next_node_label,
+                T=np.eye(op_T.shape[-1])
+            )
+
+            # Connecting the node to the excitation graph.
+            for G, legG in zip(
+                (G_bra, G_op, G_ket),
+                (braket.bra.G, braket.op.G, braket.ket.G)
+            ):
+                leg = legG[node][neighbor][0]["legs"][node]
+                G.add_edge(
+                    u_for_edge=node,
+                    v_for_edge=next_node_label,
+                    legs={node: leg, next_node_label: 0},
+                    trace=False,
+                    indices=None
+                )
+
+    # Inserting projectors as nodes on the excited edges.
+    for node1, node2 in excitation.edges():
+        # Label of the node we will add.
+        next_node_label = max(node_ for node_ in G) + 1
+
+        Tstack = edge_transf_to_tensor_stack(braket.edge_T[node1][node2])
+
+        for G, legG, T in zip(
+            (G_bra, G_op, G_ket),
+            (braket.bra.G, braket.op.G, braket.ket.G),
+            Tstack
+        ):
+            leg1 = legG[node1][node2][0]["legs"][node1]
+            leg2 = legG[node1][node2][0]["legs"][node2]
+            # Adding a node that contains the projector, and connecting it to
+            # the graph.
+            G.add_node(
+                node_for_adding=next_node_label,
+                T=T
+            )
+            G.add_edge(
+                u_for_edge=node1,
+                v_for_edge=next_node_label,
+                legs={node1: leg1, next_node_label: 1},
+                trace=False,
+                indices=None
+            )
+            G.add_edge(
+                u_for_edge=node2,
+                v_for_edge=next_node_label,
+                legs={node2: leg2, next_node_label: 0},
+                trace=False,
+                indices=None
+            )
+            # Removing the old edge.
+            G.remove_edge(node1, node2)
+
+    # Search tree for the excitation braket.
+    exc_root = sorted(G_op.nodes(), key=lambda x: len(G_op.adj[x]))[0]
+    exc_tree = nx.dfs_tree(G_op, exc_root)
+
+    # Constructing a new braket for this excitation, and contracting it to get
+    # the contribution of this excitation.
+    exc_braket = Braket(
+        bra=PEPS(G=G_bra),
+        op=PEPO.from_graphs(G=G_op, tree=exc_tree, check_tree=False),
+        ket=PEPS(G=G_ket),
+        sanity_check=sanity_check
+    )
+
+    return (exc_braket,)
 
 
 if __name__ == "__main__":

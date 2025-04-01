@@ -27,8 +27,8 @@ import tqdm
 
 from belief_propagation.braket import (
     Braket,
-    contract_braket_physical_indices,
-    BP_excitations
+    BP_excitations,
+    assemble_excitation_braket
 )
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
@@ -791,12 +791,12 @@ def loop_series_contraction(
         )
     braket.op.check_tree = False
 
-    # During the computations of excitations, messages are inserted into the
-    # network. Messages are dense tensors, not tensor stacks - we must thus
-    # contract the physical dimensions.
-    densebraket = contract_braket_physical_indices(
-        braket=braket, sanity_check=sanity_check
-    )
+    ## During the computations of excitations, messages are inserted into the
+    ## network. Messages are dense tensors, not tensor stacks - we must thus
+    ## contract the physical dimensions.
+    #densebraket = contract_braket_physical_indices(
+    #    braket=braket, sanity_check=sanity_check
+    #)
 
     if excitations is None:
         # Finding excitations in the graph.
@@ -820,12 +820,15 @@ def loop_series_contraction(
         exc_weight = excitation.number_of_edges()
         iterator.set_postfix_str(f"Current exc. weight = {exc_weight}")
 
-        cntr_ = __compute_BP_excitation_densebraket(
-            braket=densebraket,
+        exc_brakets = assemble_excitation_braket(
+            braket=braket,
             excitation=excitation,
             sanity_check=sanity_check
         )
-        cntr += cntr_
+        cntr += np.prod(tuple(
+            braket_.contract(sanity_check=sanity_check)
+            for braket_ in exc_brakets
+        ))
 
     # Undoing BP vacuum contribution, so that the braket remains unchanged.
     for node in braket:
@@ -853,240 +856,6 @@ def __check_contracted_physical_dims(
             return False
 
     return True
-
-
-def __compute_BP_excitation_densebraket(
-        braket: Braket,
-        excitation: nx.MultiGraph,
-        sanity_check: bool = False,
-        **kwargs
-    ) -> float:
-    """
-    Computes the contribution of the excitation `excitation`. Method
-    taken from [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
-    `excitation` contains the excited edges, `braket` contains the
-    tensor network with contracted physical dimensions, the projectors
-    and the messages. `kwargs` are passed to `Braket.contract`.
-    """
-    assert __check_contracted_physical_dims(braket, sanity_check=sanity_check)
-
-    if not nx.is_connected(G=excitation):
-        connected_excitations = tuple(
-            excitation.subgraph(component)
-            for component in nx.connected_components(excitation)
-        )
-
-        # For disjoint excitations, the contribution is the product of the
-        # components.
-        return np.prod(tuple(
-            __compute_BP_excitation_densebraket(
-                braket=braket,
-                excitation=exc,
-                sanity_check=sanity_check,
-                **kwargs
-            )
-            for exc in connected_excitations
-        ))
-
-    # How will this work under the hood? We truncate the network. All edges
-    # that are not contained in the excitation will be removed, and new edges
-    # will be added that connect the messages that flow into the excitation.
-    # On the excitations edges we add the projectors.
-
-    # The set of nodes inside the excitation, and the set of edges that are not
-    # excited.
-    excitation_nodes = set(excitation.nodes())
-    non_excitation_nodes = set(braket.G.nodes()) - excitation_nodes
-    non_excitation_edges = nx.MultiGraph(incoming_graph_data=braket.G.edges())
-    non_excitation_edges.remove_edges_from(excitation.edges())
-
-    # The graph that we will contract.
-    G = copy.deepcopy(braket.ket.G)
-
-    # Removing nodes and edges that are not present in the excitation.
-    G.remove_edges_from(non_excitation_edges.edges())
-    G.remove_nodes_from(non_excitation_nodes)
-
-    for node in excitation_nodes:
-        # Removing the dummy physical dimension from local tensors.
-        G.nodes[node]["T"] = G.nodes[node]["T"][...,0]
-
-        # Inserting messages as new sites in the graph.
-        while G.nodes[node]["T"].ndim > len(G.adj[node]):
-            # If this is the case, there are dangling tensor legs to which no
-            # message is attached. Identifying the dangling neighbor, and the
-            # tensor leg it connects to.
-            next_node_label = max(node_ for node_ in G) + 1
-            neighbor = (set(braket.G.adj[node])
-                        - (set(G.adj[node]))).pop()
-            leg = braket.G[node][neighbor][0]["legs"][node]
-
-            # Inserting a new node that contains the respective message, and
-            # connecting it to the graph.
-            G.add_node(
-                node_for_adding=next_node_label,
-                T=braket.msg[neighbor][node][0,0,:]
-            )
-            G.add_edge(
-                u_for_edge=node,
-                v_for_edge=next_node_label,
-                legs={node: leg, next_node_label: 0},
-            )
-
-    # Inserting projectors as nodes on the excited edges.
-    for node1, node2 in excitation.edges():
-        # Parameters of this edge, and the node we will add: edge legs, size,
-        # and the label of the next node.
-        leg1 = G[node1][node2][0]["legs"][node1]
-        leg2 = G[node1][node2][0]["legs"][node2]
-        next_node_label = max(node_ for node_ in G) + 1
-
-        # Adding a node that contains the projector, and connecting it to the
-        # graph.
-        G.add_node(
-            node_for_adding=next_node_label,
-            T=braket.edge_T[node1][node2][0,0,:,0,0,:]
-        )
-        G.add_edge(
-            u_for_edge=node1,
-            v_for_edge=next_node_label,
-            legs={node1: leg1, next_node_label: 1},
-        )
-        G.add_edge(
-            u_for_edge=node2,
-            v_for_edge=next_node_label,
-            legs={node2: leg2, next_node_label: 0},
-        )
-
-        # Removing the old edge.
-        G.remove_edge(node1, node2)
-
-    # Constructing a new braket for this excitation, and contracting it to get
-    # the contribution of this excitation.
-    exc_braket = Braket.Cntr(G=G, sanity_check=sanity_check)
-    cntr = exc_braket.contract(sanity_check=sanity_check, **kwargs)
-
-    return cntr
-
-
-def __compute_BP_excitation(
-        braket: Braket,
-        excitation: nx.MultiGraph,
-        sanity_check: bool = False,
-        **kwargs
-    ) -> float:
-    """
-    Computes the contribution of the excitation `excitation`. Method
-    taken from [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
-    `excitation` contains the excited edges, `braket` contains the
-    tensor network, the projectors and the messages. `kwargs` are passed
-    to `Braket.contract`.
-    """
-    raise NotImplementedError("WORK IN PROGRESS")
-
-    if not nx.is_connected(G=excitation):
-        connected_excitations = tuple(
-            excitation.subgraph(component)
-            for component in nx.connected_components(excitation)
-        )
-
-        # For disjoint excitations, the contribution is the product of the
-        # components.
-        return np.prod(tuple(
-            __compute_BP_excitation(
-                braket=braket,
-                excitation=exc,
-                sanity_check=sanity_check,
-                **kwargs
-            )
-            for exc in connected_excitations
-        ))
-
-    # How will this work under the hood? We truncate the network. All edges
-    # that are not contained in the excitation will be removed, and new edges
-    # will be added that connect the messages that flow into the excitation.
-    # On the excitations edges we add the projectors.
-
-    # The set of nodes inside the excitation, and the set of edges that are not
-    # excited.
-    excitation_nodes = set(excitation.nodes())
-    non_excitation_nodes = set(braket.G.nodes()) - excitation_nodes
-    non_excitation_edges = nx.MultiGraph(incoming_graph_data=braket.G.edges())
-    non_excitation_edges.remove_edges_from(excitation.edges())
-
-    # The graphs that we will use to construct a new braket.
-    G_bra = copy.deepcopy(braket.bra.G)
-    G_op = copy.deepcopy(braket.op.G)
-    G_ket = copy.deepcopy(braket.ket.G)
-
-    # Removing nodes and edges that are not present in the excitation.
-    for G in (G_bra, G_op, G_ket):
-        G.remove_edges_from(non_excitation_edges.edges())
-        G.remove_nodes_from(non_excitation_nodes)
-
-    for node in excitation_nodes:
-        # Inserting messages as new sites in the graph.
-        while G.nodes[node]["T"].ndim > len(G.adj[node]):
-            # If this is the case, there are dangling tensor legs to which no
-            # message is attached. Identifying the dangling neighbor, and the
-            # tensor leg it connects to.
-            next_node_label = max(node_ for node_ in G) + 1
-            neighbor = (set(braket.G.adj[node])
-                        - (set(G.adj[node]))).pop()
-            leg = braket.G[node][neighbor][0]["legs"][node]
-
-            # The new node will contain a message that is inbound to the
-            # excitation. Since messages are dense tensors, the message will be
-            # inserted into the operator graph, and it's dimensions will be
-            # permuted s.t. the operator leg is the first leg.
-            #op_T = 
-
-            # Inserting a new node that contains the respective message, and
-            # connecting it to the graph.
-            G.add_node(
-                node_for_adding=next_node_label,
-                T=braket.msg[neighbor][node][0,0,:]
-            )
-            G.add_edge(
-                u_for_edge=node,
-                v_for_edge=next_node_label,
-                legs={node: leg, next_node_label: 0},
-            )
-
-    # Inserting projectors as nodes on the excited edges.
-    for node1, node2 in excitation.edges():
-        # Parameters of this edge, and the node we will add: edge legs, size,
-        # and the label of the next node.
-        leg1 = G[node1][node2][0]["legs"][node1]
-        leg2 = G[node1][node2][0]["legs"][node2]
-        next_node_label = max(node_ for node_ in G) + 1
-
-        # Adding a node that contains the projector, and connecting it to the
-        # graph.
-        G.add_node(
-            node_for_adding=next_node_label,
-            T=braket.edge_T[node1][node2][0,0,:,0,0,:]
-        )
-        G.add_edge(
-            u_for_edge=node1,
-            v_for_edge=next_node_label,
-            legs={node1: leg1, next_node_label: 1},
-        )
-        G.add_edge(
-            u_for_edge=node2,
-            v_for_edge=next_node_label,
-            legs={node2: leg2, next_node_label: 0},
-        )
-
-        # Removing the old edge.
-        G.remove_edge(node1, node2)
-
-    # Constructing a new braket for this excitation, and contracting it to get
-    # the contribution of this excitation.
-    exc_braket = Braket.Cntr(G=G, sanity_check=sanity_check)
-    cntr = exc_braket.contract(sanity_check=sanity_check, **kwargs)
-
-    return cntr
 
 
 if __name__ == "__main__":

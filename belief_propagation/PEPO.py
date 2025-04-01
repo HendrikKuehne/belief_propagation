@@ -1025,16 +1025,39 @@ class PEPO:
         """
         Initialisation from a graph `G` that contains PEPO tensors, and
         a tree `tree` that determines the graph traversal by the finite
-        state automaton.
+        state automaton. `G` must have a leg ordering.
         """
         # Inferring physical dimension.
         for node, T in G.nodes(data="T"):
             G.nodes[node]["D"] = T.shape[-1]
 
-        # Inferring root node.
-        root = sorted(tuple(tree.nodes), key=lambda x:len(tree.pred[x]))[0]
+        # Inferring edge sizes.
+        for node1, node2, data in G.edges(data=True):
+            if "legs" not in data.keys():
+                raise ValueError("".join((
+                    f"Edge ({node1}, {node2}) in graph does not contain a ",
+                    "leg ordering."
+                )))
 
-        # initialising the new PEPO
+            if "size" in data.keys(): continue
+
+            leg1 = data["legs"][node1]
+            leg2 = data["legs"][node2]
+            size1 = G.nodes[node1]["T"].shape[leg1]
+            size2 = G.nodes[node2]["T"].shape[leg2]
+
+            if size1 != size2:
+                raise ValueError("".join((
+                    f"Tensor leg sizes on edge ({node1}, {node2}) do not ",
+                    "match."
+                )))
+
+            G[node1][node2][0]["size"] = size1
+
+        # Inferring root node.
+        root = sorted(tuple(tree.nodes), key=lambda x: len(tree.pred[x]))[0]
+
+        # Initialising the new PEPO.
         op = cls()
         op.G = G
         op.tree = tree
