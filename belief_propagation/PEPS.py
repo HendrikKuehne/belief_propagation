@@ -17,7 +17,8 @@ from belief_propagation.utils import (
     crandn,
     write_exp_bonddim_to_graph,
     multi_tensor_rank,
-    graph_compatible
+    graph_compatible,
+    same_legs
 )
 
 class PEPS:
@@ -597,6 +598,33 @@ class PEPS:
     def __contains__(self, node: int) -> bool:
         """Does the graph `self.G` contain the node `node`?"""
         return self.G.has_node(node)
+
+    def __eq__(self, rhs: "PEPS") -> bool:
+        """
+        Two PEPS are considered equal if they contain the same local
+        tensors on the same graph. Different leg orderings are accounted
+        for. Keep in mind that this notion of equality is not invariant
+        with respect to the gauge freedom of the virtual bond
+        dimensions!
+        """
+        # Do self and rhs live on the same graphs?
+        if not graph_compatible(self.G, rhs.G): return False
+
+        # Since we might need to permute the virtual dimensions, we will
+        # continue with a copy of self.
+        lhs = copy.deepcopy(self)
+
+        if not same_legs(lhs.G, rhs.G):
+            # Permute dimensions of lhs to make both Brakets compatible.
+            lhs._permute_virtual_dimensions(rhs.G)
+
+        # Are all site tensors the same?
+        for node in lhs:
+            if not lhs[node].shape == rhs[node].shape: return False
+
+            if not np.allclose(lhs[node], rhs[node]): return False
+
+        return True
 
     def __init__(self, G: nx.MultiGraph, sanity_check: bool = False) -> None:
         """

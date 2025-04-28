@@ -2,12 +2,13 @@
 DMRG on Braket-objects. Contains the DMRG-class.
 """
 
-__all__ = ["DMRG", "LoopSeriesDMRG"]
+__all__ = ["DMRG", "LoopSeriesDMRG", "loop_series_environments"]
 
 import itertools
 from typing import Dict, Tuple, List, Iterator
 import warnings
 import copy
+import pickle
 
 import numpy as np
 import networkx as nx
@@ -15,7 +16,9 @@ import cotengra as ctg
 import tqdm
 
 from belief_propagation.utils import (
-    is_hermitian,
+    is_hermitian_matrix,
+    is_hermitian_message,
+    is_hermitian_environment,
     gen_eigval_problem,
     rel_err,
     same_legs,
@@ -24,11 +27,18 @@ from belief_propagation.utils import (
 )
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
-from belief_propagation.braket import Braket, BP_excitations
+from belief_propagation.braket import (
+    Braket,
+    BP_excitations,
+    assemble_excitation_brakets,
+    braket_to_ctg_arguments,
+    slice_singleton_dimensions
+)
 from belief_propagation.truncate_expand import (
     L2BP_compression,
     QR_gauging,
-    loop_series_contraction
+    loop_series_contraction,
+    insert_excitation
 )
 
 
@@ -214,7 +224,7 @@ class DMRG:
         H = np.reshape(H, (vir_dim * self.D[node], vir_dim * self.D[node]))
 
         if sanity_check:
-            assert is_hermitian(H, threshold=threshold, verbose=False)
+            assert is_hermitian_matrix(H, threshold=threshold, verbose=False)
 
         return H
 
@@ -281,14 +291,14 @@ class DMRG:
         N = np.einsum(*args, out_legs, optimize=True)
         N = np.reshape(N, (vir_dim * self.D[node], vir_dim * self.D[node]))
 
-        if sanity_check: assert is_hermitian(N, threshold=threshold)
+        if sanity_check: assert is_hermitian_matrix(N, threshold=threshold)
 
         return N
 
     def __BP(self, sanity_check: bool = False, **kwargs) -> None:
         """
-        BP iteration on the overlap and all expvals. Total messages and
-        local PEPO tensors are formed, if BP converged.
+        BP iteration on the overlap and all expvals. Messages on the
+        complete operator are formed.
         """
 
         # Handling kwargs.
@@ -309,7 +319,7 @@ class DMRG:
                 **kwargs
             )
             self.overlap.msg = overlap_.msg
-            self.overlap._converged = overlap_._converged
+            self.overlap._converged = overlap_.converged
             self.overlap.cntr = overlap_.cntr
             self.overlap.normalize_messages(
                 normalize_to="cntr",
@@ -332,14 +342,32 @@ class DMRG:
                     sanity_check=sanity_check
                 )
                 self.expvals[i].msg = expval_.msg
-                self.expvals[i]._converged = expval_._converged
+                self.expvals[i]._converged = expval_.converged
                 self.expvals[i].cntr = expval_.cntr
 
-        if self.converged:
-            self.__assemble_messages(sanity_check=sanity_check)
-        else:
+        if sanity_check:
+            # Are all the messages hermitian?
+            for i, msg_dict in enumerate(
+                (tuple(expval_.msg for expval_ in self.expvals)
+                 + (self.overlap.msg,))
+            ):
+                for sender in msg_dict.keys():
+                    for receiver in msg_dict[sender].keys():
+                        if not is_hermitian_message(
+                            msg_dict[sender][receiver],
+                            threshold=self.hermiticity_threshold,
+                            verbose=True
+                        ):
+                            raise ValueError("".join((
+                                f"Message from {sender} to {receiver} in ",
+                                f"braket {i} is not hermitian."
+                            )))
+
+        # Composing messages from the expectation values.
+        self.__assemble_messages(sanity_check=sanity_check)
+
+        if not self.converged:
             warnings.warn("BP iteration not converged.", RuntimeWarning)
-            self._msg = None
 
         return
 
@@ -645,7 +673,7 @@ class DMRG:
         """
         Checks if the DMRG algrithm can be run. This amounts to:
         * Checking if the underlying braket is intact.
-        + Checking if expval graphs and overlap graph are compatible.
+        * Checking if expval graphs and overlap graph are compatible.
         * Checking if bra and ket are adjoint to one another.
         * Checking if the leg orderings in `self.overlap` and
         `self.expvals` are the same.
@@ -828,18 +856,19 @@ class LoopSeriesDMRG:
     nSweeps: int = 5
     """Default number of sweeps."""
     hermiticity_threshold: float = 1e-6
-    """Allowed deviation from exact hermiticity."""
+    """
+    Allowed deviation from exact hermiticity. Applies to local
+    hamiltonians, environments and messages.
+    """
     tikhonov_regularization_eps: float = 1e-6
     """Epsilon for Tikhonov-regularization of singular messages."""
 
-    def __assemble_T_totalH(self, sanity_check: bool = False) -> None:
+    def __assemble_T_totalH(self) -> None:
         """
         Evaluates the direct product of PEPO tensors, and writes to
         `self._T_totalH`. Local hamiltonian tensors are block-diagonal
         and contain the local tensors of `self.expvals` on the diagonal.
         """
-        if sanity_check: assert self.intact
-
         self._T_totalH = {node: None for node in self._psi}
 
         for node in self:
@@ -883,8 +912,8 @@ class LoopSeriesDMRG:
     def __assemble_localH(
             self,
             node: int,
-            threshold: float = hermiticity_threshold,
-            sanity_check: bool = False
+            verbose: bool,
+            sanity_check: bool
         ) -> np.ndarray:
         """
         Hamiltonian at `node`, calculated from inbound environments.
@@ -907,13 +936,9 @@ class LoopSeriesDMRG:
                 RuntimeWarning
             )
 
-        # Construct total PEPO tensors, if necessary.
-        if self._T_totalH is None:
-            self.__assemble_T_totalH(sanity_check=sanity_check)
-
         # The hamiltonian at node is obtained by tracing out the rest of the
         # network. The environments are approximated by messages.
-        nLegs = len(self._psi.G.adj[node])
+        nLegs = len(self.psi.G.adj[node])
         args = ()
         """Arguments for einsum"""
 
@@ -942,18 +967,22 @@ class LoopSeriesDMRG:
             chi for chi in self._env_totalH[node].shape[:nLegs]
         ))
 
-        H = np.reshape(H, (vir_dim * self.D[node], vir_dim * self.D[node]))
+        H = np.reshape(
+            H, newshape=(vir_dim * self.D[node], vir_dim * self.D[node])
+        )
 
-        if sanity_check:
-            assert is_hermitian(H, threshold=threshold, verbose=True)
+        if sanity_check and self.converged:
+            assert is_hermitian_matrix(
+                H, threshold=self.hermiticity_threshold, verbose=verbose
+            )
 
         return H
 
     def __assemble_localN(
             self,
             node: int,
-            threshold: float = hermiticity_threshold,
-            sanity_check: bool = False
+            verbose: bool,
+            sanity_check: bool
         ) -> np.ndarray:
         """
         Environment at node. Calculated from `self.overlap`. This
@@ -1019,11 +1048,14 @@ class LoopSeriesDMRG:
 
         N = np.reshape(N, (vir_dim * self.D[node], vir_dim * self.D[node]))
 
-        if sanity_check: assert is_hermitian(N, threshold=threshold)
+        if sanity_check and self.converged:
+            assert is_hermitian_matrix(
+                N, threshold=self.hermiticity_threshold, verbose=verbose
+            )
 
         return N
 
-    def __BP(self, sanity_check: bool = False, **kwargs) -> None:
+    def __BP(self, verbose: bool, sanity_check: bool, **kwargs) -> None:
         """
         Runs BP iterations on the overlap and on every operator, if
         there is no converged set of messages available. Saves the
@@ -1047,11 +1079,12 @@ class LoopSeriesDMRG:
 
         # Calculating messages on the operator brakets.
         for i, expval in enumerate(allbrakets[:-1]):
-            expval.BP(
+            eps_list = expval.BP(
                 iterator_desc_prefix="".join((
                     iterator_desc_prefix,
                     f" | expval {i}"
                 )),
+                verbose=verbose,
                 sanity_check=sanity_check,
                 **kwargs
             )
@@ -1059,18 +1092,22 @@ class LoopSeriesDMRG:
             if not expval.converged:
                 self._converged = False
                 warnings.warn(
-                    f"BP iteration on expval {i} did not converge.",
+                    "".join((
+                        f"BP iteration on expval {i} did not converge. ",
+                        f"Last change in message norm: {eps_list[-1]:.3e}."
+                    )),
                     RuntimeWarning
                 )
 
             self._msg_oplist[i] = expval.msg
 
         # Calculating messages on the overlap.
-        allbrakets[-1].BP(
+        eps_list = allbrakets[-1].BP(
             iterator_desc_prefix="".join((
                 iterator_desc_prefix,
                 f" | overlap"
             )),
+            verbose=verbose,
             sanity_check=sanity_check,
             **kwargs
         )
@@ -1078,17 +1115,38 @@ class LoopSeriesDMRG:
         if not allbrakets[-1].converged:
             self._converged = False
             warnings.warn(
-                "BP iteration on overlap did not converge.",
+                "".join((
+                    "BP iteration on overlap did not converge. ",
+                    f"Last change in message norm: {eps_list[-1]:.3e}."
+                )),
                 RuntimeWarning
             )
 
         self._msg_overlap = allbrakets[-1].msg
+
+        if sanity_check and self.converged:
+            # Are all the messages hermitian?
+            for i, msg_dict in enumerate(
+                self._msg_oplist + [self._msg_overlap,]
+            ):
+                for sender in msg_dict.keys():
+                    for receiver in msg_dict[sender].keys():
+                        if not is_hermitian_message(
+                            msg_dict[sender][receiver],
+                            threshold=self.hermiticity_threshold,
+                            verbose=verbose
+                        ):
+                            raise ValueError("".join((
+                                f"Message from {sender} to {receiver} in ",
+                                f"braket {i} is not hermitian."
+                            )))
 
         return
 
     def __calculate_environments(
             self,
             nodes: Tuple[int] = None,
+            verbose: bool = True,
             sanity_check: bool = False,
             **kwargs
         ) -> None:
@@ -1108,48 +1166,89 @@ class LoopSeriesDMRG:
         if sanity_check: assert self.intact
 
         # We need a converged set of messages; running BP iterations.
-        self.__BP(sanity_check=sanity_check, **kwargs)
+        self.__BP(verbose=False, sanity_check=sanity_check, **kwargs)
 
         if nodes is None: nodes = tuple(self.psi)
 
         allbrakets = self.brakets
 
+        # Adding messages and convergence marker to brakets.
         for i, msg_dict in enumerate(self._msg_oplist + [self._msg_overlap,]):
             allbrakets[i].msg = msg_dict
             allbrakets[i]._converged = self.converged
             allbrakets[i].write_cntr_value()
 
-        # Calculating the environments in the overlap.
-        self._env_overlap = loop_series_environments(
-            braket=allbrakets[-1],
-            excitations=self.excitations,
-            nodes=nodes,
-            max_order=self.max_order,
-            sanity_check=sanity_check
-        )
-
         # Calculating the environments in the constituent operators.
         envs_oplist = tuple(
             loop_series_environments(
                 braket=braket,
+                excitations=self.hole_excitations,
                 nodes=nodes,
                 max_order=self.max_order,
+                skip_BP=True,
                 sanity_check=sanity_check
             )
             for braket in allbrakets[:-1]
+        )
+
+        # Calculating the environments in the overlap.
+        self._env_overlap = loop_series_environments(
+            braket=allbrakets[-1],
+            excitations=self.hole_excitations,
+            nodes=nodes,
+            max_order=self.max_order,
+            skip_BP=True,
+            sanity_check=sanity_check,
+            **kwargs
         )
 
         self._env_totalH = {}
         # Assembling environments of the total hamiltonian.
         for node in nodes:
             envs = tuple(env_oplist[node] for env_oplist in envs_oplist)
-            self._env_totalH[node] = environments_direct_sum(
-                envs=envs
-            )
+            self._env_totalH[node] = environments_direct_sum(envs=envs)
+
+        if sanity_check and self.converged:
+            # Are the environments on the constituent hamiltonians hermitian?
+            for i, env_oplist in enumerate(envs_oplist):
+                for node, env in env_oplist.items():
+                    if not is_hermitian_environment(
+                        env,
+                        threshold=self.hermiticity_threshold,
+                        verbose=verbose
+                    ):
+                        raise ValueError("".join((
+                            f"Environment at node {node} in operator {i} is ",
+                            "not hermitian."
+                        )))
+
+            # Are the environments in the overlap and the total hamiltonian
+            # hermitian?
+            for node in nodes:
+                for env, name in zip(
+                    (self._env_overlap[node], self._env_totalH[node]),
+                    ("overlap", "total hamiltonian")
+                ):
+                    if not is_hermitian_environment(
+                        env,
+                        threshold=self.hermiticity_threshold,
+                        verbose=verbose
+                    ):
+                        raise ValueError("".join((
+                            f"Environment at node {node} in ",
+                            name,
+                            " is not hermitian."
+                        )))
 
         return
 
-    def __sweep(self, gauge: bool, sanity_check: bool, **kwargs) -> float:
+    def __sweep(
+            self,
+            gauge: bool,
+            verbose: bool,
+            sanity_check: bool,
+            **kwargs
+        ) -> float:
         """
         Local update at all sites. `kwargs` are passed to `Braket.BP`.
         Returns the change in energy after the sweep.
@@ -1169,17 +1268,37 @@ class LoopSeriesDMRG:
         else:
             iterator_desc_prefix = "DMRG | "
 
-        # Calculating environments and previous energy.
-        self.__calculate_environments(sanity_check=sanity_check, **kwargs)
+        # Calculating previous energy.
         Eprev = self.E0
 
-        for node in nx.dfs_postorder_nodes(
-            self.oplist[0].tree,
-            source=self.oplist[0].root
-        ):
-            H = self.__assemble_localH(node, sanity_check=sanity_check)
-            N = self.__assemble_localN(node, sanity_check=sanity_check)
+        iterator = tqdm.tqdm(
+            iterable=nx.dfs_postorder_nodes(
+                self.oplist[0].tree,
+                source=self.oplist[0].root
+            ),
+            desc=f"DMRG sweep {self.__iSweep}",
+            disable=not verbose
+        )
 
+        for node in iterator:
+            iterator.set_postfix_str(f"Node {node}")
+
+            # Getting virtual leg environment around node, and from it the
+            # local hamiltonian and the complete environment.
+            self.__calculate_environments(
+                nodes=(node,),
+                verbose=verbose,
+                sanity_check=sanity_check,
+                **kwargs
+            )
+            H = self.__assemble_localH(
+                node=node, verbose=verbose, sanity_check=sanity_check
+            )
+            N = self.__assemble_localN(
+                node=node, verbose=verbose, sanity_check=sanity_check
+            )
+
+            # Greedy optimization step at node.
             eigvals,eigvecs = gen_eigval_problem(
                 H,
                 N,
@@ -1189,7 +1308,7 @@ class LoopSeriesDMRG:
             # Finding the correct shape for the new site tensor.
             newshape = [np.nan for _ in self.psi.G.adj[node]]
             for neighbor in self.psi.G.adj[node]:
-                leg = self._psi.G[node][neighbor][0]["legs"][node]
+                leg = self.psi.G[node][neighbor][0]["legs"][node]
                 newshape[leg] = self.psi.G[node][neighbor][0]["size"]
             newshape += [self.D[node],]
 
@@ -1204,16 +1323,6 @@ class LoopSeriesDMRG:
                     tree=self.oplist[0].tree,
                     nodes=(node,)
                 )
-
-            # Calculating new environments.
-            self.__calculate_environments(
-                sanity_check=sanity_check,
-                iterator_desc_prefix="".join((
-                    iterator_desc_prefix,
-                    f"node {node}"
-                )),
-                **kwargs
-            )
 
         Enext = self.E0
 
@@ -1234,9 +1343,6 @@ class LoopSeriesDMRG:
         """
         if sanity_check: assert self.intact
 
-        # preparing kwargs
-        kwargs["verbose"] = False
-
         nSweeps = nSweeps if nSweeps != None else self.nSweeps
         iterator = tqdm.tqdm(
             range(nSweeps),
@@ -1248,8 +1354,10 @@ class LoopSeriesDMRG:
         if gauge: self.gauge(sanity_check=sanity_check, **kwargs)
 
         for iSweep in iterator:
+            self.__iSweep = iSweep
             eps = self.__sweep(
                 gauge=gauge,
+                verbose=verbose,
                 sanity_check=sanity_check,
                 **kwargs
             )
@@ -1375,7 +1483,9 @@ class LoopSeriesDMRG:
         if self.converged:
             # Converged sets of messages can be re-used, accelerating the
             # computation of E0 drastically.
-            for i, msg_dict in enumerate(self._msg_oplist + [self._msg_overlap,]):
+            for i, msg_dict in enumerate(
+                self._msg_oplist + [self._msg_overlap,]
+            ):
                 allbrakets[i].msg = msg_dict
                 allbrakets[i]._converged = self.converged
                 allbrakets[i].write_cntr_value()
@@ -1384,13 +1494,13 @@ class LoopSeriesDMRG:
         for expval in allbrakets[:-1]:
             cntr += loop_series_contraction(
                 braket=expval,
-                excitations=self.excitations,
+                excitations=self.closed_excitations,
                 max_order=self.max_order
             )
 
         cntr /= loop_series_contraction(
             braket=allbrakets[-1],
-            excitations=self.excitations,
+            excitations=self.closed_excitations,
             max_order=self.max_order
         )
 
@@ -1481,10 +1591,11 @@ class LoopSeriesDMRG:
                             return False
 
         # Are all the excitations below the maximum order?
-        if not all(
-            exc.number_of_edges <= self.max_order
-            for exc in self.excitations
-        ):
+        all_exc = sum(
+            (_ for _ in self.hole_excitations.values()),
+            start=()
+        ) + self.closed_excitations
+        if not all(exc.number_of_edges() <= self.max_order for exc in all_exc):
             warnings.warn(
                 "There are excitations with weight above maximum order.",
                 RuntimeWarning
@@ -1529,7 +1640,6 @@ class LoopSeriesDMRG:
         Changing local tensors in the state directly. Convergence
         marker will be set to `False`.
         """
-        # updating the tensor stacks in all braket objects
         self._psi[node] = T
         self._converged = False
 
@@ -1544,8 +1654,8 @@ class LoopSeriesDMRG:
                 "".join(("\n",str(op)))
                 for op in self.oplist
             ) + (
-                "\nMessages are ",
-                "converged." if self.converged else "not converged."
+                f"\nLoop series expansion order {self.max_order}. Messages ",
+                "are converged." if self.converged else "are not converged."
             ))
 
     def __len__(self) -> int: return self.nsites
@@ -1644,12 +1754,31 @@ class LoopSeriesDMRG:
         # constituent PEPO tensors.
         self._T_totalH: Dict[int, np.ndarray] = None
         """Local tensors of the total hamiltonian."""
+        self.__assemble_T_totalH()
 
         # Computing loop excitations up to max_order.
-        self.excitations: Tuple[nx.MultiGraph] = BP_excitations(
-            G=self._psi.G, max_order=self.max_order, sanity_check=sanity_check
+        self.hole_excitations: Dict[int, Tuple[nx.MultiGraph]] = {
+            node: BP_excitations(
+                G=self._psi.G,
+                holes=(node,),
+                max_order=self.max_order,
+                sanity_check=sanity_check
+            )
+            for node in self
+        }
+        """
+        Excitations for environment calculations, up to order
+        `self.max_order`.
+        """
+        self.closed_excitations: Tuple[nx.MultiGraph] = BP_excitations(
+            G=self._psi.G,
+            max_order=self.max_order,
+            sanity_check=sanity_check
         )
-        """Excitations up to order `self.max_order`."""
+        """
+        Excitations for contracting brakets, up to order
+        `self.max_order`.
+        """
 
         if sanity_check: assert self.intact
 
@@ -1658,61 +1787,144 @@ class LoopSeriesDMRG:
 
 def __msg_direct_sum(
         braket: Braket,
-        nodes: Tuple[int] = None,
+        node: int,
+        normalize_to_cntr: bool = True,
         sanity_check: bool = False
-    ) -> Dict[int, np.ndarray]:
+    ) -> np.ndarray:
     """
-    Calculates the environments at the sites from `nodes` by taking the
-    tensor product of the inbound messages.
+    Calculates the environment at `node` by taking the tensor product of
+    the inbound messages. Environment is normalized to contraction value
+    `braket.cntr`, if `normalize_to_cntr=True` (default). Otherwise,
+    environment is normalized to unity.
     """
     # sanity check
     if sanity_check: assert braket.intact
 
-    if nodes is None: nodes = tuple(braket)
-    environments = {}
+    nLegs = len(braket.G.adj[node])
 
-    for node in nodes:
-        nLegs = len(braket.G.adj[node])
+    if 3 * nLegs > np.MAXDIMS:
+        # This node has too many neighbors; numpy would run out of
+        # array dimensions.
+        raise RuntimeError("".join((
+            f"Node {node} has {nLegs} neighbors, which would lead to ",
+            f"an environment with {3 * nLegs} dimensions. Numpy can ",
+            f"only handle arrays with up to {np.MAXDIMS} dimensions."
+        )))
 
-        if 3 * nLegs > np.MAXDIMS:
-            # This node has too many neighbors; numpy would run out of
-            # array dimensions.
-            raise RuntimeError("".join((
-                f"Node {node} has {nLegs} neighbors, which would lead to ",
-                f"an environment with {3 * nLegs} dimensions. Numpy can ",
-                f"only handle arrays with up to {np.MAXDIMS} dimensions."
-            )))
+    # Assembling einsum arguments.
+    out_legs = tuple(range(3 * nLegs))
+    args = ()
+    for neighbor in braket.G.adj[node]:
+        leg = braket.G[node][neighbor][0]["legs"][node]
+        args += (
+            braket.msg[neighbor][node],
+            (leg, nLegs + leg, 2*nLegs + leg)
+        )
+    env = ctg.einsum(*args, out_legs)
 
-        # Assembling einsum arguments.
-        out_legs = tuple(range(3 * nLegs))
-        args = ()
-        for neighbor in braket.G.adj[node]:
-            leg = braket.G[node][neighbor][0]["legs"][node]
-            args += (
-                braket.msg[neighbor][node],
-                (leg, nLegs + leg, 2*nLegs + leg)
-            )
-        env = ctg.einsum(*args, out_legs)
-
-        # Normalization to contraction value.
+    if normalize_to_cntr:
+        # Normalizing the environment to the contraction value.
         env *= (braket.cntr / braket.G.nodes[node]["cntr"])
 
-        environments[node] = env
+    return env
 
-    return environments
+
+def __loop_series_excited_terms(
+        braket: Braket,
+        excitations: Tuple[nx.MultiGraph],
+        node: int,
+        sanity_check: bool = False
+    ) -> np.ndarray:
+    """
+    Calculates the higher-order terms of the environment at `node` in
+    loop series expansion from the given excitations. `braket` contains
+    the messages and projectors that will be used to calculate the
+    expansion. Results are normalized to braket contraction value.
+    """
+
+    # Calculating the vacuum excitation, normalized to unity.
+    vacuum = __msg_direct_sum(
+        braket=braket,
+        node=node,
+        normalize_to_cntr=False,
+        sanity_check=sanity_check
+    )
+
+    # Scaffolding for the environment.
+    env = np.zeros(shape=vacuum.shape, dtype=np.complex128)
+
+    # sanity check
+    if sanity_check: assert braket.intact
+
+    for excitation in excitations:
+        exc_brakets = assemble_excitation_brakets(
+            braket=braket,
+            excitation=excitation,
+            sanity_check=sanity_check
+        )
+
+        if sanity_check:
+            # Every excitation should split into disjoint excitations, s.t.
+            # node is contained in only one excitation or in none of them.
+            containing = sum(node in braket_.exc for braket_ in exc_brakets)
+            if not (containing in (0, 1)):
+                raise RuntimeError("Muliple excitation brakets contain node.")
+
+        # If this excitation does not contain node, its contribution to the
+        # environment is propotional to the BP vacuum environment. This is the
+        # default case; if it turns out later that the excitation does in fact
+        # contain node, this will be overriden.
+        exc_env = vacuum
+
+        # braket is not normalized, so the contribution of this excitations is
+        # not simply the product of all disjoint excitations. We have to
+        # account for the dangling vacuum excitations; these will be
+        # incorporated as proportionality factors.
+        excited_nodes = set(excitation.nodes()) | set((node,))
+        propor_factors = (1,) + tuple(
+            node_cntr for node_, node_cntr in braket.G.nodes(data="cntr")
+            if node_ not in excited_nodes
+        )
+
+        for exc_braket in exc_brakets:
+            if node in exc_braket.exc:
+                # This excitation contains the neighbors of node. This
+                # contribution is thus not proportional to the BP vacuum
+                # environment, but to the exact contraction of the environment
+                # minus node.
+                exc_env = exc_braket.contract(
+                    hole=node, sanity_check=sanity_check
+                )
+
+            else:
+                # If node is not contained in this braket, it means that this
+                # part of the excitation is not connected to node. This parts
+                # contribution is thus proportional to the vacuum contribution,
+                # where the proportionality factor is the contracted
+                # excitation.
+                propor_factors += (
+                    exc_braket.contract(sanity_check=sanity_check),
+                )
+
+        # Adding this excitations contribution to the environment.
+        env += exc_env * np.prod(propor_factors)
+
+    return env
 
 
 def loop_series_environments(
         braket: Braket,
-        excitations: Tuple[nx.MultiGraph] = None,
+        excitations: Dict[int, Tuple[nx.MultiGraph]] = None,
         nodes: Tuple[int] = None,
         max_order: int = np.inf,
-        verbose: bool = False,
-        sanity_check: bool = False
+        skip_BP: bool = False,
+        sanity_check: bool = False,
+        **kwargs
     ) -> Dict[int, np.ndarray]:
     """
     Calculates the environments at the sites from `nodes`. If `nodes
-    = None` (default), calculates environments at every site.
+    = None` (default), calculates environments at every site. `kwargs`
+    are passed to BP iterations.
 
     The environment at a node is a tensor with `3 * len(adj[node])`
     legs. It's legs come in three groups: First the bra legs, followed
@@ -1723,24 +1935,76 @@ def loop_series_environments(
     """
     # sanity check
     if sanity_check: assert braket.intact
+    if not skip_BP and not braket.converged:
+        # Running a BP iteration to find converged messages.
+        braket.BP(sanity_check=sanity_check, **kwargs)
+
     if not braket.converged:
         warnings.warn(
             "Calculating environments from non-converged messages.",
             RuntimeWarning
         )
 
-    if max_order == 0:
-        # Loop series environments with zero-weight excitations involve only
-        # the BP vacuum, i.e. the messages from the BP iteration. The
-        # environments are the tensor products of the messages.
+    # Which nodes do we consider?
+    if nodes is None: nodes = tuple(braket)
 
-        return __msg_direct_sum(
+    # Zero-weight excitations: the BP vacuum, i.e. tensor products of the
+    # messages.
+    environments = {
+        node: __msg_direct_sum(
             braket=braket,
-            nodes=nodes,
+            node=node,
+            normalize_to_cntr=True,
+            sanity_check=sanity_check
+        )
+        for node in nodes
+    }
+
+    if max_order == 0:
+        return environments
+
+    # Which excitations do we consider?
+    if excitations is None:
+        # Finding excitations in the graph.
+        considered_excitations = {
+            node: BP_excitations(
+                G=braket.G,
+                holes=(node,),
+                max_order=max_order,
+                sanity_check=sanity_check
+            )
+            for node in nodes
+        }
+    else:
+        # Which excitations do we take into account?
+        considered_excitations = {
+            node: tuple(
+                exc for exc in excitations[node]
+                if exc.number_of_edges() <= max_order
+            )
+            for node in nodes
+        }
+
+    # Inserting projectors in the edges.
+    for node1, node2 in braket.G.edges():
+        insert_excitation(
+            braket=braket,
+            node1=node1,
+            node2=node2,
+            skip_BP=skip_BP,
             sanity_check=sanity_check
         )
 
-    raise NotImplementedError
+    for node in nodes:
+        env_ = __loop_series_excited_terms(
+            braket=braket,
+            excitations=considered_excitations[node],
+            node=node,
+            sanity_check=sanity_check
+        )
+        environments[node] += env_
+
+    return environments
 
 
 def environments_direct_sum(

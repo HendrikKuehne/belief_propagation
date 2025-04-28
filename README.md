@@ -126,6 +126,9 @@ This will be updated continuously, as questions come to mind.
     * Loop Series Expansions for Tensor Networks  
       Glen Evenbly, Nicola Pancotti, Ashley Milsted, Johnnie Gray, Garnet Kin-Lic Chan  
       [arXiv:2409.03108](https://arxiv.org/abs/2409.03108)
+    * Christian Knoll, Dhagash Mehta, Tianran Chen, Franz Pernkopf  
+      Fixed Points of Belief Propagation—An Analysis via Polynomial Homotopy Continuation  
+      [IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 40, no. 9, pp. 2124-2136, Sep. 2018](https://doi.org/10.1109/TPAMI.2017.2749575)
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  

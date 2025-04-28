@@ -8,13 +8,16 @@ __all__ = [
     "delta_tensor",
     "multi_kron",
     "proportional",
-    "is_hermitian",
     "rel_err",
     "check_msg_psd",
     "gen_eigval_problem",
     "multi_tensor_rank",
     "entropy",
     "fidelity",
+    # hermiticity
+    "is_hermitian_matrix",
+    "is_hermitian_message",
+    "is_hermitian_environment",
     # graphs
     "write_exp_bonddim_to_graph",
     "divide_graph",
@@ -33,7 +36,7 @@ __all__ = [
 
 import warnings
 import itertools
-from typing import List, Dict, Tuple, FrozenSet
+from typing import List, Dict, Tuple, FrozenSet, Callable
 
 import numpy as np
 import networkx as nx
@@ -41,7 +44,7 @@ import scipy.linalg as scialg
 import scipy.sparse as scisparse
 
 # -----------------------------------------------------------------------------
-#                   math
+#                   Math
 # -----------------------------------------------------------------------------
 
 def crandn(
@@ -73,7 +76,7 @@ def multi_kron(*ops, create_using: str = "numpy"):
     """
     if create_using == "numpy":
         res_op = 1
-        for op in ops: res_op = np.kron(op,res_op)
+        for op in ops: res_op = np.kron(res_op, op)
         return res_op
 
     if "scipy" in create_using:
@@ -92,7 +95,7 @@ def multi_kron(*ops, create_using: str = "numpy"):
 
         res_op = ops[0]
         for op in ops[1:]:
-            res_op = scisparse.kron(op, res_op, format=format)
+            res_op = scisparse.kron(res_op, op, format=format)
         return res_op
 
     raise ValueError(
@@ -148,20 +151,6 @@ def proportional(
         return False
 
     return np.allclose(div[0] * B, A)
-
-
-def is_hermitian(A, threshold: float = 1e-8, verbose: bool = False):
-    if np.allclose(A,A.T.conj(), atol=threshold):
-        return True
-
-    else:
-        if verbose:
-            diff = np.linalg.norm(A - A.T.conj())
-            warnings.warn(
-                f"Difference from hermiticity: {diff:.5e}.",
-                RuntimeWarning
-            )
-        return False
 
 
 def rel_err(ref: float, approx: float) -> float:
@@ -305,7 +294,131 @@ def fidelity(psi: np.ndarray, subspace: Tuple[np.ndarray]) -> float:
 
 
 # -----------------------------------------------------------------------------
-#                   graph routines
+#                   Hermiticity of Different Objects
+# -----------------------------------------------------------------------------
+
+
+def hermitian_wrapper(
+        diff_func: Callable[[np.ndarray], np.ndarray]
+    ) -> Callable[[np.ndarray, float, bool], bool]:
+    """
+    Wraps functions that test if certain objects are hermitian. `func`
+    must accept the object that is to be tested, and must return the
+    distance between the object and it's complex conjugate as a numpy
+    array. `kwargs` are passed to `diff_func`.
+    """
+
+    def herm_test_func(
+            obj: np.ndarray,
+            threshold: float = 1e-8,
+            verbose: bool = False,
+            **kwargs
+        ) -> bool:
+        # Calculating the distance between the object and it's conjugate.
+        diff = diff_func(obj, **kwargs)
+
+        if np.allclose(diff, 0, atol=threshold):
+            return True
+
+        else:
+            if verbose:
+                diff_norm = np.linalg.norm(diff)
+                warnings.warn(
+                    f"Difference from hermiticity: {diff_norm:.5e}.",
+                    RuntimeWarning
+                )
+            return False
+
+    return herm_test_func
+
+
+@hermitian_wrapper
+def is_hermitian_matrix(A: np.ndarray) -> np.ndarray:
+    """Is the matrix `A` hermitian?"""
+    # sanity check
+    if not A.ndim == 2:
+        raise ValueError("A is not a matrix.")
+
+    return A - A.T.conj()
+
+
+@hermitian_wrapper
+def is_hermitian_message(
+        msg: np.ndarray,
+        antihermitian: bool = False
+    ) -> np.ndarray:
+    """
+    Is the message `msg` hermitian?
+
+    A message is conjugated by switching its bra- and ket-leg, while
+    leaving the operator leg in its place, and taking the complex
+    conjugate. Tetsts for anti-hermiticity, if `antihermitian = True`.
+    """
+    # sanity check
+    if not msg.ndim == 3:
+        raise ValueError("Messages must have three legs.")
+    if not msg.shape[0] == msg.shape[2]:
+        raise ValueError(
+            "Physical dimensions in bra and ket legs have different sizes."
+        )
+
+    if antihermitian:
+        return msg + np.transpose(msg, axes=(2, 1, 0)).conj()
+    else:
+        return msg - np.transpose(msg, axes=(2, 1, 0)).conj()
+
+
+@hermitian_wrapper
+def is_antihermitian_message(msg: np.ndarray) -> np.ndarray:
+    """
+    Is the message `msg` hermitian?
+
+    A message is conjugated by switching its bra- and ket-leg, while
+    leaving the operator leg in its place, and taking the complex
+    conjugate.
+    """
+    # sanity check
+    if not msg.ndim == 3:
+        raise ValueError("Messages must have three legs.")
+    if not msg.shape[0] == msg.shape[2]:
+        raise ValueError(
+            "Physical dimensions in bra and ket legs have different sizes."
+        )
+
+    return msg + np.transpose(msg, axes=(2, 1, 0)).conj()
+
+
+@hermitian_wrapper
+def is_hermitian_environment(env: np.ndarray) -> np.ndarray:
+    """
+    Is the environment `env` hermitian?
+
+    An environment at a node is a tensor with `3 * len(adj[node])` legs.
+    It's legs come in three groups: First the bra legs, followed by the
+    operator legs, and finally the ket legs. Each group contains
+    `len(adj[node])` legs, leading to the total of `3 * len(adj[node])`
+    legs.
+    """
+    nLegs = env.ndim // 3
+
+    # sanity check
+    if not env.ndim == 3 * nLegs:
+        raise ValueError("Environment has mismatches in numbers of legs.")
+    if not all(env.shape[i] == env.shape[2*nLegs + i] for i in range(nLegs)):
+        raise ValueError(
+            "Environment has mismatches in physical dimensions."
+        )
+
+    bra_legs = tuple(range(nLegs))
+    op_legs = tuple(nLegs + i for i in range(nLegs))
+    ket_legs = tuple(2*nLegs + i for i in range(nLegs))
+    env_conj = np.transpose(env, axes=ket_legs + op_legs + bra_legs).conj()
+
+    return env -  env_conj
+
+
+# -----------------------------------------------------------------------------
+#                   Graph Routines
 # -----------------------------------------------------------------------------
 
 
@@ -399,7 +512,7 @@ def divide_graph(G: nx.MultiGraph) -> FrozenSet[FrozenSet[int]]:
 
 
 # -----------------------------------------------------------------------------
-#                   ranking edges in graphs
+#                   Ranking Edges in Graphs
 # -----------------------------------------------------------------------------
 
 
@@ -472,7 +585,7 @@ def cycle_length_ranking(G: nx.Graph,noisy: bool = True) -> List[Tuple[int]]:
 
 
 # -----------------------------------------------------------------------------
-#                   Operator chains & operator layers
+#                   Operator Chains & Operator Layers
 # -----------------------------------------------------------------------------
 
 
@@ -531,7 +644,7 @@ def get_disjoint_subsets_from_opchains(
 
 
 # -----------------------------------------------------------------------------
-#                   sanity checks & diagnosis
+#                   Sanity Checks & Diagnosis
 # -----------------------------------------------------------------------------
 
 

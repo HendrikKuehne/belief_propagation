@@ -17,7 +17,7 @@ __all__ = [
 
 import itertools
 import copy
-from typing import Callable, Union, Tuple, Dict
+from typing import Callable, Union, Tuple, Dict, NoReturn
 import warnings
 
 import numpy as np
@@ -28,22 +28,24 @@ import tqdm
 from belief_propagation.braket import (
     Braket,
     BP_excitations,
-    assemble_excitation_braket
+    assemble_excitation_brakets
 )
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
 from belief_propagation.networks import expose_edge
-from belief_propagation.utils import (
-    delta_tensor,
-    graph_compatible,
-)
+from belief_propagation.utils import graph_compatible
 
 # -----------------------------------------------------------------------------
 #                   Truncating brakets
 # -----------------------------------------------------------------------------
 
 
-def make_BP_informed(truncation_func: Callable) -> Callable:
+def make_BP_informed(
+        truncation_func: Callable[
+            [Braket, int, int, np.ndarray, np.ndarray, bool],
+            NoReturn
+        ]
+    ) -> Callable[[Braket, int, int, bool, bool], NoReturn]:
     """
     Gives back a version of the truncation function that executes a BP
     iteration beforehand, and uses the messages as arguments to
@@ -54,9 +56,10 @@ def make_BP_informed(truncation_func: Callable) -> Callable:
 
     Returns a function with call signature
     `BP_informed_truncation_func(braket: Braket, node1: int, node2: int,
-    sanity_check: bool = False, **kwargs)`, where `kwargs` are passed to
-    the BP iteration. `braket` contains the messages that will be used
-    for truncation of the edge `(node1, node2)`.
+    skip_BP: bool = False, sanity_check: bool = False, **kwargs)`, where
+    `kwargs` are passed to the BP iteration. `braket` contains the
+    messages that will be used for truncation of the edge `(node1,
+    node2)`. If `skip_BP = False` (default),
     `BP_informed_truncation_func` runs a BP iteration, if messages in
     `braket` are not converged, and normalizes with respect to the dot
     product.
@@ -66,6 +69,7 @@ def make_BP_informed(truncation_func: Callable) -> Callable:
             braket: Braket,
             node1: int,
             node2: int,
+            skip_BP: bool = False,
             sanity_check: bool = False,
             **kwargs
         ) -> None:
@@ -74,10 +78,9 @@ def make_BP_informed(truncation_func: Callable) -> Callable:
         if sanity_check: assert braket.intact
 
         # BP iteration, to obtain messages for truncation.
-        if not braket.converged:
-            braket.BP(
-                sanity_check=sanity_check, normalize_after=False, **kwargs
-            )
+        if not skip_BP and not braket.converged:
+            braket.BP(sanity_check=sanity_check, **kwargs)
+
         if not braket.converged:
             warnings.warn(
                 "Truncation on edge with non-converged messages.",
@@ -783,20 +786,13 @@ def loop_series_contraction(
     # later.
     node_cntr = {node: cntr for node, cntr in braket.G.nodes(data="cntr")}
 
-    # Normalizing braket s.t. the BP vacuum contribution is one.
+    # Normalizing braket s.t. the BP vacuum contributions are one.
     for node in braket:
         braket[node] = tuple(
             T / (node_cntr[node] ** (1/3))
             for T in braket[node]
         )
     braket.op.check_tree = False
-
-    ## During the computations of excitations, messages are inserted into the
-    ## network. Messages are dense tensors, not tensor stacks - we must thus
-    ## contract the physical dimensions.
-    #densebraket = contract_braket_physical_indices(
-    #    braket=braket, sanity_check=sanity_check
-    #)
 
     if excitations is None:
         # Finding excitations in the graph.
@@ -820,7 +816,7 @@ def loop_series_contraction(
         exc_weight = excitation.number_of_edges()
         iterator.set_postfix_str(f"Current exc. weight = {exc_weight}")
 
-        exc_brakets = assemble_excitation_braket(
+        exc_brakets = assemble_excitation_brakets(
             braket=braket,
             excitation=excitation,
             sanity_check=sanity_check
@@ -838,24 +834,6 @@ def loop_series_contraction(
         )
 
     return cntr * cntr_norm_factor
-
-
-def __check_contracted_physical_dims(
-        braket: Braket,
-        sanity_check: bool = False
-    ) -> bool:
-    """
-    Checks if `braket` contains dummy networks in `braket.op` and
-    `braket.bra`.
-    """
-    if sanity_check: assert braket.intact
-
-    for node in braket:
-        if not (np.allclose(braket.bra[node], np.ones(shape=1))
-                and np.allclose(braket.op[node], np.ones(shape=1))):
-            return False
-
-    return True
 
 
 if __name__ == "__main__":

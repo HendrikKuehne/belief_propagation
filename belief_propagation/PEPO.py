@@ -208,7 +208,10 @@ class PEPO:
             # format, but I'm returning csr because this is optimal for
             # matrix-vector multiplication; an operation that the Lanczos
             # algorithm heavily relies on.
-            chains = self.operator_chains(sanity_check=sanity_check)
+            chains = self.operator_chains(
+                remove_ids=False,
+                sanity_check=sanity_check
+            )
 
             total_D = np.prod(tuple(self.D.values()))
             H = scisparse.csr_array((total_D, total_D))
@@ -216,9 +219,8 @@ class PEPO:
 
             for chain in chains:
                 ops = tuple(
-                    scisparse.coo_array(chain[node]) if node in chain.keys()
-                    else scisparse.eye_array(self.D[node], format="coo")
-                    for node in nodes[::-1]
+                    scisparse.coo_array(chain[node])
+                    for node in nodes
                 )
                 H += multi_kron(*ops, create_using="scipy.coo")
 
@@ -453,17 +455,17 @@ class PEPO:
             sanity_check=sanity_check
         )
 
-        # removing identity operators from the chain, substituting indices with
-        # operators
+        # Removing identity operators from the chain, substituting indices with
+        # operators.
         for iChain, chain in enumerate(operator_chains):
-            # any identities in the chain?
+            # Any identities in the chain?
             is_id = {
                 node: np.allclose(self[node][chain[node]], self.I(node))
                 for node in chain.keys()
             }
 
             if all(is_id.values()):
-                # this chain consists of identities only, and needs special
+                # This chain consists of identities only, and needs special
                 # treatment
                 if remove_ids:
                     operator_chains[iChain] = {self.root: chain[self.root]}
@@ -476,12 +478,12 @@ class PEPO:
             for key in is_id.keys():
                 T = self[key][chain[key]]
 
-                # removing identities
+                # Removing identities.
                 if remove_ids and is_id[key]:
                     chain.pop(key, None)
                     continue
 
-                # substituting indices with tensors
+                # Substituting indices with tensors.
                 if save_tensors: chain[key] = T
 
         if return_virtidx:
@@ -1415,12 +1417,9 @@ class PEPO:
         self.root: int
         """Root node of the spanning tree."""
         self.check_tree: bool = True
-        """
-        False if this PEPO is the result of a summation. Means that the
-        tree traversal checks in `self.intact` are disabled.
-        """
-        # TODO: I don't like that I have to disable the tree traversal checks;
-        # maybe find a workaround?
+        """Are the tree traversal checks in `self.intact` enabled?"""
+        # TODO: I don't like that I have to disable the tree traversal checks
+        # somtimes; maybe find a workaround?
 
         return
 
