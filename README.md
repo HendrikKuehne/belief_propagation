@@ -119,16 +119,24 @@ This will be updated continuously, as questions come to mind.
       [MediaTUM](https://mediatum.ub.tum.de/node?id=1654468)
     * Michael X. Cao, Pascal O. Vontobel  
       Double-Edge Factor Graphs: Definition, Properties and Examples  
-      [2017 IEEE Information Theory Workshop (ITW)](10.1109/ITW.2017.8277985)
+      [2017 IEEE Information Theory Workshop (ITW)](https://doi.org/10.1109/ITW.2017.8277985)
     * Jonathan S. Yedidia, William T. Freeman, Yair Weiss  
       Constructing Free-Energy Approximations and Generalized Belief Propagation Algorithms  
-      [IEEE Trans. Inf. Theory, vol. 51, no. 7, pp. 2282–2312, Jul. 2005.](10.1109/TIT.2005.850085)
+      [IEEE Trans. Inf. Theory, vol. 51, no. 7, pp. 2282–2312, Jul. 2005.](https://doi.org/10.1109/TIT.2005.850085)
     * Loop Series Expansions for Tensor Networks  
       Glen Evenbly, Nicola Pancotti, Ashley Milsted, Johnnie Gray, Garnet Kin-Lic Chan  
       [arXiv:2409.03108](https://arxiv.org/abs/2409.03108)
     * Christian Knoll, Dhagash Mehta, Tianran Chen, Franz Pernkopf  
       Fixed Points of Belief Propagation—An Analysis via Polynomial Homotopy Continuation  
       [IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 40, no. 9, pp. 2124-2136, Sep. 2018](https://doi.org/10.1109/TPAMI.2017.2749575)
+    * Christian Knoll, Franz Pernkopf  
+      On Loopy Belief Propagation – Local Stability Analysis for Non-Vanishing Fields
+      [Uncertainty in Artificial Intelligence Proceedings](https://auai.org/uai2017/proceedings/papers/160.pdf)
+        * Exploration of the effect of an external field on BP on the TFI
+    * Kevin Murphy, Yair Weiss, Michael I. Jordan  
+      Loopy Belief Propagation for Approximate Inference: An Empirical Study  
+      [UAI 1999 Proceedings 467 - 475](https://doi.org/10.48550/arXiv.1301.6725)
+        * Dampening ("Momentum term") in BP
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  
@@ -160,5 +168,5 @@ This will be updated continuously, as questions come to mind.
     Eigenvalue and Generalized Eigenvalue Problems: Tutorial  
     [arXiv:1903.11240](https://arxiv.org/abs/1903.11240v3)
   * Silvia Martina  
-    Sepctra of Random Matrices  
+    Spectra of Random Matrices  
     [hosted by Università degli Studi di Padova](https://thesis.unipd.it/retrieve/b409c829-d57d-491c-9c0f-7d5f21f6a756/Tesi_LM_Martina_Silvia.pdf)

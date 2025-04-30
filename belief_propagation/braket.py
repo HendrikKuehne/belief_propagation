@@ -697,6 +697,7 @@ class Braket(BaseBraket):
 
     def __message_passing_step(
             self,
+            damping: float,
             normalize: bool,
             parallel: bool,
             sanity_check: bool
@@ -738,7 +739,9 @@ class Braket(BaseBraket):
                     )
 
                     # saving the new message
-                    new_msg[sender][receiver] = msg
+                    new_msg_ = (msg * (1 - damping)
+                                + damping * old_msg[sender][receiver])
+                    new_msg[sender][receiver] = new_msg_
 
             # put new messages in the graph
             self.msg = new_msg
@@ -767,8 +770,10 @@ class Braket(BaseBraket):
 
             for msg_id, msg in zip(msg_ids, new_msg):
                 sender, receiver = msg_id
-                # saving the new message
-                self.msg[sender][receiver] = msg
+                # Calculating the new message.
+                new_msg_ = (msg * (1 - damping)
+                            + damping * self.msg[sender][receiver])
+                self.msg[sender][receiver] = new_msg_
 
         # passing messages through the edges
         self.__pass_msg_through_edges(sanity_check=sanity_check)
@@ -793,6 +798,7 @@ class Braket(BaseBraket):
     def __message_passing_iteration(
             self,
             numiter: int,
+            damping: float,
             real: bool,
             normalize: bool,
             threshold: float,
@@ -827,6 +833,7 @@ class Braket(BaseBraket):
 
         for i in iterator:
             eps = self.__message_passing_step(
+                damping=damping,
                 normalize=normalize,
                 parallel=parallel,
                 sanity_check=sanity_check
@@ -1114,6 +1121,7 @@ class Braket(BaseBraket):
             self,
             numiter: int = 1000,
             trials: int = 3,
+            damping: float = 0,
             real: bool = False,
             normalize: bool = True,
             threshold: float = 1e-10,
@@ -1131,6 +1139,9 @@ class Braket(BaseBraket):
         * `trials`: Number of times the BP iteration is attempted. The
         value `np.inf` can be supplied, in which case the algorithm
         terminates only when a trial reaches `threshold`.
+        * `damping`: Damping factor for messages. Messages are updated
+        according to `m' = (1-damping)*m' + damping*m`, where `m'` is
+        the new message.
         * `real`: Initialization of messages with real values (otherwise
         complex).
         * `normalize`: Normalization of messages after each
@@ -1153,6 +1164,9 @@ class Braket(BaseBraket):
         """
         # sanity check
         if sanity_check: assert self.intact
+
+        if not (damping >= 0 and damping <= 1):
+            raise ValueError("Damping factor must be between 0 and 1.")
 
         if not normalize:
             warnings.warn(
@@ -1204,6 +1218,7 @@ class Braket(BaseBraket):
             # message passing iteration
             eps_list = self.__message_passing_iteration(
                 numiter=numiter,
+                damping=damping,
                 real=real,
                 normalize=normalize,
                 threshold=threshold,
