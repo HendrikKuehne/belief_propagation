@@ -581,7 +581,7 @@ class Braket(BaseBraket):
 
     def construct_initial_messages(
             self,
-            real:bool = False,
+            real: bool = False,
             normalize: bool = True,
             msg_init: str = "normal",
             sanity_check: bool = False,
@@ -888,13 +888,14 @@ class Braket(BaseBraket):
                     msg_sum = np.sum(self.msg[sender][receiver])
 
                     if np.isclose(msg_sum, 0):
-                        warnings.warn(
-                            "".join((
-                                f"Message from {sender} to {receiver} sums to ",
-                                "zero. Skipping normalization."
-                            )),
-                            RuntimeWarning
-                        )
+                        with tqdm.tqdm.external_write_mode():
+                            warnings.warn(
+                                "".join((
+                                    f"Message from {sender} to {receiver} ",
+                                    "sums to zero. Skipping normalization."
+                                )),
+                                RuntimeWarning
+                            )
                         continue
 
                     self.msg[sender][receiver] /= msg_sum
@@ -906,14 +907,15 @@ class Braket(BaseBraket):
                 raise RuntimeError("Trying to normalize to nan network value.")
 
             if self.cntr == 0:
-                warnings.warn(
-                    "".join((
-                        "When the network value is zero, normalizing ",
-                        "messages to the contraction value will not work. ",
-                        "Skipping."
-                    )),
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            "When the network value is zero, normalizing ",
+                            "messages to the contraction value will not ",
+                            "work. Skipping."
+                        )),
+                        RuntimeWarning
+                    )
                 return
 
             if not "cntr" in self.G.nodes[self._op.root].keys():
@@ -939,15 +941,23 @@ class Braket(BaseBraket):
 
                 else:
                     # Complex numbers do not have a sign; skipping.
-                    warnings.warn(
-                        f"Complex normalization factor in node {node}.",
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                "Complex normalization factor in node ",
+                                f"{node}; messages might not be hermitian ",
+                                "after normaliation."
+                            )),
+                            RuntimeWarning
+                        )
                     pass
 
                 msg_norm = norm ** (1 / len(self.G.adj[node]))
 
-                for neighbor, sign_factor in zip(self.G.adj[node], sign_factors):
+                for neighbor, sign_factor in zip(
+                    self.G.adj[node],
+                    sign_factors
+                ):
                     self.msg[neighbor][node] *= (sign_factor * msg_norm)
 
             return
@@ -1034,10 +1044,14 @@ class Braket(BaseBraket):
         self.G.nodes[self.op.root]["cntr"] *= phase_factor
 
         if (not np.isclose(phase_factor, 1)) and raise_complex_warning:
-            warnings.warn(
-                "Braket node contraction values have overall complex phase.",
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Braket node contraction values have overall ",
+                        "complex phase."
+                    )),
+                    RuntimeWarning
+                )
 
         return
 
@@ -1120,7 +1134,7 @@ class Braket(BaseBraket):
     def BP(
             self,
             numiter: int = 1000,
-            trials: int = 3,
+            trials: int = 1,
             damping: float = 0,
             real: bool = False,
             normalize: bool = True,
@@ -1215,7 +1229,7 @@ class Braket(BaseBraket):
         eps_list = ()
         iTrial = 0
         while iTrial < trials:
-            # message passing iteration
+            # Message passing iteration.
             eps_list = self.__message_passing_iteration(
                 numiter=numiter,
                 damping=damping,
@@ -1236,9 +1250,13 @@ class Braket(BaseBraket):
             iTrial += 1
 
             if eps_list[-1] < threshold:
-                self._converged = True
-                self.iter_until_conv = len(eps_list)
                 break
+
+        if eps_list[-1] < threshold:
+            self._converged = True
+            self.iter_until_conv = len(eps_list)
+        else:
+            self.iter_until_conv = np.nan
 
         # Contract tensors and messages, opposite messages, normalize messages,
         # calculate total contraction value.
@@ -1308,10 +1326,11 @@ class Braket(BaseBraket):
         if sanity_check: assert self.intact
 
         if self.msg == None:
-            warnings.warn(
-                "Message are not initialized. Skipping.",
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "Message are not initialized. Skipping.",
+                    RuntimeWarning
+                )
 
         for node1, node2 in self.G.edges():
             for sender, receiver in itertools.permutations((node1, node2)):
@@ -1377,13 +1396,14 @@ class Braket(BaseBraket):
                     self.op.G[node1][node2][0]["size"],
                     self.ket.G[node1][node2][0]["size"],
                 ):
-                    warnings.warn(
-                        "".join((
-                            f"Transformation for message pass {sender} -> ",
-                            f"{receiver} has wrong shape."
-                        )),
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                f"Transformation for message pass {sender} ",
+                                f"-> {receiver} has wrong shape."
+                            )),
+                            RuntimeWarning
+                        )
                     return False
 
         return True
@@ -1455,7 +1475,9 @@ class Braket(BaseBraket):
                 )
                 return msg - np.sum(msg)
 
-            raise ValueError("Message initialisation method " + method + " not implemented.")
+            raise ValueError(
+                "Message initialisation method " + method + " not implemented."
+            )
 
         return randn(size=(bra_size, op_size, ket_size))
 

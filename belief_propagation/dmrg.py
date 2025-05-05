@@ -5,10 +5,13 @@ DMRG on Braket-objects. Contains the DMRG-class.
 __all__ = ["DMRG", "LoopSeriesDMRG", "loop_series_environments"]
 
 import itertools
-from typing import Dict, Tuple, List, Iterator
+from typing import Dict, Tuple, List, Iterator, Union
 import warnings
 import copy
 import pickle
+import os
+import datetime
+from io import TextIOWrapper, StringIO
 
 import numpy as np
 import networkx as nx
@@ -30,9 +33,7 @@ from belief_propagation.PEPS import PEPS
 from belief_propagation.braket import (
     Braket,
     BP_excitations,
-    assemble_excitation_brakets,
-    braket_to_ctg_arguments,
-    slice_singleton_dimensions
+    assemble_excitation_brakets
 )
 from belief_propagation.truncate_expand import (
     L2BP_compression,
@@ -40,6 +41,8 @@ from belief_propagation.truncate_expand import (
     loop_series_contraction,
     insert_excitation
 )
+from belief_propagation.hamiltonians import Zero
+# Only used for convenience; can be circumvented easily.
 
 
 class DMRG:
@@ -260,13 +263,14 @@ class DMRG:
 
         for neighbor in self.overlap.G.adj[node]:
             if not self.overlap.msg[neighbor][node].shape[1] == 1:
-                warnings.warn(
-                    "".join((
-                        f"Message {neighbor} -> {node} does not originate ",
-                        "from an overlap!"
-                    )),
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Message {neighbor} -> {node} does not ",
+                            "originate from an overlap!"
+                        )),
+                        RuntimeWarning
+                    )
 
             msg = self.overlap.msg[neighbor][node][:,0,:]
 
@@ -367,7 +371,8 @@ class DMRG:
         self.__assemble_messages(sanity_check=sanity_check)
 
         if not self.converged:
-            warnings.warn("BP iteration not converged.", RuntimeWarning)
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn("BP iteration not converged.", RuntimeWarning)
 
         return
 
@@ -403,13 +408,14 @@ class DMRG:
             N = self.__assemble_localN(node, sanity_check=sanity_check)
 
             if False:
-                warnings.warn(
-                    "".join((
-                        "This check does not work anymore due to changes in ",
-                        "the normalization of messages."
-                    )),
-                    DeprecationWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            "This check does not work anymore due to changes ",
+                            "in the normalization of messages."
+                        )),
+                        DeprecationWarning
+                    )
                 # Are local hamiltonian and environment correctly defined?
                 local_psi = self.ket[node].flatten()
                 expval_local_cntr = ctg.einsum(
@@ -424,24 +430,26 @@ class DMRG:
 
                 if not np.isclose(expval_local_cntr, expvals_total_cntr):
                     rel_err_ = rel_err(expvals_total_cntr, expval_local_cntr)
-                    warnings.warn(
-                        "".join((
-                            f"Local hamiltonian at node {node} does not ",
-                            "reproduce expectation value. Relative error ",
-                            f"{rel_err_:.3e}."
-                        )),
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                f"Local hamiltonian at node {node} does not ",
+                                "reproduce expectation value. Relative error ",
+                                f"{rel_err_:.3e}."
+                            )),
+                            RuntimeWarning
+                        )
                 if not np.isclose(overlap_local_cntr, self.overlap.cntr):
                     rel_err_ = rel_err(self.overlap.cntr, overlap_local_cntr)
-                    warnings.warn(
-                        "".join((
-                            f"Local environment at node {node} does not ",
-                            "reproduce overlap. Relative error ",
-                            f"{rel_err_:.3e}."
-                        )),
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                f"Local environment at node {node} does not ",
+                                "reproduce overlap. Relative error ",
+                                f"{rel_err_:.3e}."
+                            )),
+                            RuntimeWarning
+                        )
 
             eigvals,eigvecs = gen_eigval_problem(
                 H,
@@ -688,10 +696,11 @@ class DMRG:
         # and physical dimensions?
         for i, expval in enumerate(self.expvals):
             if not graph_compatible(expval.G, self.overlap.G):
-                warnings.warn(
-                    f"Graphs of overlap and expval {i} not compatible.",
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Graphs of overlap and expval {i} not compatible.",
+                        UserWarning
+                    )
                 return False
 
         # Are bra and ket in the overlap adjoint?
@@ -700,49 +709,56 @@ class DMRG:
                 self.overlap.bra[node].conj(),
                 self.overlap.ket[node]
             ):
-                warnings.warn(
-                    "".join((
-                        f"Bra- and ket-tensors at node {node} in overlap not ",
-                        "complex conjugates of one another."
-                    )),
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Bra- and ket-tensors at node {node} in overlap ",
+                            "are not complex conjugates of one another."
+                        )),
+                        UserWarning
+                    )
                 return False
 
         # Are bra and ket in the expvals adjoint?
         for i, expval in enumerate(self.expvals):
             for node in expval:
                 if not np.allclose(expval.bra[node].conj(), expval.ket[node]):
-                    warnings.warn(
-                        "".join((
-                            f"Bra- and ket-tensors at node {node} in ",
-                            f"expval {i} not complex conjugates of one ",
-                            "another."
-                        )),
-                        UserWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                f"Bra- and ket-tensors at node {node} in ",
+                                f"expval {i} are not complex conjugates of ",
+                                "one another."
+                            )),
+                            UserWarning
+                        )
                     return False
 
         # Do overlap and expval contain the same tensors?
         for i, expval in enumerate(self.expvals):
             for node in expval:
                 if not np.allclose(expval.ket[node], self.overlap.ket[node]):
-                    warnings.warn(
-                        "".join((
-                            f"Tensor at node {node} is not the same in ",
-                            f"overlap and expval {i}."
-                        )),
-                        UserWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                f"Tensor at node {node} is not the same in ",
+                                f"overlap and expval {i}."
+                            )),
+                            UserWarning
+                        )
                     return False
 
         # Are the leg orderings the same?
         for i, expval in enumerate(self.expvals):
             if not same_legs(self.overlap.G, expval.G):
-                warnings.warn(
-                    f"Leg orderings in overlap and expval {i} are different.",
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Leg orderings in overlap and expval {i} are ",
+                            "different."
+                        )),
+                        UserWarning
+                    )
                 return False
 
         return True
@@ -862,6 +878,27 @@ class LoopSeriesDMRG:
     """
     tikhonov_regularization_eps: float = 1e-6
     """Epsilon for Tikhonov-regularization of singular messages."""
+    save_oscillating_states: bool = False
+    """
+    If `save_oscillating_states = True`, this object saves itself in
+    `doc/LoopSeriesDMRG_output/` if BP is unable to converge. Note that
+    BP not converging does not imply that BP cannot converge;
+    convergence can be very slow. From experience, however, convergence
+    is very steady, i.e. does not oscillate strongly. When all BP
+    iterations did not converge and the message eps are above
+    `non_convergence_BP_eps`, it is assumed that BP cannot converge and
+    `self` is pickled in a file.
+    """
+    non_convergence_BP_eps: float = 1e-3
+    """
+    Message epsilon above which it is presumed that BP oscillates on
+    the current state.
+    """
+    output_dir: str = "doc/LoopSeriesDMRG_output/"
+    """
+    Diectory in which the object is pickled, if
+    `save_oscillating_states = True`.
+    """
 
     def __assemble_T_totalH(self) -> None:
         """
@@ -912,7 +949,6 @@ class LoopSeriesDMRG:
     def __assemble_localH(
             self,
             node: int,
-            verbose: bool,
             sanity_check: bool
         ) -> np.ndarray:
         """
@@ -931,10 +967,14 @@ class LoopSeriesDMRG:
                 "No environments with which to calculate a local hamiltonian."
             )
         if not self.converged:
-            warnings.warn(
-                "Assembling local hamiltonian with non-converged messages.",
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Assembling local hamiltonian with non-converged ",
+                        "messages."
+                    )),
+                    RuntimeWarning
+                )
 
         # The hamiltonian at node is obtained by tracing out the rest of the
         # network. The environments are approximated by messages.
@@ -973,7 +1013,7 @@ class LoopSeriesDMRG:
 
         if sanity_check and self.converged:
             assert is_hermitian_matrix(
-                H, threshold=self.hermiticity_threshold, verbose=verbose
+                H, threshold=self.hermiticity_threshold, verbose=self._verbose
             )
 
         return H
@@ -981,7 +1021,6 @@ class LoopSeriesDMRG:
     def __assemble_localN(
             self,
             node: int,
-            verbose: bool,
             sanity_check: bool
         ) -> np.ndarray:
         """
@@ -1002,13 +1041,14 @@ class LoopSeriesDMRG:
                 "No environments with which to calculate a local hamiltonian."
             )
         if not self.converged:
-            warnings.warn(
-                "".join((
-                    "Assembling local overlap environment with non-converged ",
-                    "messages."
-                )),
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Assembling local overlap environment with non-",
+                        "converged messages."
+                    )),
+                    RuntimeWarning
+                )
 
         nLegs = len(self._psi.G.adj[node])
         args = ()
@@ -1050,12 +1090,12 @@ class LoopSeriesDMRG:
 
         if sanity_check and self.converged:
             assert is_hermitian_matrix(
-                N, threshold=self.hermiticity_threshold, verbose=verbose
+                N, threshold=self.hermiticity_threshold, verbose=self._verbose
             )
 
         return N
 
-    def __BP(self, verbose: bool, sanity_check: bool, **kwargs) -> None:
+    def __BP(self, sanity_check: bool, **kwargs) -> None:
         """
         Runs BP iterations on the overlap and on every operator, if
         there is no converged set of messages available. Saves the
@@ -1074,6 +1114,8 @@ class LoopSeriesDMRG:
             iterator_desc_prefix = "DMRG"
 
         self._converged = True
+        _iter_until_onv = ()
+        _eps = ()
 
         allbrakets = self.brakets
 
@@ -1084,20 +1126,23 @@ class LoopSeriesDMRG:
                     iterator_desc_prefix,
                     f" | expval {i}"
                 )),
-                verbose=verbose,
+                verbose=False,
                 sanity_check=sanity_check,
                 **kwargs
             )
 
             if not expval.converged:
                 self._converged = False
-                warnings.warn(
-                    "".join((
-                        f"BP iteration on expval {i} did not converge. ",
-                        f"Last change in message norm: {eps_list[-1]:.3e}."
-                    )),
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"BP iteration on expval {i} did not converge. ",
+                            f"Last change in message norm: {eps_list[-1]:.3e}."
+                        )),
+                        RuntimeWarning
+                    )
+            _iter_until_onv += (expval.iter_until_conv,)
+            _eps += (eps_list[-1],)
 
             self._msg_oplist[i] = expval.msg
 
@@ -1107,20 +1152,24 @@ class LoopSeriesDMRG:
                 iterator_desc_prefix,
                 f" | overlap"
             )),
-            verbose=verbose,
+            verbose=False,
             sanity_check=sanity_check,
             **kwargs
         )
 
         if not allbrakets[-1].converged:
             self._converged = False
-            warnings.warn(
-                "".join((
-                    "BP iteration on overlap did not converge. ",
-                    f"Last change in message norm: {eps_list[-1]:.3e}."
-                )),
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "BP iteration on overlap did not converge. ",
+                        f"Last change in message norm: {eps_list[-1]:.3e}."
+                    )),
+                    RuntimeWarning
+                )
+
+        _iter_until_onv += (expval.iter_until_conv,)
+        _eps += (eps_list[-1],)
 
         self._msg_overlap = allbrakets[-1].msg
 
@@ -1134,19 +1183,55 @@ class LoopSeriesDMRG:
                         if not is_hermitian_message(
                             msg_dict[sender][receiver],
                             threshold=self.hermiticity_threshold,
-                            verbose=verbose
+                            verbose=self._verbose
                         ):
                             raise ValueError("".join((
                                 f"Message from {sender} to {receiver} in ",
                                 f"braket {i} is not hermitian."
                             )))
 
+        # Saving the number of iterations it took each braket to converge, and
+        # the last change in message norm.
+        self.iter_until_conv += (_iter_until_onv,)
+        self.eps += (_eps,)
+
+        # Was BP able to converge, or should we save the current object self?
+        if self.save_oscillating_states and not self.converged:
+            if min(_eps) > self.non_convergence_BP_eps:
+                # Filename for the pickle file.
+                now = datetime.datetime.now().strftime("%H_%M_%S___%d-%m-%Y")
+                fname = os.path.join(
+                    self.output_dir,
+                    "".join((
+                        "non_converging_",
+                        str(self.__class__.__name__),
+                        "_t=",
+                        now,
+                        ".pickle"
+                    ))
+                )
+
+                # Saving the current object in a pickle file.
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            "BP iterations did not converge. Final BP eps: ",
+                            str(_eps),
+                            f". All below {self.non_convergence_BP_eps:.3e}.",
+                            "Impossibility of convergence is assumed; saving ",
+                            "current self in ",
+                            fname
+                        )),
+                        RuntimeWarning
+                    )
+                with open(fname, mode="wb") as file:
+                    pickle.dump(self, file)
+
         return
 
     def __calculate_environments(
             self,
             nodes: Tuple[int] = None,
-            verbose: bool = True,
             sanity_check: bool = False,
             **kwargs
         ) -> None:
@@ -1166,7 +1251,7 @@ class LoopSeriesDMRG:
         if sanity_check: assert self.intact
 
         # We need a converged set of messages; running BP iterations.
-        self.__BP(verbose=False, sanity_check=sanity_check, **kwargs)
+        self.__BP(sanity_check=sanity_check, **kwargs)
 
         if nodes is None: nodes = tuple(self.psi)
 
@@ -1215,7 +1300,7 @@ class LoopSeriesDMRG:
                     if not is_hermitian_environment(
                         env,
                         threshold=self.hermiticity_threshold,
-                        verbose=verbose
+                        verbose=self._verbose
                     ):
                         raise ValueError("".join((
                             f"Environment at node {node} in operator {i} is ",
@@ -1232,7 +1317,7 @@ class LoopSeriesDMRG:
                     if not is_hermitian_environment(
                         env,
                         threshold=self.hermiticity_threshold,
-                        verbose=verbose
+                        verbose=self._verbose
                     ):
                         raise ValueError("".join((
                             f"Environment at node {node} in ",
@@ -1245,13 +1330,14 @@ class LoopSeriesDMRG:
     def __sweep(
             self,
             gauge: bool,
-            verbose: bool,
+            file: Union[TextIOWrapper, StringIO],
             sanity_check: bool,
             **kwargs
         ) -> float:
         """
-        Local update at all sites. `kwargs` are passed to `Braket.BP`.
-        Returns the change in energy after the sweep.
+        Local update at all sites. `kwargs` are passed to
+        `self.__calculate_environments`. Returns the change in energy
+        after the sweep.
 
         The graph is traversed in breadth-first manner. After each local
         update, new outgoing messages are calculated, thereby updating
@@ -1276,26 +1362,24 @@ class LoopSeriesDMRG:
                 self.oplist[0].tree,
                 source=self.oplist[0].root
             ),
-            desc=f"DMRG sweep {self.__iSweep}",
-            disable=not verbose
+            desc=f"sweep {self.__iSweep}",
+            disable=not self._verbose,
+            file=file
         )
 
         for node in iterator:
-            iterator.set_postfix_str(f"Node {node}")
-
             # Getting virtual leg environment around node, and from it the
             # local hamiltonian and the complete environment.
             self.__calculate_environments(
                 nodes=(node,),
-                verbose=verbose,
                 sanity_check=sanity_check,
                 **kwargs
             )
             H = self.__assemble_localH(
-                node=node, verbose=verbose, sanity_check=sanity_check
+                node=node, sanity_check=sanity_check
             )
             N = self.__assemble_localN(
-                node=node, verbose=verbose, sanity_check=sanity_check
+                node=node, sanity_check=sanity_check
             )
 
             # Greedy optimization step at node.
@@ -1324,6 +1408,8 @@ class LoopSeriesDMRG:
                     nodes=(node,)
                 )
 
+            iterator.set_postfix_str(f"Node {node}, eps = {max(self.eps[-1]):.3e}")
+
         Enext = self.E0
 
         return np.abs(Eprev - Enext)
@@ -1335,21 +1421,42 @@ class LoopSeriesDMRG:
             gauge: bool = True,
             compress: bool = True,
             sanity_check: bool = False,
+            file: Union[TextIOWrapper, StringIO] = None,
             **kwargs
-        ) -> None:
+        ) -> tuple[float]:
         """
         Runs single-site DMRG on the underlying braket. `kwargs` are
         passed to BP iterations. The state is not normalized afterwards!
+        `file` determines the output stream for tqdm progress messages;
+        is forwarded to `tqdm.tqdm`.
+
+        Returns a tuple of the change in energy after every sweep.
         """
         if sanity_check: assert self.intact
+
+        if self.save_oscillating_states:
+            warnings.warn(
+                "".join((
+                    "self.save_oscillating_states is True. If, during a call ",
+                    "to self.__BP, not BP iteration achieves eps below ",
+                    f"{self.non_convergence_BP_eps:.3e}, self will be ",
+                    "stored in the directory ",
+                    self.output_dir,
+                    "."
+                )),
+                RuntimeWarning
+            )
 
         nSweeps = nSweeps if nSweeps != None else self.nSweeps
         iterator = tqdm.tqdm(
             range(nSweeps),
             desc="DMRG sweeps",
-            disable=not verbose
+            disable=not verbose,
+            file=file
         )
         eps_list = ()
+
+        self._verbose = verbose
 
         if gauge: self.gauge(sanity_check=sanity_check, **kwargs)
 
@@ -1357,7 +1464,7 @@ class LoopSeriesDMRG:
             self.__iSweep = iSweep
             eps = self.__sweep(
                 gauge=gauge,
-                verbose=verbose,
+                file=file,
                 sanity_check=sanity_check,
                 **kwargs
             )
@@ -1366,7 +1473,7 @@ class LoopSeriesDMRG:
 
             if compress: self.compress(sanity_check=sanity_check, **kwargs)
 
-        return
+        return eps_list
 
     def contract(self, sanity_check: bool = False) -> float:
         """
@@ -1406,9 +1513,9 @@ class LoopSeriesDMRG:
                 # We have a converged set of messages that we can use for
                 # gauging, instead of having to run a new BP iteration.
                 overlap = self.brakets[-1]
-                #overlap.msg = self._msg_overlap
-                #overlap._converged = self._converged
-                #overlap.write_cntr_value(sanity_check=sanity_check)
+                overlap.converged = True
+                overlap.msg = self._msg[-1]
+                overlap.write_cntr_value()
             else:
                 overlap = None
 
@@ -1491,17 +1598,21 @@ class LoopSeriesDMRG:
                 allbrakets[i].write_cntr_value()
 
         cntr = 0
-        for expval in allbrakets[:-1]:
+        for i, expval in enumerate(allbrakets[:-1]):
             cntr += loop_series_contraction(
                 braket=expval,
                 excitations=self.closed_excitations,
-                max_order=self.max_order
+                max_order=self.max_order,
+                #verbose=self._verbose,
+                iterator_desc_prefix=f"E0 expval {i}"
             )
 
         cntr /= loop_series_contraction(
             braket=allbrakets[-1],
             excitations=self.closed_excitations,
-            max_order=self.max_order
+            max_order=self.max_order,
+            #verbose=self._verbose,
+            iterator_desc_prefix=f"E0 overlap"
         )
 
         return cntr
@@ -1535,52 +1646,47 @@ class LoopSeriesDMRG:
         for i, op in enumerate(self.oplist):
             # Is this operator intact?
             if not op.intact:
-                warnings.warn(
-                    f"Operator {i} not intact.",
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Operator {i} not intact.",
+                        UserWarning
+                    )
                 return False
 
             # Are state graph and this operator graph compatible, in terms of
             # geometry and physical dimension?
             if not graph_compatible(self.psi.G, op.G):
-                warnings.warn(
-                    f"Graphs of state and operator {i} not compatible.",
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Graphs of state and operator {i} not compatible.",
+                        UserWarning
+                    )
                 return False
 
             # Are the leg orderings the same?
             if not same_legs(op.G, self._psi.G):
-                warnings.warn(
-                    f"Leg orderings in state and operator {i} are different.",
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Leg orderings in state and operator {i} are ",
+                            "different."
+                        )),
+                        UserWarning
+                    )
                 return False
 
-        # Are the messages on the overlap intact?
-        if self._msg_overlap is not None:
-            for node1, node2 in self._psi.G.edges():
-                for sender, receiver in itertools.permutations((node1, node2)):
-                    size = self.psi.G[sender][receiver][0]["size"]
-
-                    if not check_msg_intact(
-                        msg=self._msg_overlap[sender][receiver],
-                        target_shape=(size, 1, size),
-                        sender=sender,
-                        receiver=receiver
-                    ):
-                        return False
-
-        # Are the messages on the operators intact?
-        for msg_dict, op in zip(self._msg_oplist, self.oplist):
+        # Are the messages intact?
+        for msg_dict, op in zip(
+            self._msg_oplist + [self._msg_overlap,],
+            self.oplist + (Zero(G=self.psi.G, D=self.psi.D),)
+        ):
             if msg_dict is not None:
                 for node1, node2 in op.G.edges():
                     for sender, receiver in itertools.permutations(
                         (node1, node2)
                     ):
                         op_size = op.G[sender][receiver][0]["size"]
-                        psi_size = self._psi.G[sender][receiver][0]["size"]
+                        psi_size = self.psi.G[sender][receiver][0]["size"]
 
                         if not check_msg_intact(
                             msg=msg_dict[sender][receiver],
@@ -1596,10 +1702,11 @@ class LoopSeriesDMRG:
             start=()
         ) + self.closed_excitations
         if not all(exc.number_of_edges() <= self.max_order for exc in all_exc):
-            warnings.warn(
-                "There are excitations with weight above maximum order.",
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "There are excitations with weight above maximum order.",
+                    RuntimeWarning
+                )
             return False
 
         return True
@@ -1649,8 +1756,8 @@ class LoopSeriesDMRG:
         return "".join(
             (
                 f"LoopSeriesDMRG problem on {self.nsites} sites.",
-                "\nKet: " + str(self._psi) + "\nHamiltonians: "
-            ) + (
+                "\nState: " + str(self._psi) + "\nHamiltonians: "
+            ) + tuple(
                 "".join(("\n",str(op)))
                 for op in self.oplist
             ) + (
@@ -1686,6 +1793,9 @@ class LoopSeriesDMRG:
         
         For `oplist = (H1, H2, ...)`, this object runs single-site DMRG
         on the Hamiltonian `H = H1 + H2 + ...`.
+
+        `file` determines the output for tqdm progress messages. Is
+        forwarded to every call to `tqdm.tqdm`.
         """
         # sanity check
         if sanity_check:
@@ -1730,6 +1840,9 @@ class LoopSeriesDMRG:
         self._converged: bool = False
         """Is the current set of messages a converged set?"""
 
+        self._verbose: bool = False
+        """Whether to print warnings and progress bars."""
+
         # We obtain these messages from the brakets <psi|oplist[i]|psi> of the
         # constituent operators. Their direct sums are the messages on the
         # total operator.
@@ -1741,6 +1854,19 @@ class LoopSeriesDMRG:
         # The messages on the overlap.
         self._msg_overlap: Dict[int, Dict[int, np.ndarray]] = None
         """Messages on the overlap braket."""
+
+        self.iter_until_conv: Tuple[Tuple[int]] = ()
+        """
+        Iterations until convergence of the messages, for all operators
+        and the overlap and for every call to `self.BP`.
+        """
+
+        self.eps: Tuple[Tuple[float]] = ()
+        """
+        Final change in the norm of the messages. One tuple for every call to
+        `self.BP`, and every tuple contains the final change in message norms
+        for every BP iteration (all operators and the overlap).
+        """
 
         # The environments on the total hamiltonian.
         self._env_totalH:  Dict[int, np.ndarray] = None
@@ -1779,6 +1905,12 @@ class LoopSeriesDMRG:
         Excitations for contracting brakets, up to order
         `self.max_order`.
         """
+
+        # Creating output directory for non-converging states.
+        os.makedirs(
+            name=os.path.dirname(self.output_dir),
+            exist_ok=True
+        )
 
         if sanity_check: assert self.intact
 
@@ -1940,10 +2072,11 @@ def loop_series_environments(
         braket.BP(sanity_check=sanity_check, **kwargs)
 
     if not braket.converged:
-        warnings.warn(
-            "Calculating environments from non-converged messages.",
-            RuntimeWarning
-        )
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "Calculating environments from non-converged messages.",
+                RuntimeWarning
+            )
 
     # Which nodes do we consider?
     if nodes is None: nodes = tuple(braket)

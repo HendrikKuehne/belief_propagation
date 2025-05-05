@@ -123,11 +123,15 @@ This will be updated continuously, as questions come to mind.
     * Jonathan S. Yedidia, William T. Freeman, Yair Weiss  
       Constructing Free-Energy Approximations and Generalized Belief Propagation Algorithms  
       [IEEE Trans. Inf. Theory, vol. 51, no. 7, pp. 2282–2312, Jul. 2005.](https://doi.org/10.1109/TIT.2005.850085)
-    * Loop Series Expansions for Tensor Networks  
-      Glen Evenbly, Nicola Pancotti, Ashley Milsted, Johnnie Gray, Garnet Kin-Lic Chan  
+    * Glen Evenbly, Nicola Pancotti, Ashley Milsted, Johnnie Gray, Garnet Kin-Lic Chan  
+      Loop Series Expansions for Tensor Networks  
       [arXiv:2409.03108](https://arxiv.org/abs/2409.03108)
+    * Joris M. Mooij; Hilbert J. Kappen  
+      Sufficient Conditions for Convergence of the Sum–Product Algorithm  
+      [IEEE Transactions on Information Theory vol. 53, no. 12, 2007](https://doi.org/10.1109/TIT.2007.909166)
+        * Sufficient condition based on the question whether the BP iteration represents a contraction in the space of messages
     * Christian Knoll, Dhagash Mehta, Tianran Chen, Franz Pernkopf  
-      Fixed Points of Belief Propagation—An Analysis via Polynomial Homotopy Continuation  
+      Fixed Points of Belief Propagation — An Analysis via Polynomial Homotopy Continuation  
       [IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 40, no. 9, pp. 2124-2136, Sep. 2018](https://doi.org/10.1109/TPAMI.2017.2749575)
     * Christian Knoll, Franz Pernkopf  
       On Loopy Belief Propagation – Local Stability Analysis for Non-Vanishing Fields

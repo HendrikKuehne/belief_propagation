@@ -14,6 +14,7 @@ import networkx as nx
 import sparse
 import cotengra as ctg
 import scipy.sparse as scisparse
+import tqdm
 
 from belief_propagation.utils import (
     network_message_check,
@@ -315,12 +316,13 @@ class PEPO:
             for neighbor in self.tree.succ[node].keys()
         )
 
-        print("".join((
-            f"Displaying node {node}:" + "\n    ",
-            f"Physical dimension {self.D[node]}," + "\n    ",
-            f"legs {legs_in} incoming," + "\n    ",
-            f"legs {legs_out} outgoing." + "\n"
-        )))
+        with tqdm.tqdm.external_write_mode():
+            print("".join((
+                f"Displaying node {node}:" + "\n    ",
+                f"Physical dimension {self.D[node]}," + "\n    ",
+                f"legs {legs_in} incoming," + "\n    ",
+                f"legs {legs_out} outgoing." + "\n"
+            )))
         for virtual_index in itertools.product(*[
             range(self[node].shape[i])
             for i in range(self[node].ndim - 2)
@@ -328,7 +330,8 @@ class PEPO:
             index = virtual_index + (slice(self.D[node]), slice(self.D[node]))
 
             if not np.allclose(self.G.nodes[node]["T"][index], 0):
-                print(index[:-2], ":\n" ,self[node][index], "\n")
+                with tqdm.tqdm.external_write_mode():
+                    print(index[:-2], ":\n" ,self[node][index], "\n")
 
         return
 
@@ -735,23 +738,26 @@ class PEPO:
 
         # Is the underlying network message-ready?
         if not network_message_check(self.G):
-            warnings.warn("Network not intact.", RuntimeWarning)
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn("Network not intact.", RuntimeWarning)
             return False
 
         # Size attribute given on every edge?
         for node1, node2, data in self.G.edges(data=True):
             if not "size" in data.keys():
-                warnings.warn(
-                    f"No size saved in edge ({node1},{node2}).",
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"No size saved in edge ({node1},{node2}).",
+                        RuntimeWarning
+                    )
                 return False
 
             if data["size"] != self.G[node1][node2][0]["size"]:
-                warnings.warn(
-                    f"Wrong size saved in edge ({node1},{node2}).",
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Wrong size saved in edge ({node1},{node2}).",
+                        RuntimeWarning
+                    )
                 return False
 
         # Are the physical legs the last dimension in each tensor?
@@ -776,31 +782,34 @@ class PEPO:
                         legs.remove(i1)
                         legs.remove(i2)
                 except ValueError:
-                    warnings.warn(
-                        f"Wrong leg in edge ({node1},{node2},{key}).",
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            f"Wrong leg in edge ({node1},{node2},{key}).",
+                            RuntimeWarning
+                        )
                     return False
 
             if not legs == [T.ndim - 2, T.ndim - 1]:
-                warnings.warn(
-                    "".join((
-                        "Physical legs are not the last two dimensions in ",
-                        f"node {node}."
-                    )),
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            "Physical legs are not the last two dimensions ",
+                            f"in node {node}."
+                        )),
+                        RuntimeWarning
+                    )
                 return False
 
             if not (T.shape[-2] == D and T.shape[-1] == D):
-                warnings.warn(
-                    "".join((
-                        f"Physical dimension mismatch at node {node}. ",
-                        f"Expected ({D}, {D}), tensor has ",
-                        f"({T.shape[-2]}, {T.shape[-1]})."
-                    )),
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Physical dimension mismatch at node {node}. ",
+                            f"Expected ({D}, {D}), tensor has ",
+                            f"({T.shape[-2]}, {T.shape[-1]})."
+                        )),
+                        RuntimeWarning
+                    )
                 return False
 
         if not self.check_tree:
@@ -829,26 +838,28 @@ class PEPO:
                         slice(self.D[node]), slice(self.D[node])
                     )
                     if not np.allclose(self[node][index], self.I(node=node)):
-                        warnings.warn(
-                            "".join((
-                                "Wrong indices for particle state ",
-                                f"passthrough in node {node}."
-                            )),
-                            RuntimeWarning
-                        )
+                        with tqdm.tqdm.external_write_mode():
+                            warnings.warn(
+                                "".join((
+                                    "Wrong indices for particle state ",
+                                    f"passthrough in node {node}."
+                                )),
+                                RuntimeWarning
+                            )
                         return False
 
                 # Checking if the vacuum state is passed along.
                 index = (tuple(-1 for _ in range(self[node].ndim - 2))
                          + (slice(self.D[node]), slice(self.D[node])))
                 if not np.allclose(self[node][index], self.I(node=node)):
-                    warnings.warn(
-                        "".join((
-                            "Wrong indices for vacuum state passthrough in ",
-                            f"node {node}."
-                        )),
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                "Wrong indices for vacuum state passthrough ",
+                                f"in node {node}."
+                            )),
+                            RuntimeWarning
+                        )
                     return False
 
                 # Checking if a particle state is passed along a passive edge.
@@ -873,13 +884,14 @@ class PEPO:
                         slice(self.D[node]), slice(self.D[node])
                     )
                     if np.allclose(self[node][index], self.I(node=node)):
-                        warnings.warn(
-                            "".join((
-                                "Particle state passed along passive ",
-                                f"edge ({node},{child})."
-                            )),
-                            RuntimeWarning
-                        )
+                        with tqdm.tqdm.external_write_mode():
+                            warnings.warn(
+                                "".join((
+                                    "Particle state passed along passive ",
+                                    f"edge ({node},{child})."
+                                )),
+                                RuntimeWarning
+                            )
                         return False
 
         return True
@@ -889,14 +901,15 @@ class PEPO:
         """
         A PEPO is hermitian, if all it's site tensors are hermitian.
         """
-        warnings.warn(
-            "".join((
-                "This hermiticity test fails when I multiply two TFI PEPOs ",
-                "using PEPO.__matmul__, although the dense matrix of TFI @ ",
-                "TFI is hermitian; TODO revise this"
-            )),
-            RuntimeWarning
-        )
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    "This hermiticity test fails when I multiply two TFI ",
+                    "PEPOs using PEPO.__matmul__, although the dense matrix ",
+                    "of TFI @ TFI is hermitian; TODO revise this"
+                )),
+                RuntimeWarning
+            )
 
         # site tensors hermitian?
         for node in self.G.nodes():
@@ -940,7 +953,8 @@ class PEPO:
             index = virtual_index + (slice(D), slice(D))
 
             if not np.allclose(T[index], 0):
-                print(index[:-2], ":\n", T[index], "\n")
+                with tqdm.tqdm.external_write_mode():
+                    print(index[:-2], ":\n", T[index], "\n")
 
     @staticmethod
     def prepare_graph(
@@ -1326,13 +1340,14 @@ class PEPO:
         if not graph_compatible(lhs.G, rhs.G):
             raise ValueError("Graphs of lhs and rhs cannot be combined.")
         if not nx.utils.graphs_equal(lhs.tree, rhs.tree):
-            warnings.warn(
-                "".join((
-                    "The trees of the operands are not the same. This is not ",
-                    "a problem (as of 12th of March)."
-                )),
-                UserWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "The trees of the operands are not the same. This is ",
+                        "not a problem (as of 12th of March)."
+                    )),
+                    UserWarning
+                )
 
         if not same_legs(lhs.G, rhs.G):
             # Permute dimensions of lhs to make both PEPOs compatible.
@@ -1447,7 +1462,10 @@ class PauliPEPO(PEPO):
         if not super().intact: return False
 
         if not all(self.D[node] == 2 for node in self):
-            warnings.warn("Physical dimension unequal to two.", RuntimeWarning)
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "Physical dimension unequal to two.", RuntimeWarning
+                )
             return False
 
         # Hamiltonian composed of pauli operators?
@@ -1466,13 +1484,14 @@ class PauliPEPO(PEPO):
                 ]
 
                 if not any(proportional_to_pauli):
-                    warnings.warn(
-                        "".join((
-                            f"Unknown operator in index {virtual_index} at ",
-                            f"node {node}."
-                        )),
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                f"Unknown operator in index {virtual_index} ",
+                                f"at node {node}."
+                            )),
+                            RuntimeWarning
+                        )
                     return False
 
         return True

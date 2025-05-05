@@ -11,6 +11,7 @@ from typing import Union, Iterator, Dict
 import numpy as np
 import networkx as nx
 import cotengra as ctg
+import tqdm
 
 from belief_propagation.utils import (
     network_message_check,
@@ -145,33 +146,37 @@ class PEPS:
         """
         # Is the underlying network message-ready?
         if not network_message_check(self.G):
-            warnings.warn("Network not intact.", RuntimeWarning)
-            return False
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn("Network not intact.", RuntimeWarning)
+                return False
 
         # Size attribute given on every edge?
         for node1, node2, data in self.G.edges(data=True):
             if not "size" in data.keys():
-                warnings.warn(
-                    f"No size saved in edge ({node1},{node2}).",
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"No size saved in edge ({node1},{node2}).",
+                        RuntimeWarning
+                    )
                 return False
 
             if data["size"] == 0:
-                warnings.warn(
-                    f"Edge ({node1},{node2}) has size 0.",
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Edge ({node1},{node2}) has size 0.",
+                        RuntimeWarning
+                    )
                 return False
 
             if (
                 data["size"] != self[node1].shape[data["legs"][node1]]
                 or data["size"] != self[node2].shape[data["legs"][node2]]
             ):
-                warnings.warn(
-                    f"Wrong size saved in edge ({node1},{node2}).",
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Wrong size saved in edge ({node1},{node2}).",
+                        RuntimeWarning
+                    )
                 return False
 
         # Are the physical legs the last dimension in each tensor? Do the
@@ -196,28 +201,31 @@ class PEPS:
                         legs.remove(i1)
                         legs.remove(i2)
                 except ValueError:
-                    warnings.warn(
-                        f"Wrong leg in edge ({node1},{node2},{key}).",
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            f"Wrong leg in edge ({node1},{node2},{key}).",
+                            RuntimeWarning
+                        )
                     return False
 
             if not legs == [T.ndim - 1,]:
-                warnings.warn(
-                    f"Physical leg is not the last dimension in node {node}.",
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Physical leg is not the last dimension in node {node}.",
+                        RuntimeWarning
+                    )
                 return False
 
             # Correct size of physical leg?
             if not T.shape[-1] == D:
-                warnings.warn(
-                    "".join((
-                        f"Physical dimension mismatch at node {node}. ",
-                        f"Expected {D}, tensor has {T.shape[-1]}."
-                    )),
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Physical dimension mismatch at node {node}. ",
+                            f"Expected {D}, tensor has {T.shape[-1]}."
+                        )),
+                        RuntimeWarning
+                    )
                 return False
 
         return True
@@ -248,15 +256,15 @@ class PEPS:
         initialized using `bond_dim_strategy`; see
         `PEPS.set_bond_dimensions`.
         """
-        # random number generation
+        # Random number generation.
         if real:
             randn = lambda size: rng.standard_normal(size)
         else:
-            randn = lambda size: crandn(size,rng)
+            randn = lambda size: crandn(size, rng)
 
         G = cls.prepare_graph(G, D=D)
 
-        # determining bond dimensions
+        # Determining bond dimensions.
         cls.set_bond_dimensions(
             G=G,
             bond_dim_strategy=bond_dim_strategy,
@@ -265,17 +273,17 @@ class PEPS:
         )
 
         for node in G.nodes:
-            # telling the adjacent edges which index they correspond to
+            # Telling the adjacent edges which index they correspond to.
             for i, neighbor in enumerate(G.adj[node]):
                 G[node][neighbor][0]["legs"][node] = i
 
-            # constructing the shape of the tensor at this site
+            # Constructing the shape of the tensor at this site.
             dim = [None for i in G.adj[node]] + [G.nodes[node]["D"],]
             for i, neighbor in enumerate(G.adj[node]):
                 leg = G[node][neighbor][0]["legs"][node]
                 dim[leg] = G[node][neighbor][0]["size"]
 
-            # adding the tensor to this node
+            # Adding the tensor to this node.
             G.nodes[node]["T"] = randn(size = dim) / chi**(3/4)
 
         return cls(G, sanity_check=sanity_check)

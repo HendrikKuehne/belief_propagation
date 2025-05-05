@@ -11,6 +11,7 @@ __all__ = [
     "QR_bottleneck",
     "L2BP_compression",
     "QR_gauging",
+    "random_bond_gauging",
     "BP_excitations",
     "loop_series_contraction"
 ]
@@ -24,6 +25,7 @@ import numpy as np
 import networkx as nx
 import scipy.linalg as scialg
 import tqdm
+import scipy.stats as scistats
 
 from belief_propagation.braket import (
     Braket,
@@ -78,14 +80,15 @@ def make_BP_informed(
         if sanity_check: assert braket.intact
 
         # BP iteration, to obtain messages for truncation.
-        if not skip_BP and not braket.converged:
+        if (not skip_BP) and (not braket.converged):
             braket.BP(sanity_check=sanity_check, **kwargs)
 
         if not braket.converged:
-            warnings.warn(
-                "Truncation on edge with non-converged messages.",
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "Modification on edge with non-converged messages.",
+                    RuntimeWarning
+                )
 
         # Inserting truncation into the Braket.
         truncation_func(
@@ -339,15 +342,16 @@ def L2BP_compression(
     for node1, node2 in psi.G.edges():
         if (min_bond_dim[node1][node2][0]["size"]
             > max_bond_dim[node1][node2][0]["size"]):
-            warnings.warn(
-                "".join((
-                    f"Minimum bond dimension {min_bond_dim} on edge ",
-                    f"({node1}, {node2}) is larger than maximum bond ",
-                    f"dimension {max_bond_dim}. Setting bond dimension to ",
-                    "unlimited. This may increase runtime drastically."
-                )),
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        f"Minimum bond dimension {min_bond_dim} on edge ",
+                        f"({node1}, {node2}) is larger than maximum bond ",
+                        f"dimension {max_bond_dim}. Setting bond dimension ",
+                        "to unlimited. This may increase runtime drastically."
+                    )),
+                    RuntimeWarning
+                )
             max_bond_dim[node1][node2][0]["size"] = np.inf
 
     # Handling kwargs.
@@ -365,10 +369,14 @@ def L2BP_compression(
             raise ValueError("Overlap is not a braket object!")
         if sanity_check: assert overlap.intact
         if not overlap.converged:
-            warnings.warn(
-                "Messages in overlap are not converged. Running BP iteration.",
-                RuntimeWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Messages in overlap are not converged. Running BP ",
+                        "iteration."
+                    )),
+                    RuntimeWarning
+                )
             overlap = None
 
     if overlap is None:
@@ -520,101 +528,6 @@ def L2BP_compression(
     return (newpsi, all_singvals) if return_singvals else newpsi
 
 
-def QR_gauging(
-        psi: PEPS,
-        tree: nx.DiGraph = None,
-        nodes: Tuple[int] = None,
-        sanity_check: bool = False,
-        **kwargs
-    ) -> PEPS:
-    """
-    Gauging of a state using QR decompositions. The root node of `tree`
-    is the orthogonality center; if `tree` is not given, a breadth-first
-    search spanning tree will be used. If given, only the nodes in
-    `nodes` will be gauged.
-    """
-    if sanity_check: assert psi.intact
-
-    if tree is None:
-        # Orthogonality center will be the node with the largest number of
-        # neighborhoods.
-        ortho_center = 0
-        max_degree = 0
-        for node in psi.G.nodes():
-            if len(psi.G.adj[node]) > max_degree:
-                ortho_center = node
-                max_degree = len(psi.G.adj[node])
-        tree = nx.bfs_tree(G=psi.G, source=ortho_center)
-    else:
-        # Sanity check for tree.
-        if not isinstance(tree, nx.DiGraph):
-            raise ValueError("tree must be an oriented graph.")
-        if not nx.is_tree(tree):
-            raise ValueError("Given spanning tree is not actually a tree.")
-
-        # Finding the orthogonality center.
-        ortho_center = None
-        for node in tree.nodes():
-            if tree.in_degree(node) == 0:
-                ortho_center = node
-                break
-
-    if nodes is None: nodes = tuple(psi.G.nodes())
-
-    newpsi = copy.deepcopy(psi)
-
-    # QR decompositions in upstream direction of the tree.
-    for node in nx.dfs_postorder_nodes(tree, source=ortho_center):
-        if node not in nodes: continue
-
-        if node == ortho_center:
-            # We have reached the source.
-            continue
-
-        assert tree.in_degree(node) == 1
-        # Finding the upstream neighbor.
-        pred = [_ for _ in tree.pred[node]][0]
-
-        # Exposing the upstream leg of the site tensor, and re-shaping.
-        T_exposed = np.moveaxis(
-            newpsi[node],
-            source=newpsi.G[pred][node][0]["legs"][node],
-            destination=-1
-        )
-        oldshape = T_exposed.shape
-        T_exposed = np.reshape(
-            T_exposed,
-            newshape=(-1, newpsi.G[pred][node][0]["size"])
-        )
-
-        # QR decomposition.
-        Q, R = np.linalg.qr(T_exposed, mode="reduced")
-
-        # Re-shaping Q, and inserting into the state.
-        Q = np.reshape(Q, newshape=oldshape)
-        Q = np.moveaxis(
-            Q,
-            source=-1,
-            destination=newpsi.G[pred][node][0]["legs"][node]
-        )
-        newpsi[node] = Q
-
-        # Absorbing R into upstream node.
-        upstream_legs = tuple(range(newpsi[pred].ndim))
-        out_legs = tuple(
-            newpsi[pred].ndim if i == newpsi.G[pred][node][0]["legs"][pred]
-            else i
-            for i in range(newpsi[pred].ndim)
-        )
-        newpsi[pred] = np.einsum(
-            newpsi[pred], upstream_legs,
-            R, (newpsi[pred].ndim, newpsi.G[pred][node][0]["legs"][pred]),
-            out_legs,
-        )
-
-    return newpsi
-
-
 def feynman_cut(
         obj: Union[PEPS, PEPO, Braket],
         node1: int,
@@ -733,6 +646,187 @@ def feynman_cut(
 
 
 # -----------------------------------------------------------------------------
+#                   Gauging PEPS
+# -----------------------------------------------------------------------------
+
+
+def QR_gauging(
+        psi: PEPS,
+        tree: nx.DiGraph = None,
+        nodes: Tuple[int] = None,
+        sanity_check: bool = False,
+        **kwargs
+    ) -> PEPS:
+    """
+    Gauging of a state using QR decompositions. The root node of `tree`
+    is the orthogonality center; if `tree` is not given, a breadth-first
+    search spanning tree will be used. If given, only the nodes in
+    `nodes` will be gauged.
+    """
+    if sanity_check: assert psi.intact
+
+    if tree is None:
+        # Orthogonality center will be the node with the largest number of
+        # neighborhoods.
+        ortho_center = 0
+        max_degree = 0
+        for node in psi.G.nodes():
+            if len(psi.G.adj[node]) > max_degree:
+                ortho_center = node
+                max_degree = len(psi.G.adj[node])
+        tree = nx.bfs_tree(G=psi.G, source=ortho_center)
+    else:
+        # Sanity check for tree.
+        if not isinstance(tree, nx.DiGraph):
+            raise ValueError("tree must be an oriented graph.")
+        if not nx.is_tree(tree):
+            raise ValueError("Given spanning tree is not actually a tree.")
+
+        # Finding the orthogonality center.
+        ortho_center = None
+        for node in tree.nodes():
+            if tree.in_degree(node) == 0:
+                ortho_center = node
+                break
+
+    if nodes is None: nodes = tuple(psi.G.nodes())
+
+    newpsi = copy.deepcopy(psi)
+
+    # QR decompositions in upstream direction of the tree.
+    for node in nx.dfs_postorder_nodes(tree, source=ortho_center):
+        if node not in nodes: continue
+
+        if node == ortho_center:
+            # We have reached the source.
+            continue
+
+        assert tree.in_degree(node) == 1
+        # Finding the upstream neighbor.
+        pred = [_ for _ in tree.pred[node]][0]
+
+        # Exposing the upstream leg of the site tensor, and re-shaping.
+        T_exposed = np.moveaxis(
+            newpsi[node],
+            source=newpsi.G[pred][node][0]["legs"][node],
+            destination=-1
+        )
+        oldshape = T_exposed.shape
+        T_exposed = np.reshape(
+            T_exposed,
+            newshape=(-1, newpsi.G[pred][node][0]["size"])
+        )
+
+        # QR decomposition.
+        Q, R = np.linalg.qr(T_exposed, mode="reduced")
+
+        # Re-shaping Q, and inserting into the state.
+        Q = np.reshape(Q, newshape=oldshape)
+        Q = np.moveaxis(
+            Q,
+            source=-1,
+            destination=newpsi.G[pred][node][0]["legs"][node]
+        )
+        newpsi[node] = Q
+
+        # Absorbing R into upstream node.
+        upstream_legs = tuple(range(newpsi[pred].ndim))
+        out_legs = tuple(
+            newpsi[pred].ndim if i == newpsi.G[pred][node][0]["legs"][pred]
+            else i
+            for i in range(newpsi[pred].ndim)
+        )
+        newpsi[pred] = np.einsum(
+            newpsi[pred], upstream_legs,
+            R, (newpsi[pred].ndim, newpsi.G[pred][node][0]["legs"][pred]),
+            out_legs,
+        )
+
+    return newpsi
+
+
+def random_bond_gauging(
+        psi: PEPS,
+        method: str = "unitary",
+        sanity_check: bool = False,
+        rng: np.random.Generator = np.random.default_rng()
+    ) -> PEPS:
+    """
+    Gauging of a state by inserting matrices on the virtual bonds. Three
+    variants are implemented:
+    * `ortho`: Inserting random orthogonal matrices.
+    * `unitary`: Inserting random unitary matrices (fallback).
+    * `invert`: Inserting random invertible matrices. Internally relies
+    on [diagonally dominant
+    matrices](https://en.wikipedia.org/wiki/Diagonally_dominant_matrix)
+    (see also [this post](https://stackoverflow.com/a/73427048)).
+    """
+    if sanity_check: assert psi.intact
+
+    if method not in ("ortho", "unitary", "invert"):
+        warnings.warn("".join((
+            "Unknown method ", method, ". Defaulting to unitary."
+            )),
+            UserWarning
+        )
+        method = "unitary"
+
+    if method == "ortho":
+        # Random matrix from the orthogonal group.
+        matrixgen = lambda N: scistats.ortho_group.rvs(dim=N, size=1)
+        inv = lambda M: M
+
+    elif method == "unitary":
+        # Random mattrix from the unitary group.
+        matrixgen = lambda N: scistats.unitary_group.rvs(dim=N, size=1)
+        inv = lambda M: M.conj()
+
+    elif method == "invert":
+        # Random invertible matrix.
+        def matrixgen(N: int) -> np.ndarray:
+            M = (rng.uniform(low=-1, high=1, size=(N, N))
+                 + 1j * rng.uniform(low=-1, high=1, size=(N, N)))
+            Mabssum = np.sum(np.abs(M), axis=1)
+            np.fill_diagonal(a=M, val=Mabssum)
+            rank = np.linalg.matrix_rank(M)
+            if rank < N: warnings.warn("Matrix is not invertible!")
+            return M
+        inv = lambda M: np.linalg.inv(M).T
+
+    else:
+        raise ValueError("Unknown method for random matrix generation.")
+
+    newpsi = copy.deepcopy(psi)
+
+    for node1, node2 in newpsi.G.edges():
+        leg1 = newpsi.G[node1][node2][0]["legs"][node1]
+        leg2 = newpsi.G[node1][node2][0]["legs"][node2]
+        nLegs1 = newpsi[node1].ndim
+        nLegs2 = newpsi[node2].ndim
+        size = newpsi.G[node1][node2][0]["size"]
+        # Generating random matrix.
+        randmat = matrixgen(size)
+
+        # Absorbing matrix in node1.
+        legs1_out = tuple(nLegs1 if i == leg1 else i for i in range(nLegs1))
+        newpsi[node1] = np.einsum(
+            newpsi[node1], tuple(range(nLegs1)),
+            randmat, (leg1, nLegs1),
+            legs1_out,
+        )
+
+        # Absorbing matrix inverse in node2.
+        legs2_out = tuple(nLegs2 if i == leg2 else i for i in range(nLegs2))
+        newpsi[node2] = np.einsum(
+            newpsi[node2], tuple(range(nLegs2)),
+            inv(randmat), (leg2, nLegs2),
+            legs2_out,
+        )
+
+    return newpsi
+
+
+# -----------------------------------------------------------------------------
 #                   Loop series expansion
 # -----------------------------------------------------------------------------
 
@@ -756,7 +850,6 @@ def loop_series_contraction(
     if sanity_check: assert braket.intact
 
     # Handling kwargs.
-    kwargs["verbose"] = verbose
     if "iterator_desc_prefix" in kwargs.keys():
         kwargs["iterator_desc_prefix"] = "".join((
             kwargs["iterator_desc_prefix"],
@@ -767,7 +860,7 @@ def loop_series_contraction(
 
     # Finding the BP fixed point.
     if not braket.converged:
-        braket.BP(**kwargs, sanity_check=sanity_check)
+        braket.BP(**kwargs, sanity_check=sanity_check, verbose=verbose)
 
     # Inserting projectors in the edges.
     for node1, node2 in braket.G.edges():
@@ -775,6 +868,7 @@ def loop_series_contraction(
             braket=braket,
             node1=node1,
             node2=node2,
+            skip_BP=True, # Skipping BP because we already executed it above.
             sanity_check=sanity_check
         )
 

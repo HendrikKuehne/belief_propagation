@@ -42,6 +42,7 @@ import numpy as np
 import networkx as nx
 import scipy.linalg as scialg
 import scipy.sparse as scisparse
+import tqdm
 
 # -----------------------------------------------------------------------------
 #                   Math
@@ -118,26 +119,29 @@ def proportional(
     raises `ValueError` if `A` and `B` have different shapes.
     """
     if np.isnan(A).any() or np.isnan(B).any():
-        warnings.warn(
-            "A or B contain NaN, and I don't know what happes then.",
-            UserWarning
-        )
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "A or B contain NaN, and I don't know what happens then.",
+                UserWarning
+            )
 
     if not A.shape == B.shape:
         raise ValueError("A and B must have the same shapes.")
 
     if np.allclose(A,0) and np.allclose(B,0):
-        warnings.warn(
-            "Assuming zero to be proportional to zero.",
-            UserWarning
-        )
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "Assuming zero to be proportional to zero.",
+                UserWarning
+            )
         return True
 
     A0 = A.flatten()[np.logical_not(np.isclose(A.flatten(), 0))]
     B0 = B.flatten()[np.logical_not(np.isclose(B.flatten(), 0))]
 
     if not A0.shape == B0.shape:
-        if verbose: print("A and B have different amounts of zeros.")
+        with tqdm.tqdm.external_write_mode():
+            if verbose: print("A and B have different amounts of zeros.")
         return False
 
     div = (A0 / B0)
@@ -147,7 +151,9 @@ def proportional(
     else:
         div = np.unique(div)
     if len(div) != 1:
-        if verbose: print("There is no unique proportionality factor.")
+        if verbose:
+            with tqdm.tqdm.external_write_mode():
+                print("There is no unique proportionality factor.")
         return False
 
     return np.allclose(div[0] * B, A)
@@ -323,10 +329,11 @@ def hermitian_wrapper(
         else:
             if verbose:
                 diff_norm = np.linalg.norm(diff)
-                warnings.warn(
-                    f"Difference from hermiticity: {diff_norm:.5e}.",
-                    RuntimeWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Difference from hermiticity: {diff_norm:.5e}.",
+                        RuntimeWarning
+                    )
             return False
 
     return herm_test_func
@@ -658,7 +665,8 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
 
     # Is the graph connected?
     if not nx.is_connected(G=G):
-        warnings.warn("The graph G must be connected.", UserWarning)
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn("The graph G must be connected.", UserWarning)
         return False
 
     # Two legs in every edge's legs attribute?
@@ -666,21 +674,23 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
         if G[node1][node2][key]["trace"]:
             # Trace edge.
             if len(G[node1][node2][key]["indices"]) != 2:
-                warnings.warn(
-                    "".join((
-                        "Wrong number of legs in trace edge",
-                        f"({node1}, {node2}, {key})."
-                    )),
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            "Wrong number of legs in trace edge",
+                            f"({node1}, {node2}, {key})."
+                        )),
+                        UserWarning
+                    )
                 return False
         else:
             # Default edge.
             if len(G[node1][node2][key]["legs"].keys()) != 2:
-                warnings.warn(
-                    f"Wrong number of legs in edge ({node1}, {node2}, {key}).",
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Wrong number of legs in edge ({node1}, {node2}, {key}).",
+                        UserWarning
+                    )
                 return False
 
     # All edges in the graph accounted for?
@@ -696,7 +706,10 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
                     legs.remove(i1)
                     legs.remove(i2)
             except ValueError:
-                warnings.warn(f"Wrong leg in edge ({node1},{node2},{key}).")
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        f"Wrong leg in edge ({node1},{node2},{key})."
+                    )
                 return False
 
     return True
@@ -712,34 +725,44 @@ def network_message_check(G: nx.MultiGraph) -> bool:
 
     for node1, node2, key, data in G.edges(keys=True, data=True):
         if node1 == node2:
-            warnings.warn(f"Trace edge from {node1} to {node2}.", UserWarning)
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    f"Trace edge from {node1} to {node2}.",
+                    UserWarning
+                )
             return False
 
         if key != 0:
-            warnings.warn(
-                f"Multiple edges connecting {node1} and {node2}.",
-                UserWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    f"Multiple edges connecting {node1} and {node2}.",
+                    UserWarning
+                )
             return False
 
         if "msg" in data.keys():
             if data["msg"] != {}:
                 if (not node1 in data["msg"].keys()
                     or not node2 in data["msg"].keys()):
-                    warnings.warn(
-                        f"Wrong node in msg-value of edge ({node1}, {node2}).",
-                        UserWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                "Wrong node in msg-value of edge ",
+                                f"({node1}, {node2})."
+                            )),
+                            UserWarning
+                        )
                     return False
 
                 if len(data["msg"].values()) != 2:
-                    warnings.warn(
-                        "".join((
-                            "Wrong number of messages on edge ",
-                            f"({node1}, {node2})."
-                        )),
-                        UserWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                "Wrong number of messages on edge ",
+                                f"({node1}, {node2})."
+                            )),
+                            UserWarning
+                        )
                     return False
 
     return True
@@ -765,7 +788,11 @@ def op_layer_intact_check(
     if test_disjoint:
         # Are the operator chains disjoint?
         if not is_disjoint_layer(layer=layer):
-            warnings.warn("The operator chains are not disjoint.", UserWarning)
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "The operator chains are not disjoint.",
+                    UserWarning
+                )
             return False
 
     D = {}
@@ -778,35 +805,38 @@ def op_layer_intact_check(
         for node, T in op_chain.items():
             # Does the graph contain this node?
             if not G.has_node(node):
-                warnings.warn(
-                    "".join((
-                        f"Node {node} in operator chain {iChain}",
-                        "not contained in graph.",
-                    )),
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Node {node} in operator chain {iChain}",
+                            "not contained in graph.",
+                        )),
+                        UserWarning
+                    )
                 return False
 
             # Is the operator square?
             if not T.shape[0] == T.shape[1]:
-                warnings.warn(
-                    "".join((
-                        f"Non-square operator on node {node} in operator ",
-                        f"chain {iChain}."
-                    )),
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            f"Non-square operator on node {node} in operator ",
+                            f"chain {iChain}."
+                        )),
+                        UserWarning
+                    )
                 return False
 
             # Are the physical dimensions equal?
             if node in D.keys():
                 if not D[node] == T.shape[0]:
-                    warnings.warn(
-                        "".join((
-                            f"Physical dimension mismatch in node {node}."
-                        )),
-                        RuntimeWarning
-                    )
+                    with tqdm.tqdm.external_write_mode():
+                        warnings.warn(
+                            "".join((
+                                f"Physical dimension mismatch in node {node}."
+                            )),
+                            RuntimeWarning
+                        )
                     return False
             else:
                 D[node] = T.shape[0]
@@ -815,20 +845,22 @@ def op_layer_intact_check(
 
     if test_same_length:
         if not len(length_set) == 1:
-            warnings.warn(
-                "Operator layer contains chains with varying length.",
-                UserWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "Operator layer contains chains with varying length.",
+                    UserWarning
+                )
             return False
 
         if target_chain_length is not None:
             chain_length = length_set.pop()
             if chain_length != target_chain_length:
-                warnings.warn(
-                    f"Wrong operator chain length; received {chain_length}, "
-                    + f"expected {target_chain_length}.",
-                    UserWarning
-                )
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "Wrong operator chain length; received "
+                        + f"{chain_length}, expected {target_chain_length}.",
+                        UserWarning
+                    )
                 return False
 
     return True
@@ -898,27 +930,29 @@ def check_msg_intact(
         )))
 
     if not msg.shape == target_shape:
-        warnings.warn(
-            "".join((
-                f"Message from {sender} to {receiver} has ", "wrong shape. ",
-                "Expected ",
-                str(target_shape),
-                " got ",
-                str(msg.shape),
-                "."
-            )),
-            UserWarning
-        )
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    f"Message from {sender} to {receiver} has ", "wrong ",
+                    "shape. Expected ",
+                    str(target_shape),
+                    " got ",
+                    str(msg.shape),
+                    "."
+                )),
+                UserWarning
+            )
         return False
 
     if not np.isfinite(msg).all():
-        warnings.warn(
-            "".join((
-                f"Message from {sender} to {receiver} contains non-finite ",
-                "values."
-            )),
-            UserWarning
-        )
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    f"Message from {sender} to {receiver} contains non-",
+                    "finite values."
+                )),
+                UserWarning
+            )
         return False
 
     return True

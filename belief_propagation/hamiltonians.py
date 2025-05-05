@@ -18,6 +18,7 @@ from typing import Dict, Tuple, Union
 
 import numpy as np
 import networkx as nx
+import tqdm
 
 from belief_propagation.utils import multi_kron, op_layer_intact_check
 from belief_propagation.PEPO import PEPO, PauliPEPO
@@ -678,15 +679,16 @@ def operator_layer(
     """
     A PEPO that contains disjoint operator chains.
     """
-    warnings.warn(
-        "".join((
-            "So far, this method simply adds operator chains. There is a ",
-            "more elegant method: if the operator chains are disjoint, they ",
-            "can be compressed into a PEPO with smaller bond dimension. This ",
-            "has yet to be implemented."
-        )),
-        FutureWarning
-    )
+    with tqdm.tqdm.external_write_mode():
+        warnings.warn(
+            "".join((
+                "So far, this method simply adds operator chains. There is a ",
+                "more elegant method: if the operator chains are disjoint, ",
+                "they can be compressed into a PEPO with smaller bond ",
+                "dimension. This has yet to be implemented."
+            )),
+            FutureWarning
+        )
 
     # sanity check
     assert op_layer_intact_check(
