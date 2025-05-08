@@ -140,6 +140,10 @@ class TFI(PauliPEPO):
             sanity_check=sanity_check
         )
 
+        # Saving coupling strength and transversal field.
+        self.J = J
+        self.g = g
+
         # Root node is node with smallest degree.
         self.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
 
@@ -373,8 +377,8 @@ class Heisenberg(PauliPEPO):
             sanity_check: bool = False
         ):
         """
-        Travsverse Field Ising model PEPO on graph `G`, with coupling
-        `J` and external field `g`.
+        Travsverse Field Ising model PEPO on graph `G`, with couplings
+        `Jx`, `Jy`, `Jz`, and external field `g`.
 
         Ordering of legs in the PEPO virtual dimensions is inherited
         from `G`. The last two dimensions of every PEPO tensor are the
@@ -383,6 +387,12 @@ class Heisenberg(PauliPEPO):
         super().__init__()
 
         self.G = PEPO.prepare_graph(G=G, chi=5, D=2, sanity_check=sanity_check)
+
+        # Saving coupling strength and transversal field.
+        self.Jx = Jx
+        self.Jy = Jy
+        self.Jz = Jz
+        self.g = g
 
         # Root node is node with smallest degree.
         self.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
@@ -526,6 +536,10 @@ def posneg_TFI(
     G = PEPO.prepare_graph(G=G, chi=chi, D=2, sanity_check=sanity_check)
     pos_op.G = copy.deepcopy(G)
     neg_op.G = copy.deepcopy(G)
+    pos_op.J = J
+    pos_op.g = g
+    neg_op.J = J
+    neg_op.g = g
 
     # Root node is node with smallest degree.
     root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]

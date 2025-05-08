@@ -20,7 +20,7 @@ __all__ = [
 import copy
 import warnings
 import itertools
-from typing import Iterator, Tuple, Dict, Union, List, Iterable
+from typing import Iterator, Tuple, Dict, Union, List, Iterable, Callable
 
 import numpy as np
 import networkx as nx
@@ -852,7 +852,7 @@ class Braket(BaseBraket):
 
     def normalize_messages(
             self,
-            normalize_to: str,
+            normalize_to: Union[str, float],
             sanity_check: bool
         ) -> None:
         """
@@ -866,11 +866,53 @@ class Braket(BaseBraket):
         normalization is thus only necessary when messages were obtained
         with `normalize = True`.
 
-        if `normalize_to = dotp`, normalizes messages such that their
-        inner product is one.
+        If `normalize_to = dotp`, normalizes messages such the inner
+        product of opposing messages on any edge is one.
+
+        If `normalize_to` is numeric, messages are normalized to unity
+        in the respective Lp-norm. It is also possible to supply
+        `np.inf`.
         """
         # sanity check
         if sanity_check: assert self.intact
+
+        if normalize_to is np.inf:
+            for sender in self.msg.keys():
+                for receiver in self.msg[sender].keys():
+                    # Vanishing messages will be blown up by normalization,
+                    # which is something we do not want.
+                    if np.allclose(self.msg[sender][receiver], 0):
+                        # Why not set them to zero? Because we incur a
+                        # divide-by-zero during cntr calculation at the end of
+                        # BP. How I handle this instead is I set node.cntr = 0
+                        # for zero-messages in
+                        # self.__contract_tensors_inbound_messages
+                        continue
+
+                    msg_norm = np.max(np.abs(self.msg[sender][receiver]))
+                    self.msg[sender][receiver] /= msg_norm
+
+            return
+
+        if isinstance(normalize_to, (int, float)):
+            for sender in self.msg.keys():
+                for receiver in self.msg[sender].keys():
+                    # Vanishing messages will be blown up by normalization,
+                    # which is something we do not want.
+                    if np.allclose(self.msg[sender][receiver], 0):
+                        # Why not set them to zero? Because we incur a
+                        # divide-by-zero during cntr calculation at the end of
+                        # BP. How I handle this instead is I set node.cntr = 0
+                        # for zero-messages in
+                        # self.__contract_tensors_inbound_messages
+                        continue
+
+                    msg_norm = np.sum(
+                        np.abs(self.msg[sender][receiver]) ** normalize_to
+                    ) ** (1 / normalize_to)
+                    self.msg[sender][receiver] /= msg_norm
+
+            return
 
         if normalize_to == "unity":
             for sender in self.msg.keys():
@@ -990,9 +1032,9 @@ class Braket(BaseBraket):
 
             return
 
-        raise NotImplementedError(
-            "Message normalization " + normalize_to + " not implemented."
-        )
+        raise NotImplementedError("".join((
+            "Message normalization ", str(normalize_to), " not implemented."
+        )))
 
     def __contract_edge_opposite_messages(
             self,
@@ -1351,6 +1393,66 @@ class Braket(BaseBraket):
 
         return
 
+    def get_closed_form_msg_update(
+            self,
+            sanity_check: bool = False,
+            **kwargs
+        ) -> Callable[[np.ndarray, bool], np.ndarray]:
+        """
+        Returns the BP update of a stack of messages in closed form.
+        This function takes as it's input a vector that is considered to
+        be the direct sum of all messages, applies the BP update, and
+        returns the new message stack. `**kwargs` are passed to
+        `self.BP`. The messages in the message stack are assumed to be
+        ordered by ascending node value in sender first, receiver
+        second.
+        """
+        flat_braket = contract_braket_physical_indices(
+            self, sanity_check=sanity_check
+        )
+
+        kwargs["numiter"] = 1
+        kwargs["new_messages"] = False
+
+        def msg_update(
+                msg_stack: np.ndarray,
+                sanity_check: bool = False
+            ) -> np.ndarray:
+            i_saved = 0
+            msg = {}
+            # Extracting messages from tensor stack.
+            for sender in sorted(flat_braket):
+                msg[sender] = {}
+                for receiver in sorted(flat_braket.G.adj[sender]):
+                    size = flat_braket.ket.G[sender][receiver][0]["size"]
+                    msg[sender][receiver] = np.expand_dims(
+                        msg_stack[i_saved:i_saved + size],
+                        axis=(0, 1)
+                    )
+                    i_saved += size
+            if not i_saved == len(msg_stack):
+                raise RuntimeError("".join((
+                    "Number of elements in tensor stack does not match the ",
+                    f"braket. Expected length {i_saved}, got {len(msg_stack)}."
+                )))
+
+            # Running one BP iteration.
+            flat_braket.msg = msg
+            flat_braket.BP(
+                **kwargs,
+                sanity_check=sanity_check
+            )
+
+            # Assembling new tensor stack.
+            msg_in_order = ()
+            for sender in sorted(flat_braket):
+                for receiver in sorted(flat_braket.G.adj[sender]):
+                    msg_in_order += (flat_braket.msg[sender][receiver][0,0,:],)
+
+            return np.concatenate(msg_in_order, axis=0)
+
+        return msg_update
+
     @property
     def intact(self) -> bool:
         """
@@ -1503,7 +1605,7 @@ class Braket(BaseBraket):
         """
         super().__init__(bra=bra, op=op, ket=ket, sanity_check=False)
 
-        self.msg = msg
+        self.msg: Dict[int, Dict[int, np.ndarray]] = msg
         """
         Messages. First key sending node, second key receiving node.
         """
@@ -2355,7 +2457,7 @@ def assemble_excitation_brakets(
         excitation: nx.MultiGraph,
         sanity_check: bool = False,
         **kwargs
-    ) -> tuple[ExcBraket]:
+    ) -> Tuple[ExcBraket]:
     """
     Assembles the brakets that contain the excitation `excitation`.
     Brakets are returned as a tuple, with as many brakets as there are

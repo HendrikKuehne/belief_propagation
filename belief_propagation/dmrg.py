@@ -1,5 +1,5 @@
 """
-DMRG on Braket-objects. Contains the DMRG-class.
+DMRG on Braket-objects. Contains the DMRG-classes.
 """
 
 __all__ = ["DMRG", "LoopSeriesDMRG", "loop_series_environments"]
@@ -1216,10 +1216,10 @@ class LoopSeriesDMRG:
                     warnings.warn(
                         "".join((
                             "BP iterations did not converge. Final BP eps: ",
-                            str(_eps),
-                            f". All below {self.non_convergence_BP_eps:.3e}.",
-                            "Impossibility of convergence is assumed; saving ",
-                            "current self in ",
+                            str(tuple(f"{__eps:.3e}" for __eps in _eps)),
+                            f". All above {self.non_convergence_BP_eps:.3e}.",
+                            " Impossibility of convergence is assumed; ",
+                            "saving current self in ",
                             fname
                         )),
                         RuntimeWarning
@@ -1364,7 +1364,8 @@ class LoopSeriesDMRG:
             ),
             desc=f"sweep {self.__iSweep}",
             disable=not self._verbose,
-            file=file
+            file=file,
+            total=self.nsites
         )
 
         for node in iterator:
