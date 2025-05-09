@@ -662,6 +662,8 @@ def QR_gauging(
     is the orthogonality center; if `tree` is not given, a breadth-first
     search spanning tree will be used. If given, only the nodes in
     `nodes` will be gauged.
+
+    Can reduce bond dimensions.
     """
     if sanity_check: assert psi.intact
 
@@ -711,7 +713,7 @@ def QR_gauging(
             source=newpsi.G[pred][node][0]["legs"][node],
             destination=-1
         )
-        oldshape = T_exposed.shape
+        oldshape = list(T_exposed.shape)
         T_exposed = np.reshape(
             T_exposed,
             newshape=(-1, newpsi.G[pred][node][0]["size"])
@@ -720,7 +722,13 @@ def QR_gauging(
         # QR decomposition.
         Q, R = np.linalg.qr(T_exposed, mode="reduced")
 
+        # Adjusting bond dimension, if necessary.
+        newpsi.G[pred][node][0]["size"] = min(
+            newpsi.G[pred][node][0]["size"], Q.shape[-1]
+        )
+
         # Re-shaping Q, and inserting into the state.
+        oldshape[-1] = newpsi.G[pred][node][0]["size"]
         Q = np.reshape(Q, newshape=oldshape)
         Q = np.moveaxis(
             Q,
@@ -742,6 +750,7 @@ def QR_gauging(
             out_legs,
         )
 
+    if sanity_check: assert newpsi.intact
     return newpsi
 
 

@@ -36,7 +36,7 @@ __all__ = [
 
 import warnings
 import itertools
-from typing import List, Dict, Tuple, FrozenSet, Callable
+from typing import List, Dict, Tuple, FrozenSet, Callable, Union
 
 import numpy as np
 import networkx as nx
@@ -49,7 +49,7 @@ import tqdm
 # -----------------------------------------------------------------------------
 
 def crandn(
-        size: Tuple[int] = None,
+        size: Union[int, Tuple[int]] = None,
         rng: np.random.Generator = np.random.default_rng()
     ) -> np.ndarray:
     """

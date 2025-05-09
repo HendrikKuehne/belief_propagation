@@ -1677,25 +1677,26 @@ class LoopSeriesDMRG:
                 return False
 
         # Are the messages intact?
-        for msg_dict, op in zip(
-            self._msg_oplist + [self._msg_overlap,],
-            self.oplist + (Zero(G=self.psi.G, D=self.psi.D),)
-        ):
-            if msg_dict is not None:
-                for node1, node2 in op.G.edges():
-                    for sender, receiver in itertools.permutations(
-                        (node1, node2)
-                    ):
-                        op_size = op.G[sender][receiver][0]["size"]
-                        psi_size = self.psi.G[sender][receiver][0]["size"]
-
-                        if not check_msg_intact(
-                            msg=msg_dict[sender][receiver],
-                            target_shape=(psi_size, op_size, psi_size),
-                            sender=sender,
-                            receiver=receiver
+        if self.converged:
+            for msg_dict, op in zip(
+                self._msg_oplist + [self._msg_overlap,],
+                self.oplist + (Zero(G=self.psi.G, D=self.psi.D),)
+            ):
+                if msg_dict is not None:
+                    for node1, node2 in op.G.edges():
+                        for sender, receiver in itertools.permutations(
+                            (node1, node2)
                         ):
-                            return False
+                            op_size = op.G[sender][receiver][0]["size"]
+                            psi_size = self.psi.G[sender][receiver][0]["size"]
+    
+                            if not check_msg_intact(
+                                msg=msg_dict[sender][receiver],
+                                target_shape=(psi_size, op_size, psi_size),
+                                sender=sender,
+                                receiver=receiver
+                            ):
+                                return False
 
         # Are all the excitations below the maximum order?
         all_exc = sum(
