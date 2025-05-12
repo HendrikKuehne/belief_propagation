@@ -1393,6 +1393,32 @@ class Braket(BaseBraket):
 
         return
 
+    def msg_stack(
+            self,
+            new_messages: bool = True,
+            sanity_check: bool = False,
+            **kwargs
+        ) -> np.ndarray:
+        """
+        Stacks the current messages and returns them as a vector that
+        could be passed to the closed-form of the BP iteration step.
+        Intended to be used together with
+        `self.get_closed_form_msg_update()`. `kwargs` are passed to
+        `self.construct_initial_messages`.
+        """
+        if sanity_check: assert self.intact
+        if new_messages: self.construct_initial_messages(
+            **kwargs,
+            sanity_check=sanity_check
+        )
+
+        msg_in_order = ()
+        for sender in sorted(self.msg.keys()):
+            for receiver in sorted(self.msg[sender].keys()):
+                msg_in_order += (self.msg[sender][receiver].flatten(),)
+
+        return np.concatenate(msg_in_order, axis=0)
+
     def get_closed_form_msg_update(
             self,
             sanity_check: bool = False,
@@ -1405,8 +1431,11 @@ class Braket(BaseBraket):
         returns the new message stack. `**kwargs` are passed to
         `self.BP`. The messages in the message stack are assumed to be
         ordered by ascending node value in sender first, receiver
-        second.
+        second. The second (boolean) argument of the returned funcion is
+        the sanity check.
         """
+        if sanity_check: assert self.intact
+
         flat_braket = contract_braket_physical_indices(
             self, sanity_check=sanity_check
         )
@@ -1436,7 +1465,7 @@ class Braket(BaseBraket):
                     f"braket. Expected length {i_saved}, got {len(msg_stack)}."
                 )))
 
-            # Running one BP iteration.
+            # Executing a single BP step.
             flat_braket.msg = msg
             flat_braket.BP(
                 **kwargs,
@@ -1535,7 +1564,7 @@ class Braket(BaseBraket):
         if real:
             randn = lambda size: rng.standard_normal(size)
         else:
-            randn = lambda size: crandn(size,rng)
+            randn = lambda size: crandn(size, rng)
 
         # Random matrix generation.
         if real:
@@ -1559,7 +1588,7 @@ class Braket(BaseBraket):
             if method == "unitary":
                 # Positive-semidefinite and unitary.
                 for i in range(op_size):
-                    eigvals = rng.uniform(low=0,high=1,size=bra_size)
+                    eigvals = rng.uniform(low=0, high=1, size=bra_size)
                     U = matrixgen(bra_size)
                     msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
 
@@ -2351,7 +2380,7 @@ def contract_braket_physical_indices(
             for sender in braket.msg.keys():
                 kwargs["msg"][sender] = {}
                 for receiver, msg in braket.msg[sender].items():
-                    flat_msg = np.expand_dims(msg.flatten(), axis=(0,1))
+                    flat_msg = np.expand_dims(msg.flatten(), axis=(0, 1))
                     kwargs["msg"][sender][receiver] = flat_msg
 
     newbraket = braket.__class__.Cntr(
