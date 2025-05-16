@@ -36,7 +36,7 @@ __all__ = [
 
 import warnings
 import itertools
-from typing import List, Dict, Tuple, FrozenSet, Callable, Union
+from typing import Callable, Union
 
 import numpy as np
 import networkx as nx
@@ -49,7 +49,7 @@ import tqdm
 # -----------------------------------------------------------------------------
 
 def crandn(
-        size: Union[int, Tuple[int]] = None,
+        size: Union[int, tuple[int]] = None,
         rng: np.random.Generator = np.random.default_rng()
     ) -> np.ndarray:
     """
@@ -184,7 +184,7 @@ def gen_eigval_problem(
         B: np.ndarray,
         maxcond: float = 1e6,
         eps: float = 1e-5
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
     """
     Solves the generalized eigenvalue problem, using the
     workaround introduced [here](https://arxiv.org/abs/1903.11240v3).
@@ -227,7 +227,7 @@ def gen_eigval_problem(
     return lambda_A,U_B_tilde @ U_A
 
 
-def multi_tensor_rank(T: np.ndarray, threshold: float = 1e-8) -> Tuple[int]:
+def multi_tensor_rank(T: np.ndarray, threshold: float = 1e-8) -> tuple[int]:
     """
     Computes the rank of all matricizations of `T`, where the
     matricizations are obtained by grouping all dimensions
@@ -274,7 +274,7 @@ def entropy(p: np.ndarray, alpha: int = 1) -> float:
     return np.sum(p**alpha) / (1 - alpha)
 
 
-def fidelity(psi: np.ndarray, subspace: Tuple[np.ndarray]) -> float:
+def fidelity(psi: np.ndarray, subspace: tuple[np.ndarray]) -> float:
     """
     Measuring expectation value of the projector on the subspace.
     The subspace is defined by the tuple `subspace`, containing
@@ -431,7 +431,7 @@ def is_hermitian_environment(env: np.ndarray) -> np.ndarray:
 
 def write_exp_bonddim_to_graph(
         G: nx.MultiGraph,
-        D: Dict[int, int],
+        D: dict[int, int],
         max_chi: int = np.inf
     ) -> None:
     """
@@ -483,7 +483,7 @@ def write_exp_bonddim_to_graph(
     return
 
 
-def divide_graph(G: nx.MultiGraph) -> FrozenSet[FrozenSet[int]]:
+def divide_graph(G: nx.MultiGraph) -> frozenset[frozenset[int]]:
     """
     Finds bipartition cuts of the graph `G`. A bipartition cut is a set
     of edges such that, if these edges are cut, the resulting graph is
@@ -526,7 +526,7 @@ def divide_graph(G: nx.MultiGraph) -> FrozenSet[FrozenSet[int]]:
 def cycle_cutnumber_ranking(
         G: nx.Graph,
         noisy: bool = True
-    ) -> List[Tuple[int]]:
+    ) -> list[tuple[int]]:
     """
     Returns a ranking of the edges in `G` based on the number of simple
     cycles that they appear in. Edges, that are present in many cycles,
@@ -558,7 +558,7 @@ def cycle_cutnumber_ranking(
     return edges_ranked
 
 
-def cycle_length_ranking(G: nx.Graph,noisy: bool = True) -> List[Tuple[int]]:
+def cycle_length_ranking(G: nx.Graph,noisy: bool = True) -> list[tuple[int]]:
     """
     Returns a ranking of the edges in `G` based on the length of the
     simple cycles that they appear in. The edges that belong to the
@@ -597,8 +597,8 @@ def cycle_length_ranking(G: nx.Graph,noisy: bool = True) -> List[Tuple[int]]:
 
 
 def is_disjoint_layer(
-        layer: Tuple[Dict[int, tuple]],
-        op_chain: Dict[int, tuple] = dict()
+        layer: tuple[dict[int, tuple]],
+        op_chain: dict[int, tuple] = dict()
     ) -> bool:
     """
     Tests if the set `op_chains` of operator chains is disjoint,
@@ -614,8 +614,8 @@ def is_disjoint_layer(
 
 
 def get_disjoint_subsets_from_opchains(
-        op_chains: Tuple[Dict[int, tuple]]
-    ) -> Tuple[Tuple[Tuple[Dict[int, tuple]]]]:
+        op_chains: tuple[dict[int, tuple]]
+    ) -> tuple[tuple[tuple[dict[int, tuple]]]]:
     """
     Given operator chains, decomposes them into as many
     disjoint subsets as are necessary for a brick wall
@@ -770,7 +770,7 @@ def network_message_check(G: nx.MultiGraph) -> bool:
 
 def op_layer_intact_check(
         G: nx.MultiGraph,
-        layer: Tuple[Dict[int, np.ndarray]],
+        layer: tuple[dict[int, np.ndarray]],
         target_chain_length: int = None,
         test_same_length: bool = False,
         test_disjoint: bool = False
@@ -913,7 +913,7 @@ def graph_compatible(
 
 def check_msg_intact(
         msg: np.ndarray,
-        target_shape: Tuple[int],
+        target_shape: tuple[int],
         sender: int = None,
         receiver: int = None
     ) -> bool:

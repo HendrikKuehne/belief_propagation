@@ -18,7 +18,7 @@ __all__ = [
 
 import itertools
 import copy
-from typing import Callable, Union, Tuple, Dict, NoReturn
+from typing import Callable, Union, NoReturn
 import warnings
 
 import numpy as np
@@ -298,7 +298,7 @@ def L2BP_compression(
         verbose: bool = False,
         sanity_check: bool = False,
         **kwargs
-    ) -> Tuple[PEPS ,Dict[frozenset, np.ndarray]]:
+    ) -> tuple[PEPS ,dict[frozenset, np.ndarray]]:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321
     (2024)](https://doi.org/10.1126/sciadv.adk4321). Singular values
@@ -533,7 +533,7 @@ def feynman_cut(
         node1: int,
         node2: int,
         sanity_check: bool = False
-    ) -> Union[Tuple[PEPS], Tuple[PEPO], Tuple[Braket]]:
+    ) -> Union[tuple[PEPS], tuple[PEPO], tuple[Braket]]:
     """
     Cuts the edge `(node1, node2)` in `obj`, and returns all resulting
     objects.
@@ -653,7 +653,7 @@ def feynman_cut(
 def QR_gauging(
         psi: PEPS,
         tree: nx.DiGraph = None,
-        nodes: Tuple[int] = None,
+        nodes: tuple[int] = None,
         sanity_check: bool = False,
         **kwargs
     ) -> PEPS:
@@ -842,7 +842,7 @@ def random_bond_gauging(
 
 def loop_series_contraction(
         braket: Braket,
-        excitations: Tuple[nx.MultiGraph] = None,
+        excitations: tuple[nx.MultiGraph] = None,
         max_order: int = np.inf,
         verbose: bool = False,
         sanity_check: bool = False,

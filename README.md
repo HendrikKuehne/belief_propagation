@@ -41,7 +41,7 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
 
-[^2]: `np.einsum_path` cannot contract large networks (i.e. many edges) because the alphabet with which it creates it's equations is limited to 52 characters (lower- and uppercase letters). This seems a severe limitation to me, I don't understand why that's in there; `cotengra.einsum` does not have that limitation, so I'm usnig that instead (dated 30.09.2024).
+[^2]: `np.einsum_path` cannot contract large networks (i.e. many edges) because the alphabet with which it creates it's equations is limited to 52 characters (lower- and uppercase letters). This seems a severe limitation to me, I don't understand why that's in there; `cotengra.einsum` does not have that limitation, so I'm using that instead (dated 30.09.2024).
 
 [^3]: Refer to Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master). The file [`pytenet/doc/conf.py`](https://github.com/cmendl/pytenet/blob/master/doc/conf.py) is especially relevant.
 

@@ -20,7 +20,7 @@ __all__ = [
 import copy
 import warnings
 import itertools
-from typing import Iterator, Tuple, Dict, Union, List, Iterable, Callable
+from typing import Iterator, Union, Iterable, Callable
 
 import numpy as np
 import networkx as nx
@@ -105,9 +105,9 @@ class BaseBraket:
 
     def __contract_ctg_hyperopt(
             self,
-            inputs: List[List[str]],
-            arrays: List[np.ndarray],
-            size_dict: Dict[str, int],
+            inputs: list[list[str]],
+            arrays: list[np.ndarray],
+            size_dict: dict[str, int],
             target_width: int = 20,
             parallel: bool = False,
             verbose: bool = False,
@@ -282,7 +282,7 @@ class BaseBraket:
         return self._converged
 
     @property
-    def D(self) -> Dict[int, int]:
+    def D(self) -> dict[int, int]:
         """Physical dimension at every node."""
         return {
             node: self.G.nodes[node]["D"]
@@ -347,7 +347,7 @@ class BaseBraket:
     def prepare_graph(
             G: nx.MultiGraph,
             keep_legs: bool = False,
-            D: Union[int, Dict[int, int]] = None
+            D: Union[int, dict[int, int]] = None
         ) -> nx.MultiGraph:
         """
         Creates a shallow copy of `G`, and adds the keys `legs`,
@@ -448,14 +448,14 @@ class BaseBraket:
             **kwargs
         )
 
-    def __getitem__(self, node:int) -> Tuple[np.ndarray]:
+    def __getitem__(self, node:int) -> tuple[np.ndarray]:
         """
         Subscripting with a node gives the tensor stack
         `(bra[node], op[node], ket[node])` at that node.
         """
         return (self.bra[node], self.op[node], self.ket[node])
 
-    def __setitem__(self, node: int, Tstack: Tuple[np.ndarray]) -> None:
+    def __setitem__(self, node: int, Tstack: tuple[np.ndarray]) -> None:
         """
         Changing tensor stacks directly.
         """
@@ -808,7 +808,7 @@ class Braket(BaseBraket):
             new_messages: bool,
             msg_init: str,
             sanity_check: bool
-        ) -> Tuple[float]:
+        ) -> tuple[float]:
         """
         Performs a message passing iteration. Returns the change `eps`
         in maximum message norm for every iteration.
@@ -1187,7 +1187,7 @@ class Braket(BaseBraket):
             verbose: bool = False,
             sanity_check: bool = False,
             **kwargs
-        ) -> Tuple[float]:
+        ) -> tuple[float]:
         """
         Layz BP algorithm from [Sci. Adv. 10, eadk4321
         (2024)](https://doi.org/10.1126/sciadv.adk4321). Parameters:
@@ -1540,7 +1540,7 @@ class Braket(BaseBraket):
         return True
 
     @property
-    def edge_T(self) -> Dict[int, Dict[int, np.ndarray]]:
+    def edge_T(self) -> dict[int, dict[int, np.ndarray]]:
         """
         Transformations on edges. First key sending node, second key
         receiving node.
@@ -1646,8 +1646,8 @@ class Braket(BaseBraket):
             bra: PEPS,
             op: PEPO,
             ket: PEPS,
-            msg: Dict[int, Dict[int, np.ndarray]] = None,
-            edge_T: Dict[int, Dict[int, np.ndarray]] = None,
+            msg: dict[int, dict[int, np.ndarray]] = None,
+            edge_T: dict[int, dict[int, np.ndarray]] = None,
             converged: bool = False,
             sanity_check: bool = False
         ) -> None:
@@ -1656,13 +1656,13 @@ class Braket(BaseBraket):
         """
         super().__init__(bra=bra, op=op, ket=ket, sanity_check=False)
 
-        self.msg: Dict[int, Dict[int, np.ndarray]] = msg
+        self.msg: dict[int, dict[int, np.ndarray]] = msg
         """
         Messages. First key sending node, second key receiving node.
         """
 
         if edge_T is None:
-            self._edge_T: Dict[int, Dict[int, np.ndarray]] = {
+            self._edge_T: dict[int, dict[int, np.ndarray]] = {
                 sender: {
                     receiver: np.nan
                     for receiver in self.G.adj[sender]
@@ -1702,8 +1702,8 @@ class ExcBraket(Braket):
             op: PEPO,
             ket: PEPS,
             exc: nx.MultiGraph,
-            msg: Dict[int, Dict[int, np.ndarray]] = None,
-            edge_T: Dict[int, Dict[int, np.ndarray]] = None,
+            msg: dict[int, dict[int, np.ndarray]] = None,
+            edge_T: dict[int, dict[int, np.ndarray]] = None,
             converged: bool = False,
             sanity_check: bool = False
         ) -> None:
@@ -1856,14 +1856,14 @@ def BP_convergence_test(
 
 def braket_to_ctg_arguments(
         braket: Union[BaseBraket, Braket, ExcBraket],
-        exclude: Tuple[int] = (),
+        exclude: tuple[int] = (),
         exclude_policy: str = "skip",
         sanity_check: bool = False
-    ) -> Tuple[
-        List[List[str]],
-        List[List[int]],
-        List[np.ndarray],
-        Dict[str, int]
+    ) -> tuple[
+        list[list[str]],
+        list[list[int]],
+        list[np.ndarray],
+        dict[str, int]
     ]:
     """
     Given a `Braket` object, assembles and returns the cotengra
@@ -1973,15 +1973,15 @@ def braket_to_ctg_arguments(
 
 
 def slice_singleton_dimensions(
-        inputs: List[List[str]],
-        shapes: List[List[int]],
-        arrays: List[np.ndarray],
-        size_dict: Dict[int, int]
-    ) -> Tuple[
-        List[List[str]],
-        List[List[int]],
-        List[np.ndarray],
-        Dict[str, int]
+        inputs: list[list[str]],
+        shapes: list[list[int]],
+        arrays: list[np.ndarray],
+        size_dict: dict[int, int]
+    ) -> tuple[
+        list[list[str]],
+        list[list[int]],
+        list[np.ndarray],
+        dict[str, int]
     ]:
     """
     Slices singleton in the given cotengra contraction data. Optionally,
@@ -2142,7 +2142,7 @@ def contract_braket_with_hole(
     return env
 
 
-def edge_transf_to_tensor_stack(T: np.ndarray) -> Tuple[np.ndarray]:
+def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
     """
     Given a linear edge transformation `T` from a braket, splits it into
     three tensors via two SVDs. This transforms the edge transformation
@@ -2304,7 +2304,7 @@ def contract_tensor_inbound_messages(
     return node_cntr
 
 
-def __contract_tstack_physical_index(tstack: Tuple[np.ndarray]) -> np.ndarray:
+def __contract_tstack_physical_index(tstack: tuple[np.ndarray]) -> np.ndarray:
     """
     Contracts the physical index in a tensor stack, and returns the
     resulting tensor while keeping the leg ordering.
@@ -2416,9 +2416,9 @@ def contract_braket_physical_indices(
 def BP_excitations(
         G: nx.MultiGraph,
         max_order: int = np.inf,
-        holes: Tuple[int] = (),
+        holes: tuple[int] = (),
         sanity_check: bool = False
-    ) -> Tuple[nx.MultiGraph]:
+    ) -> tuple[nx.MultiGraph]:
     """
     Given the graph `G`, returns the excitations from
     [arXiv:2409.03108](https://arxiv.org/abs/2409.03108) up to order
@@ -2508,7 +2508,7 @@ def assemble_excitation_brakets(
         excitation: nx.MultiGraph,
         sanity_check: bool = False,
         **kwargs
-    ) -> Tuple[ExcBraket]:
+    ) -> tuple[ExcBraket]:
     """
     Assembles the brakets that contain the excitation `excitation`.
     Brakets are returned as a tuple, with as many brakets as there are

@@ -5,7 +5,7 @@ DMRG on Braket-objects. Contains the DMRG-classes.
 __all__ = ["DMRG", "LoopSeriesDMRG", "loop_series_environments"]
 
 import itertools
-from typing import Dict, Tuple, List, Iterator, Union
+from typing import Iterator, Union
 import warnings
 import copy
 import pickle
@@ -625,7 +625,7 @@ class DMRG:
         return
 
     @property
-    def msg(self) -> Dict[int, Dict[int, np.ndarray]]:
+    def msg(self) -> dict[int, dict[int, np.ndarray]]:
         """
         Messages on the total expval. These are formed as direct
         products of messages on the individual expvals.
@@ -634,7 +634,7 @@ class DMRG:
         return self._msg
 
     @property
-    def D(self) -> Dict[int, int]:
+    def D(self) -> dict[int, int]:
         """Physical dimension at every node."""
         return self.overlap.D
 
@@ -800,7 +800,7 @@ class DMRG:
 
     def __init__(
             self,
-            oplist: Tuple[PEPO],
+            oplist: tuple[PEPO],
             psi_init: PEPS = None,
             chi: int = None,
             sanity_check: bool = False,
@@ -841,7 +841,7 @@ class DMRG:
                 **kwargs
             )
 
-        self.expvals: Tuple[Braket] = tuple(
+        self.expvals: tuple[Braket] = tuple(
             Braket.Expval(psi=psi_init, op=op, sanity_check=sanity_check)
             for op in oplist
         )
@@ -849,12 +849,12 @@ class DMRG:
         self.overlap: Braket = Braket.Overlap(psi1=psi_init, psi2=psi_init)
         """Norm of the current state."""
 
-        self._msg: Dict[int, Dict[int, np.ndarray]] = None
+        self._msg: dict[int, dict[int, np.ndarray]] = None
         """
         Messages on the total expval. Formed as direct products of
         expval messages.
         """
-        self._T_totalH: Dict[int, np.ndarray] = None
+        self._T_totalH: dict[int, np.ndarray] = None
         """
         Local tensors of the total hamiltonian. Formed as direct sums of
         constituent operator tensors.
@@ -1231,7 +1231,7 @@ class LoopSeriesDMRG:
 
     def __calculate_environments(
             self,
-            nodes: Tuple[int] = None,
+            nodes: tuple[int] = None,
             sanity_check: bool = False,
             **kwargs
         ) -> None:
@@ -1619,7 +1619,7 @@ class LoopSeriesDMRG:
         return cntr
 
     @property
-    def D(self) -> Dict[int, int]:
+    def D(self) -> dict[int, int]:
         """Physical dimension at every node."""
         return self.psi.D
 
@@ -1714,7 +1714,7 @@ class LoopSeriesDMRG:
         return True
 
     @property
-    def brakets(self) -> Tuple[Braket]:
+    def brakets(self) -> tuple[Braket]:
         """
         Assembles the brakets for the operators in `self.oplist` and the
         overlap. Returns a tuple of `Braket` objects, where the operator
@@ -1781,7 +1781,7 @@ class LoopSeriesDMRG:
 
     def __init__(
             self,
-            oplist: Tuple[PEPO],
+            oplist: tuple[PEPO],
             psi_init: PEPS = None,
             chi: int = None,
             max_order: int = 0,
@@ -1830,7 +1830,7 @@ class LoopSeriesDMRG:
                 **kwargs
             )
 
-        self.oplist: Tuple[PEPO] = oplist
+        self.oplist: tuple[PEPO] = oplist
         """Constituent operators of the Hamiltonian."""
 
         self._psi: PEPS = psi_init
@@ -1848,22 +1848,22 @@ class LoopSeriesDMRG:
         # We obtain these messages from the brakets <psi|oplist[i]|psi> of the
         # constituent operators. Their direct sums are the messages on the
         # total operator.
-        self._msg_oplist: List[Dict[int, Dict[int, np.ndarray]]] = [
+        self._msg_oplist: list[dict[int, dict[int, np.ndarray]]] = [
             None for _ in oplist
         ]
         """Messages on the constituent operator brakets."""
 
         # The messages on the overlap.
-        self._msg_overlap: Dict[int, Dict[int, np.ndarray]] = None
+        self._msg_overlap: dict[int, dict[int, np.ndarray]] = None
         """Messages on the overlap braket."""
 
-        self.iter_until_conv: Tuple[Tuple[int]] = ()
+        self.iter_until_conv: tuple[tuple[int]] = ()
         """
         Iterations until convergence of the messages, for all operators
         and the overlap and for every call to `self.BP`.
         """
 
-        self.eps: Tuple[Tuple[float]] = ()
+        self.eps: tuple[tuple[float]] = ()
         """
         Final change in the norm of the messages. One tuple for every call to
         `self.BP`, and every tuple contains the final change in message norms
@@ -1871,21 +1871,21 @@ class LoopSeriesDMRG:
         """
 
         # The environments on the total hamiltonian.
-        self._env_totalH:  Dict[int, np.ndarray] = None
+        self._env_totalH:  dict[int, np.ndarray] = None
         """Environments on the total hamiltonian."""
 
         # The environments on the overlap.
-        self._env_overlap: Dict[int, np.ndarray] = None
+        self._env_overlap: dict[int, np.ndarray] = None
         """Environments on the overlap."""
 
         # Local PEPO tensors of the total hamiltonian. Formed as direct sums of
         # constituent PEPO tensors.
-        self._T_totalH: Dict[int, np.ndarray] = None
+        self._T_totalH: dict[int, np.ndarray] = None
         """Local tensors of the total hamiltonian."""
         self.__assemble_T_totalH()
 
         # Computing loop excitations up to max_order.
-        self.hole_excitations: Dict[int, Tuple[nx.MultiGraph]] = {
+        self.hole_excitations: dict[int, tuple[nx.MultiGraph]] = {
             node: BP_excitations(
                 G=self._psi.G,
                 holes=(node,),
@@ -1898,7 +1898,7 @@ class LoopSeriesDMRG:
         Excitations for environment calculations, up to order
         `self.max_order`.
         """
-        self.closed_excitations: Tuple[nx.MultiGraph] = BP_excitations(
+        self.closed_excitations: tuple[nx.MultiGraph] = BP_excitations(
             G=self._psi.G,
             max_order=self.max_order,
             sanity_check=sanity_check
@@ -1936,13 +1936,14 @@ def __msg_direct_sum(
 
     nLegs = len(braket.G.adj[node])
 
-    if 3 * nLegs > np.MAXDIMS:
+    MAXDIMS = 32 # Heuristic.
+    if 3 * nLegs > MAXDIMS:
         # This node has too many neighbors; numpy would run out of
         # array dimensions.
         raise RuntimeError("".join((
             f"Node {node} has {nLegs} neighbors, which would lead to ",
             f"an environment with {3 * nLegs} dimensions. Numpy can ",
-            f"only handle arrays with up to {np.MAXDIMS} dimensions."
+            f"only handle arrays with up to {MAXDIMS} dimensions."
         )))
 
     # Assembling einsum arguments.
@@ -1965,7 +1966,7 @@ def __msg_direct_sum(
 
 def __loop_series_excited_terms(
         braket: Braket,
-        excitations: Tuple[nx.MultiGraph],
+        excitations: tuple[nx.MultiGraph],
         node: int,
         sanity_check: bool = False
     ) -> np.ndarray:
@@ -2048,13 +2049,13 @@ def __loop_series_excited_terms(
 
 def loop_series_environments(
         braket: Braket,
-        excitations: Dict[int, Tuple[nx.MultiGraph]] = None,
-        nodes: Tuple[int] = None,
+        excitations: dict[int, tuple[nx.MultiGraph]] = None,
+        nodes: tuple[int] = None,
         max_order: int = np.inf,
         skip_BP: bool = False,
         sanity_check: bool = False,
         **kwargs
-    ) -> Dict[int, np.ndarray]:
+    ) -> dict[int, np.ndarray]:
     """
     Calculates the environments at the sites from `nodes`. If `nodes
     = None` (default), calculates environments at every site. `kwargs`
@@ -2143,7 +2144,7 @@ def loop_series_environments(
 
 
 def environments_direct_sum(
-        envs: Tuple[np.ndarray]
+        envs: tuple[np.ndarray]
     ) -> np.ndarray:
     """
     Evaluates the direct sum of the environments in `envs`. The
