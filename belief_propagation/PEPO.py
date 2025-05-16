@@ -6,7 +6,7 @@ __all__ = ["PEPO", "PauliPEPO"]
 
 import warnings
 import itertools
-from typing import Union, Iterable, Iterator, Tuple, List, Dict, FrozenSet
+from typing import Union, Iterable, Iterator
 import copy
 
 import numpy as np
@@ -429,7 +429,7 @@ class PEPO:
             remove_ids: bool = True,
             return_virtidx: bool = False,
             sanity_check: bool = False
-        ) -> Tuple[Dict[int, np.ndarray]]:
+        ) -> tuple[dict[int, np.ndarray]]:
         """
         Returns all operator chains. An operator chain is a collection
         of operators. The summation of the tensor products of all
@@ -448,8 +448,8 @@ class PEPO:
         # Why a recursion? For large graphs, simply iterating through all
         # indices to find valid chains might take prohibitively long.
 
-        operator_chains: List[Dict[int, Tuple[int]]] = []
-        operator_chain_virtidx: List[Dict[FrozenSet[int], int]] = []
+        operator_chains: list[dict[int, tuple[int]]] = []
+        operator_chain_virtidx: list[dict[frozenset[int], int]] = []
 
         self.__chain_construction_recursion(
             edges_to_indices={},
@@ -496,9 +496,9 @@ class PEPO:
 
     def __chain_construction_recursion(
             self,
-            edges_to_indices: Dict[FrozenSet[int], int],
-            chains: List[Dict[int, Tuple[int]]],
-            edges_to_indices_list: List[Dict[FrozenSet[int], int]],
+            edges_to_indices: dict[frozenset[int], int],
+            chains: list[dict[int, tuple[int]]],
+            edges_to_indices_list: list[dict[frozenset[int], int]],
             sanity_check: bool = False
         ) -> None:
         """
@@ -924,7 +924,7 @@ class PEPO:
         return True
 
     @property
-    def D(self) -> Dict[int, int]:
+    def D(self) -> dict[int, int]:
         """Physical dimension at every node."""
         return {
             node: self.G.nodes[node]["D"]
@@ -960,7 +960,7 @@ class PEPO:
     def prepare_graph(
             G: nx.MultiGraph,
             chi: int = None,
-            D: Union[int, Dict[int, int]] = None,
+            D: Union[int, dict[int, int]] = None,
             sanity_check: bool = False
         ) -> nx.MultiGraph:
         """
@@ -1545,9 +1545,9 @@ class PauliPEPO(PEPO):
 
 def get_next_edges(
         G: nx.MultiGraph,
-        edge_set: Tuple[Tuple[int]],
+        edge_set: tuple[tuple[int]],
         sanity_check: bool = False
-    ) -> Tuple[Tuple[int]]:
+    ) -> tuple[tuple[int]]:
     """
     Returns the edges that are adjacent to, but not contained in, the
     set `edge_set`.
@@ -1571,9 +1571,9 @@ def get_next_edges(
 def edge_indices_to_site_index(
         G: nx.MultiGraph,
         node: int,
-        edges_to_indices: Dict[FrozenSet[int], int],
+        edges_to_indices: dict[frozenset[int], int],
         sanity_check: bool = False
-    ) -> Tuple[int]:
+    ) -> tuple[int]:
     """
     Given a dictionary of edges to indices, returns the index to the
     local tensor at `node`.
@@ -1594,7 +1594,7 @@ def edge_indices_to_site_index(
 
 def all_edges_present(
         G: nx.MultiGraph,
-        edges_to_indices: Dict[FrozenSet[int], int],
+        edges_to_indices: dict[frozenset[int], int],
         node: int = None,
         sanity_check: bool = False
     ) -> bool:

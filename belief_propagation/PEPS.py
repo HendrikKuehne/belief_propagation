@@ -6,7 +6,7 @@ __all__ = ["PEPS",]
 
 import warnings
 import copy
-from typing import Union, Iterator, Dict
+from typing import Union, Iterator
 
 import numpy as np
 import networkx as nx
@@ -231,7 +231,7 @@ class PEPS:
         return True
 
     @property
-    def D(self) -> Dict[int, int]:
+    def D(self) -> dict[int, int]:
         """Physical dimension at every node."""
         return {
             node: self.G.nodes[node]["D"]
@@ -242,7 +242,7 @@ class PEPS:
     def init_random(
             cls,
             G: nx.MultiGraph,
-            D: Union[int, Dict[int, int]],
+            D: Union[int, dict[int, int]],
             chi: int,
             rng:np.random.Generator = np.random.default_rng(),
             real: bool = False,
@@ -340,7 +340,7 @@ class PEPS:
     def ProductState(
             cls,
             G: nx.MultiGraph,
-            state: Union[np.ndarray, Dict[int, np.ndarray]],
+            state: Union[np.ndarray, dict[int, np.ndarray]],
             normalize: bool = True,
             sanity_check: bool = False
         ) -> "PEPS":
@@ -399,7 +399,7 @@ class PEPS:
             G: nx.MultiGraph,
             keep_legs: bool = False,
             keep_size: bool = False,
-            D: Union[int, Dict[int, int]] = None,
+            D: Union[int, dict[int, int]] = None,
             sanity_check: bool = False
         ) -> nx.MultiGraph:
         """
@@ -459,7 +459,7 @@ class PEPS:
     def set_bond_dimensions(
             G: nx.MultiGraph,
             bond_dim_strategy: str,
-            D: Union[int, Dict[int, int]] = None,
+            D: Union[int, dict[int, int]] = None,
             max_chi: int = None
         ) -> None:
         """

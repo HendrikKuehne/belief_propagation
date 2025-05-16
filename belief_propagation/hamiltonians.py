@@ -14,7 +14,7 @@ __all__ = [
 
 import copy
 import warnings
-from typing import Dict, Tuple, Union
+from typing import Union
 
 import numpy as np
 import networkx as nx
@@ -447,7 +447,7 @@ class Heisenberg(PauliPEPO):
 
 def Zero(
         G: nx.MultiGraph,
-        D: Union[int, Dict[int, int]],
+        D: Union[int, dict[int, int]],
         dtype=np.complex128,
         sanity_check: bool = False
     ) -> PEPO:
@@ -482,7 +482,7 @@ def Zero(
 
 def Identity(
         G: nx.MultiGraph,
-        D: Union[int, Dict[int, int]],
+        D: Union[int, dict[int, int]],
         dtype=np.complex128,
         sanity_check: bool = False
     ) -> PEPO:
@@ -509,7 +509,7 @@ def posneg_TFI(
         J: float = 1,
         g: float = 0,
         sanity_check: bool = False
-    ) -> Tuple[PEPO, PEPO]:
+    ) -> tuple[PEPO, PEPO]:
     """
     Constructs two PEPOs, where one contains the positive-semidefinite
     part of the TFI and the other contains the negative-semidefinite
@@ -645,7 +645,7 @@ def posneg_TFI(
 
 def operator_chain(
         G: nx.MultiGraph,
-        ops: Dict[int, np.ndarray],
+        ops: dict[int, np.ndarray],
         sanity_check: bool = False
     ) -> PEPO:
     """
@@ -687,7 +687,7 @@ def operator_chain(
 
 def operator_layer(
         G: nx.MultiGraph,
-        op_chains: Tuple[Dict[int, np.ndarray]],
+        op_chains: tuple[dict[int, np.ndarray]],
         sanity_check: bool = False
     ) -> PEPO:
     """
