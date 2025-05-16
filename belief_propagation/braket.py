@@ -1558,7 +1558,16 @@ class Braket(BaseBraket):
         ) -> np.ndarray:
         """
         Generates a new message with shape
-        `(bra_size, op_size, ket_size)`.
+        `(bra_size, op_size, ket_size)`. Available methods if
+        `bra_size == ket_size`:
+        * `normal`: Positive-semidefinite and hermitian.
+        * `unitary`: Positive-semidefinite and unitary.
+        * `unitary_neg`: Negative-semidefinite and unitary.
+        * `zero-normal`: Positive-semidefinite, hermitian, sums to zero.
+        * `randn`: Random message from normal distribution.
+
+        If bra- and ket-sizes are different, completely random messages
+        are returned.
         """
         # Random number generation.
         if real:
@@ -1594,6 +1603,15 @@ class Braket(BaseBraket):
 
                 return msg
 
+            if method == "unitary_neg":
+                # Negative-semidefinite and unitary.
+                for i in range(op_size):
+                    eigvals = rng.uniform(low=-1, high=0, size=bra_size)
+                    U = matrixgen(bra_size)
+                    msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
+
+                return msg
+
             if method == "zero-normal":
                 # Positive-semidefinite, hermitian, sums to zero.
                 msg = Braket.get_new_message(
@@ -1605,6 +1623,10 @@ class Braket(BaseBraket):
                     rng=rng
                 )
                 return msg - np.sum(msg)
+
+            if method == "randn":
+                # Random message.
+                return randn(size=(bra_size, op_size, ket_size))
 
             raise ValueError(
                 "Message initialisation method " + method + " not implemented."

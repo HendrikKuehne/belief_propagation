@@ -34,6 +34,9 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
     * I should clean up my code anyways, a good guide might be the [PEP 8 style guide](https://peps.python.org/pep-0008/).
+* Parallelize using [Nvidia cuPyNumeric](https://developer.nvidia.com/cupynumeric)
+    * Installation instructions [here](https://github.com/NVIDIA/accelerated-computing-hub/blob/main/Accelerated_Python_User_Guide/notebooks_v1/Chapter_11_Distributed_Computing_cuPyNumeric.ipynb)
+    * I can't get it to use the GPUs on `sccs.homeone`; it seems to me like CUDA is not being installed correctly. The [CUDA toolkit downloads](https://developer.nvidia.com/cuda-downloads) require administrator privileges during the installation process, which I don't have. I tried [installing CUDA with conda](https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html#x86-64-conda) before installing cuPyNumeric, but that doesn't seem to work...
 * Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
