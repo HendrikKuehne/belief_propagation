@@ -453,7 +453,16 @@ def Zero(
     ) -> PEPO:
     """
     Returns a zero-valued PEPO on graph `G`. Physical dimension `D`.
+    If `D` is a dict, it must contain the physical dimension for every
+    site in `G`.
     """
+    # sanity check.
+    if isinstance(D, dict):
+        if not nx.utils.nodes_equal(nodes1=G.nodes(), nodes2=D.keys()):
+            raise ValueError(
+                "D must define the physical dimension on every site of G."
+            )
+
     op = PEPO()
     op.G = PEPO.prepare_graph(G=G, chi=1, D=D)
 
@@ -488,6 +497,8 @@ def Identity(
     ) -> PEPO:
     """
     Returns the identity PEPO on graph `G`. Physical dimension `D`.
+    If `D` is a dict, it must contain the physical dimension for every
+    site in `G`.
     """
     Id = Zero(G=G, D=D, dtype=dtype, sanity_check=sanity_check)
 
@@ -659,6 +670,23 @@ def operator_chain(
 
     # Extracting physical dimension.
     D = {node: op.shape[0] for node, op in ops.items()}
+
+    if not nx.utils.nodes_equal(nodes1=G.nodes(), nodes2=D.keys()):
+        # Physical dimension is not defined on all sites. Trying to infer
+        # physical dimension.
+        phys_dim_set = set(op.shape[-1] for op in ops.values())
+        if len(phys_dim_set) == 1:
+            # There is a unique physical dimension; adding it to the remaining
+            # sites.
+            D_inferred = phys_dim_set.pop()
+            for node in G:
+                if node not in D.keys(): D[node] = D_inferred
+        else:
+            raise ValueError("".join((
+                "Physical dimension cannot be inferred sites. If ops ",
+                "contains operators with different dimensions, ops must ",
+                "contain an operator for every site."
+            )))
 
     H = Identity(G=G, D=D, sanity_check=sanity_check)
 
