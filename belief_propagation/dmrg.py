@@ -224,7 +224,9 @@ class DMRG:
         )
 
         H = np.einsum(*args, out_legs, optimize=True)
-        H = np.reshape(H, (vir_dim * self.D[node], vir_dim * self.D[node]))
+        H = np.reshape(
+            H, shape=(vir_dim * self.D[node], vir_dim * self.D[node])
+        )
 
         if sanity_check:
             assert is_hermitian_matrix(H, threshold=threshold, verbose=False)
@@ -293,7 +295,9 @@ class DMRG:
         args += (self.overlap.op.I(node=node), (3 * nLegs, 3*nLegs + 1))
 
         N = np.einsum(*args, out_legs, optimize=True)
-        N = np.reshape(N, (vir_dim * self.D[node], vir_dim * self.D[node]))
+        N = np.reshape(
+            N, shape=(vir_dim * self.D[node], vir_dim * self.D[node])
+        )
 
         if sanity_check: assert is_hermitian_matrix(N, threshold=threshold)
 
@@ -465,7 +469,7 @@ class DMRG:
             newshape += [self.D[node],]
 
             # Re-shaping statevector into site tensor.
-            T = np.reshape(eigvecs[:, np.argmin(eigvals)], newshape)
+            T = np.reshape(eigvecs[:, np.argmin(eigvals)], shape=newshape)
 
             # Inserting the new tensor and gauging the current node.
             self[node] = T
@@ -1008,7 +1012,7 @@ class LoopSeriesDMRG:
         ))
 
         H = np.reshape(
-            H, newshape=(vir_dim * self.D[node], vir_dim * self.D[node])
+            H, shape=(vir_dim * self.D[node], vir_dim * self.D[node])
         )
 
         if sanity_check and self.converged:
@@ -1086,7 +1090,7 @@ class LoopSeriesDMRG:
             chi for chi in self._env_overlap[node].shape[:nLegs]
         ))
 
-        N = np.reshape(N, (vir_dim * self.D[node], vir_dim * self.D[node]))
+        N = np.reshape(N, shape=(vir_dim * self.D[node], vir_dim * self.D[node]))
 
         if sanity_check and self.converged:
             assert is_hermitian_matrix(
@@ -1398,7 +1402,7 @@ class LoopSeriesDMRG:
             newshape += [self.D[node],]
 
             # Re-shaping the statevector into a site tensor.
-            T = np.reshape(eigvecs[:, np.argmin(eigvals)], newshape)
+            T = np.reshape(eigvecs[:, np.argmin(eigvals)], shape=newshape)
 
             # Inserting the new tensor and gauging the current node.
             self[node] = T

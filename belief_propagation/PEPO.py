@@ -185,7 +185,7 @@ class PEPO:
 
         # Re-shaping into a dense matrix.
         total_D = np.prod(tuple(self.D.values()))
-        H = np.reshape(H, newshape=(total_D, total_D))
+        H = np.reshape(H, shape=(total_D, total_D))
 
         return H
 
@@ -1208,7 +1208,7 @@ class PEPO:
                     newshape[leg] = newPEPO.G[node][neighbor][0]["size"]
 
                 # Inserting the re-shaped tensor.
-                newPEPO[node] = np.reshape(T, newshape=newshape)
+                newPEPO[node] = np.reshape(T, shape=newshape)
 
             return newPEPO
 
@@ -1264,7 +1264,7 @@ class PEPO:
                     newshape[leg] = newPEPS.G[node][neighbor][0]["size"]
 
                 # Inserting the re-shaped tensor.
-                newPEPS[node] = np.reshape(T, newshape=newshape)
+                newPEPS[node] = np.reshape(T, shape=newshape)
 
             return newPEPS
 
@@ -1283,7 +1283,7 @@ class PEPO:
             # of node labels.
             psi = np.reshape(
                 psi,
-                newshape=[self.D[node] for node in sorted(self)]
+                shape=[self.D[node] for node in sorted(self)]
             )
 
             # enumerating the edges in the graph

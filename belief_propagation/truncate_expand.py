@@ -273,7 +273,7 @@ def QR_bottleneck(
     # assembling and inserting the projector
     Q = np.reshape(
         Q,
-        newshape=(
+        shape=(
             braket.bra.G[node1][node2][0]["size"],
             braket.op.G[node1][node2][0]["size"],
             braket.ket.G[node1][node2][0]["size"],
@@ -401,10 +401,10 @@ def L2BP_compression(
 
         # Get messages.
         msg_12 = np.reshape(
-            overlap.msg[node1][node2][:,0,:], newshape=(size, size)
+            overlap.msg[node1][node2][:,0,:], shape=(size, size)
         )
         msg_21 = np.reshape(
-            overlap.msg[node2][node1][:,0,:], newshape=(size, size)
+            overlap.msg[node2][node1][:,0,:], shape=(size, size)
         )
 
         # Splitting the messages, using SVD.
@@ -716,7 +716,7 @@ def QR_gauging(
         oldshape = list(T_exposed.shape)
         T_exposed = np.reshape(
             T_exposed,
-            newshape=(-1, newpsi.G[pred][node][0]["size"])
+            shape=(-1, newpsi.G[pred][node][0]["size"])
         )
 
         # QR decomposition.
@@ -729,7 +729,7 @@ def QR_gauging(
 
         # Re-shaping Q, and inserting into the state.
         oldshape[-1] = newpsi.G[pred][node][0]["size"]
-        Q = np.reshape(Q, newshape=oldshape)
+        Q = np.reshape(Q, shape=oldshape)
         Q = np.moveaxis(
             Q,
             source=-1,

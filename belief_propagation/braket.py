@@ -2162,7 +2162,7 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
     T_ = np.transpose(T, axes=(0, 3, 1, 4, 2, 5))
 
     # Splitting between operator legs and ket legs.
-    T_ = np.reshape(T_, newshape=(bra_size**2 * op_size**2, ket_size**2))
+    T_ = np.reshape(T_, shape=(bra_size**2 * op_size**2, ket_size**2))
     U, singvals, Vh = scialg.svd(
         a=T_,
         full_matrices=False,
@@ -2174,8 +2174,8 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
 
     # Re-shaping T_bra_op s.t. bra legs and operator legs are separated.
     T_bra_op = np.reshape(
-        a=T_bra_op,
-        newshape=(bra_size**2, op_size**2 * D_op_ket)
+        T_bra_op,
+        shape=(bra_size**2, op_size**2 * D_op_ket)
     )
 
     # Splitting between bra legs and operator legs.
