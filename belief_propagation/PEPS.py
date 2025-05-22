@@ -244,16 +244,17 @@ class PEPS:
             G: nx.MultiGraph,
             D: Union[int, dict[int, int]],
             chi: int,
-            rng:np.random.Generator = np.random.default_rng(),
+            rng: np.random.Generator = np.random.default_rng(),
             real: bool = False,
             bond_dim_strategy: str = "uniform",
+            keep_legs: bool = True,
             sanity_check: bool = False,
         ) -> "PEPS":
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
-        the physical dimension is `D`. Any leg ordering in `G` is not
-        incorporated in the MPS that is returned. Bond dimensions are
-        initialized using `bond_dim_strategy`; see
+        the physical dimension is `D`. Leg ordering in `G` is included
+        based on value of `keep_legs` (default is `True`). Bond
+        dimensions are initialized using `bond_dim_strategy`; see
         `PEPS.set_bond_dimensions`.
         """
         # Random number generation.
@@ -262,7 +263,7 @@ class PEPS:
         else:
             randn = lambda size: crandn(size, rng)
 
-        G = cls.prepare_graph(G, D=D)
+        G = cls.prepare_graph(G, D=D, keep_legs=keep_legs)
 
         # Determining bond dimensions.
         cls.set_bond_dimensions(
@@ -273,10 +274,6 @@ class PEPS:
         )
 
         for node in G.nodes:
-            # Telling the adjacent edges which index they correspond to.
-            for i, neighbor in enumerate(G.adj[node]):
-                G[node][neighbor][0]["legs"][node] = i
-
             # Constructing the shape of the tensor at this site.
             dim = [None for i in G.adj[node]] + [G.nodes[node]["D"],]
             for i, neighbor in enumerate(G.adj[node]):
