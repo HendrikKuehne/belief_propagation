@@ -410,6 +410,19 @@ class PEPS:
         # shallow copy of G
         newG = nx.MultiGraph(G.edges())
 
+        if any(
+            legs is None
+            for node1, node2, legs in G.edges(data="legs", keys=False)
+        ) and keep_legs:
+            # The graph does not contain a leg ordering. Setting keep_legs to
+            # False, s.t. a leg ordering is added.
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "Graph does not contain leg ordering. Setting keep_legs to False.",
+                    RuntimeWarning
+                )
+            keep_legs = False
+
         # adding legs attribute to each edge
         for node1, node2, legs in G.edges(data="legs", keys=False):
             newG[node1][node2][0]["legs"] = legs if keep_legs else {}

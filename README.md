@@ -144,6 +144,10 @@ This will be updated continuously, as questions come to mind.
       Loopy Belief Propagation for Approximate Inference: An Empirical Study  
       [UAI 1999 Proceedings 467 - 475](https://doi.org/10.48550/arXiv.1301.6725)
         * Dampening ("Momentum term") in BP
+    * Yinchuan Li, Guangchen Lan, Xiaodong Wang  
+      Tensor Generalized Approximate Message Passing  
+      [arXiv:2504:00008](https://arxiv.org/abs/2504.00008)
+        * Tensor ring decomposition using Belief Propagation
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  

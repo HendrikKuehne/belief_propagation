@@ -287,7 +287,7 @@ def fidelity(psi: np.ndarray, subspace: tuple[np.ndarray]) -> float:
         raise ValueError("Vectors in subspace do not match psi.")
 
     F = np.sum(
-        np.abs(subspace_ @ psi)**2
+        np.abs(subspace_.conj() @ psi)**2
         / np.diag(subspace_ @ subspace_.T.conj())
     )
     F /= np.dot(psi, psi.conj())

@@ -298,7 +298,7 @@ def L2BP_compression(
         verbose: bool = False,
         sanity_check: bool = False,
         **kwargs
-    ) -> tuple[PEPS ,dict[frozenset, np.ndarray]]:
+    ) -> Union[PEPS, tuple[PEPS ,dict[frozenset, np.ndarray]]]:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321
     (2024)](https://doi.org/10.1126/sciadv.adk4321). Singular values
@@ -516,12 +516,14 @@ def L2BP_compression(
         ns = np.std(new_sizes)
         cm = np.mean(compression_ratios)
         cs = np.std(compression_ratios)
-        print(
-            f"L2BP compression: Sing.val. threshold = {singval_threshold:.3e}"
-        )
-        print(f"    Mean old size:          {om:7.3f} +- {os:7.3f}")
-        print(f"    Mean new size:          {nm:7.3f} +- {ns:7.3f}")
-        print(f"    Mean compression ratio: {cm:7.3f} +- {cs:7.3f}")
+        with tqdm.tqdm.external_write_mode():
+            print("".join((
+                "L2BP compression: ",
+                f"Sing.val. threshold = {singval_threshold:.3e}"
+            )))
+            print(f"    Mean old size:          {om:7.3f} +- {os:7.3f}")
+            print(f"    Mean new size:          {nm:7.3f} +- {ns:7.3f}")
+            print(f"    Mean compression ratio: {cm:7.3f} +- {cs:7.3f}")
 
     if sanity_check: assert newpsi.intact
 
@@ -663,7 +665,8 @@ def QR_gauging(
     search spanning tree will be used. If given, only the nodes in
     `nodes` will be gauged.
 
-    Can reduce bond dimensions.
+    Uses the reduced mode of the QR decomposition, and can thus reduce
+    bond dimensions. Thus this method may result in compression.
     """
     if sanity_check: assert psi.intact
 

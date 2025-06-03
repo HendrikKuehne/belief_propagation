@@ -1202,19 +1202,6 @@ class LoopSeriesDMRG:
         # Was BP able to converge, or should we save the current object self?
         if self.save_oscillating_states and not self.converged:
             if min(_eps) > self.non_convergence_BP_eps:
-                # Filename for the pickle file.
-                now = datetime.datetime.now().strftime("%H_%M_%S___%d-%m-%Y")
-                fname = os.path.join(
-                    self.output_dir,
-                    "".join((
-                        "non_converging_",
-                        str(self.__class__.__name__),
-                        "_t=",
-                        now,
-                        ".pickle"
-                    ))
-                )
-
                 # Saving the current object in a pickle file.
                 with tqdm.tqdm.external_write_mode():
                     warnings.warn(
@@ -1223,13 +1210,11 @@ class LoopSeriesDMRG:
                             str(tuple(f"{__eps:.3e}" for __eps in _eps)),
                             f". All above {self.non_convergence_BP_eps:.3e}.",
                             " Impossibility of convergence is assumed; ",
-                            "saving current self in ",
-                            fname
+                            "saving current self."
                         )),
                         RuntimeWarning
                     )
-                with open(fname, mode="wb") as file:
-                    pickle.dump(self, file)
+                self.save_to_file()
 
         return
 
@@ -1562,6 +1547,34 @@ class LoopSeriesDMRG:
         raise NotImplementedError(
             "Compression method " + method + " not implemented."
         )
+
+    def save_to_file(self, fnamesuffix: str = "") -> None:
+        """
+        Saves `self` to the file
+        `$self.output_dir/LoopSeriesDMRG_t=$TIME_$DATE_$fnamesuffix.pickle`.
+        """
+        # Creating output directory.
+        os.makedirs(
+            name=os.path.dirname(self.output_dir),
+            exist_ok=True
+        )
+
+        now = datetime.datetime.now().strftime("%H_%M_%S___%d-%m-%Y")
+        fname = os.path.join(
+            self.output_dir,
+            "".join((
+                "non_converging_",
+                str(self.__class__.__name__),
+                "_t=",
+                now,
+                fnamesuffix,
+                ".pickle"
+            ))
+        )
+
+        # Saving the current object in a pickle file.
+        with open(fname, mode="wb") as file:
+            pickle.dump(self, file)
 
     @property
     def converged(self) -> bool:
@@ -1911,12 +1924,6 @@ class LoopSeriesDMRG:
         Excitations for contracting brakets, up to order
         `self.max_order`.
         """
-
-        # Creating output directory for non-converging states.
-        os.makedirs(
-            name=os.path.dirname(self.output_dir),
-            exist_ok=True
-        )
 
         if sanity_check: assert self.intact
 
