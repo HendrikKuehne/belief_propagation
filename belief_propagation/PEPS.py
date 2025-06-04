@@ -92,6 +92,63 @@ class PEPS:
 
         return val
 
+    def enlarge_bond_dimensions(
+            self,
+            size: Union[int, nx.MultiGraph],
+            sanity_check: bool = False
+        ) -> "PEPS":
+        """
+        Enlarges the virtual bond dimensions of the state. They new bond
+        dimensions can be given as integer `size`, which applies to all
+        bonds, or as a graph that contains the new bond dimension with
+        the key `size` on every edge. If the old size of any edge
+        exceeds the new size, nothing is done on this edge.
+        """
+        if sanity_check: assert self.intact
+
+        # Preparing new bond dimensions.
+        if not isinstance(size, nx.MultiGraph):
+            size_graph = nx.MultiGraph(incoming_graph_data=self.G)
+            for node1, node2 in size_graph.edges():
+                size_graph[node1][node2][0]["size"] = size
+        else:
+            size_graph = size
+        if not graph_compatible(self.G, size_graph, sanity_check=sanity_check):
+            raise ValueError("".join((
+                "Graph with new bond dimensions is not compatible with ",
+                "geometry of the state."
+            )))
+
+        new_peps = copy.deepcopy(self)
+
+        # Adding new bond dimensions.
+        for node1, node2 in new_peps.G.edges():
+            newsize = size_graph[node1][node2][0]["size"]
+            new_peps.G[node1][node2][0]["size"] = newsize
+
+        for node in new_peps:
+            # Assembling numpy pad widths.
+            pad_width = [None for _ in new_peps.G.adj[node]] + [(0, 0,),]
+            for neighbor in new_peps.G.adj[node]:
+                leg = new_peps.G[node][neighbor][0]["legs"][node]
+                old_size = self.G[node][neighbor][0]["size"]
+                pad_width[leg] = (
+                    0,
+                    max(size_graph[node][neighbor][0]["size"] - old_size, 0)
+                )
+
+            # Padding tensor, and inserting into new PEPS.
+            new_peps[node] = np.pad(
+                self[node],
+                pad_width=pad_width,
+                mode="constant",
+                constant_values=0
+            )
+
+        if sanity_check: assert new_peps.intact
+
+        return new_peps
+
     def _permute_virtual_dimensions(
             self,
             G: nx.MultiGraph,
