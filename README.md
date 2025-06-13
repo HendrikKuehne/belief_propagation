@@ -181,3 +181,10 @@ This will be updated continuously, as questions come to mind.
   * Silvia Martina  
     Spectra of Random Matrices  
     [hosted by Università degli Studi di Padova](https://thesis.unipd.it/retrieve/b409c829-d57d-491c-9c0f-7d5f21f6a756/Tesi_LM_Martina_Silvia.pdf)
+  * Masuo Suzuki  
+    General theory of fractal path integrals with applications to many‐body theories and statistical physics  
+    [J. Math. Phys. 32, 400–407 (1991)](https://doi.org/10.1063/1.529425)
+  * Andrew M. Childs, Yuan Su, Minh C. Tran, Nathan Wiebe, Shuchen Zhu  
+    Theory of Trotter Error with Commutator Scaling  
+    [Phys. Rev. X 11, 011020 (2021)](https://doi.org/10.1103/PhysRevX.11.011020) ([arXiv:1912.08854](https://arxiv.org/abs/1912.08854))
+    * Explicit form of second order Trotteriation

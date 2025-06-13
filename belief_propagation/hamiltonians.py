@@ -26,7 +26,7 @@ from belief_propagation.PEPO import PEPO, PauliPEPO
 
 class TFI(PauliPEPO):
     """
-    Travsverse Field Ising model.
+    Travsverse Field Ising model: `J * sz * sz + g * sx`.
     """
 
     def __ising_PEPO_tensor_without_coupling(
@@ -193,7 +193,7 @@ class TFI(PauliPEPO):
     # --------------------------------------------------------------------------------------------------------------------------------------------------------------
 
     @staticmethod
-    def H1(J: float = 1,h: float = 0) -> np.ndarray:
+    def H1(J: float = 1, h: float = 0) -> np.ndarray:
         """
         Graph:
 
@@ -226,7 +226,7 @@ class TFI(PauliPEPO):
         return H
 
     @staticmethod
-    def line(N: int, J: float = 1,h: float = 0) -> np.ndarray:
+    def line(N: int, J: float = 1, h: float = 0) -> np.ndarray:
         """TFI mddel in one dimension, on `N` spins."""
         if N == 1: return h * PauliPEPO.X
 

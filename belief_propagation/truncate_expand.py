@@ -457,8 +457,8 @@ def L2BP_compression(
             )):
                 keep_mask[i] = True
 
-        U = U[:,keep_mask]
-        Vh = Vh[keep_mask,:]
+        U = U[:, keep_mask]
+        Vh = Vh[keep_mask, :]
         singvals = singvals[keep_mask]
 
         # Projectors on the SVD subspace that we keep.

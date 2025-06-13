@@ -52,9 +52,18 @@ def operator_exponential(
     """
     Time evolution operator from trotterization. If `contract=True`,
     multiple layers are multiplied together afterwards.
+
+    Layers are returned in notational order, i.e. the returned tuple
+    `(O1, O2, ..., On)` is applied to a quantum state like
+    `|out> = On * ... * O2 * O1 * |in>`.
     """
     if trotter_order == 1:
         op_list = __operator_exponential_first_order_trotter(
+            op=op, sanity_check=sanity_check
+        )
+
+    elif trotter_order == 2:
+        op_list = __operator_exponential_second_order_trotter(
             op=op, sanity_check=sanity_check
         )
 
@@ -65,10 +74,10 @@ def operator_exponential(
         )))
 
     if not contract:
-        # no contraction; returning the unitaries separately in a list.
-        return op_list
+        # no contraction; returning the PEPOs separately in a list.
+        return op_list[::-1]
 
-    # contracting all unitaries.
+    # Contracting all PEPOs.
     contracted_op = op_list[-1]
     for op in reversed(op_list[:-1]): contracted_op = op @ contracted_op
 
@@ -85,10 +94,59 @@ def __operator_exponential_first_order_trotter(
     # decomposing PEPO into layers.
     layers = get_brick_wall_layers(op=op, sanity_check=sanity_check)
 
+    # Operators that will be returned.
     op_list = ()
 
     # trotterization: operator exponential for each layer separately.
     for layer in layers:
+        num_sites_in_chain = len(layer[0])
+
+        if num_sites_in_chain == 1:
+            op_list += (__PEPO_exp_single_site_op_chains(
+                G=op.G, op_chain_sum=layer, sanity_check=sanity_check
+            ),)
+
+        elif num_sites_in_chain == 2:
+            op_list += (__PEPO_exp_two_site_op_chains(
+                G=op.G, op_chain_sum=layer, sanity_check=sanity_check
+            ),)
+
+        else:
+            raise NotImplementedError("".join((
+                "Operator exponential for operator chains longer than three ",
+                "sites is not implemented."
+            )))
+
+    return op_list
+
+
+def __operator_exponential_second_order_trotter(
+        op: PEPO,
+        sanity_check: bool = False
+    ) -> tuple[PEPO]:
+    """
+    Time evolution operator from first-order trotterization.
+    """
+    # decomposing PEPO into layers.
+    layers = get_brick_wall_layers(op=op, sanity_check=sanity_check)
+
+    # Multiplying every layer by 1/2.
+    for layer in layers[1:]:
+        # Multiplying the respective operator chain by 1/2 amounts to
+        # multiplying the first operator in the chain by 1/2.
+        for op_chain in layer:
+            for key in op_chain.keys():
+                op_chain[key] *= .5
+                break
+
+    # Assembling the correct layer order for second-order trotterization.
+    ordered_layers = layers[:0:-1] + layers
+
+    # Operators that will be returned.
+    op_list: tuple[PEPO] = ()
+
+    # trotterization: operator exponential for each layer separately.
+    for layer in ordered_layers:
         num_sites_in_chain = len(layer[0])
 
         if num_sites_in_chain == 1:

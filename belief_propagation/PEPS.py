@@ -41,7 +41,7 @@ class PEPS:
         args = ()
 
         # Enumerating the edges in the graph.
-        for i,nodes in enumerate(self.G.edges()):
+        for i, nodes in enumerate(self.G.edges()):
             node1, node2 = nodes
             self.G[node1][node2][0]["label"] = i
 
