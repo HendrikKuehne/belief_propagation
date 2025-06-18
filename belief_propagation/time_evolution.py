@@ -2,25 +2,33 @@
 Time evolution of PEPO operators.
 """
 
-__all__ = ["get_brick_wall_layers", "operator_exponential"]
+__all__ = [
+    "get_brick_wall_layers",
+    "operator_exponential",
+    "simple_update_TEBD"
+]
 
 from typing import Union
+import warnings
 
 import numpy as np
 import networkx as nx
 import scipy.linalg as scialg
+import tqdm
 
 from belief_propagation.PEPO import PEPO
 from belief_propagation.PEPS import PEPS
 from belief_propagation.hamiltonians import Identity
 from belief_propagation.utils import (
     get_disjoint_subsets_from_opchains,
-    op_layer_intact_check
+    op_layer_intact_check,
+    graph_compatible
 )
 
 
 def get_brick_wall_layers(
         op: PEPO,
+        trotter_order: int = 1,
         sanity_check: bool = False
     ) -> tuple[tuple[dict[int, tuple]]]:
     """
@@ -41,7 +49,31 @@ def get_brick_wall_layers(
     if singlesite_layers != ((),): all_layers += (*singlesite_layers,)
     if brick_wall_layers != ((),): all_layers += (*brick_wall_layers,)
 
+    if trotter_order == 1:
+        # Nothing to be done for first-order trotterization.
+        return all_layers
+
+    if trotter_order == 2:
+        # Multiplying every layer by 1/2.
+        for layer in all_layers[1:]:
+            # Multiplying the respective operator chain by 1/2 amounts to
+            # multiplying the first operator in the chain by 1/2.
+            for op_chain in layer:
+                for key in op_chain.keys():
+                    op_chain[key] *= .5
+                    break
+
+        # Assembling the correct layer order for second-order trotterization.
+        ordered_layers = all_layers[:0:-1] + all_layers
+
+        return ordered_layers
+
     return all_layers
+
+
+# -----------------------------------------------------------------------------
+#                   PEPO operator exponential & trotterization
+# -----------------------------------------------------------------------------
 
 
 def operator_exponential(
@@ -92,24 +124,26 @@ def __operator_exponential_first_order_trotter(
     """
     Time evolution operator from first-order trotterization.
     """
-    # decomposing PEPO into layers.
-    layers = get_brick_wall_layers(op=op, sanity_check=sanity_check)
+    # Decomposing PEPO into brick wall layers.
+    layers = get_brick_wall_layers(
+        op=op, trotter_order=1, sanity_check=sanity_check
+    )
 
     # Operators that will be returned.
     op_list = ()
 
-    # trotterization: operator exponential for each layer separately.
+    # Trotterization: operator exponential for each brick wall layer.
     for layer in layers:
         num_sites_in_chain = len(layer[0])
 
         if num_sites_in_chain == 1:
-            op_list += (__PEPO_exp_single_site_op_chains(
-                G=op.G, op_chain_sum=layer, sanity_check=sanity_check
+            op_list += (__PEPO_exp_single_site_brick_wall_layer(
+                G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
 
         elif num_sites_in_chain == 2:
-            op_list += (__PEPO_exp_two_site_op_chains(
-                G=op.G, op_chain_sum=layer, sanity_check=sanity_check
+            op_list += (__PEPO_exp_two_site_brick_wall_layer(
+                G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
 
         else:
@@ -129,35 +163,25 @@ def __operator_exponential_second_order_trotter(
     Time evolution operator from first-order trotterization.
     """
     # decomposing PEPO into layers.
-    layers = get_brick_wall_layers(op=op, sanity_check=sanity_check)
-
-    # Multiplying every layer by 1/2.
-    for layer in layers[1:]:
-        # Multiplying the respective operator chain by 1/2 amounts to
-        # multiplying the first operator in the chain by 1/2.
-        for op_chain in layer:
-            for key in op_chain.keys():
-                op_chain[key] *= .5
-                break
-
-    # Assembling the correct layer order for second-order trotterization.
-    ordered_layers = layers[:0:-1] + layers
+    layers = get_brick_wall_layers(
+        op=op, trotter_order=2, sanity_check=sanity_check
+    )
 
     # Operators that will be returned.
     op_list: tuple[PEPO] = ()
 
     # trotterization: operator exponential for each layer separately.
-    for layer in ordered_layers:
+    for layer in layers:
         num_sites_in_chain = len(layer[0])
 
         if num_sites_in_chain == 1:
-            op_list += (__PEPO_exp_single_site_op_chains(
-                G=op.G, op_chain_sum=layer, sanity_check=sanity_check
+            op_list += (__PEPO_exp_single_site_brick_wall_layer(
+                G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
 
         elif num_sites_in_chain == 2:
-            op_list += (__PEPO_exp_two_site_op_chains(
-                G=op.G, op_chain_sum=layer, sanity_check=sanity_check
+            op_list += (__PEPO_exp_two_site_brick_wall_layer(
+                G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
 
         else:
@@ -169,19 +193,20 @@ def __operator_exponential_second_order_trotter(
     return op_list
 
 
-def __PEPO_exp_single_site_op_chains(
+def __PEPO_exp_single_site_brick_wall_layer(
         G: nx.MultiGraph,
-        op_chain_sum: tuple[dict[int, np.ndarray]],
+        brick_wall_layer: tuple[dict[int, np.ndarray]],
         sanity_check: bool = False
     ) -> PEPO:
     """
     PEPO exponential of the sum of all operator chains in
-    `op_chain_sum`. All operator chains must have length one, and must
-    be disjoint.
+    `brick_wall_layer`. All operator chains must have length one, and
+    must be disjoint. In other words, this method computes
+    `exp(sum(brick_wall_layer))`.
     """
     # sanity check
     assert op_layer_intact_check(
-        G=G, layer=op_chain_sum, target_chain_length=1, test_disjoint=True
+        G=G, layer=brick_wall_layer, target_chain_length=1, test_disjoint=True
     )
     if not all("D" in data.keys() for node, data in G.nodes(data=True)):
         raise ValueError("No physical dimensions saved in graph.")
@@ -192,7 +217,7 @@ def __PEPO_exp_single_site_op_chains(
     op = Identity(G=G, D=D, sanity_check=sanity_check)
     op.check_tree = False
 
-    for op_chain in op_chain_sum:
+    for op_chain in brick_wall_layer:
         for node in op_chain:
             op[node][...,:,:] = scialg.expm(op_chain[node])
 
@@ -201,19 +226,26 @@ def __PEPO_exp_single_site_op_chains(
     return op
 
 
-def __PEPO_exp_two_site_op_chains(
+def __PEPO_exp_two_site_brick_wall_layer(
         G: nx.MultiGraph,
-        op_chain_sum: tuple[dict[int, np.ndarray]],
+        brick_wall_layer: tuple[dict[int, np.ndarray]],
         sanity_check: bool = False
     ) -> PEPO:
     """
     PEPO exponential of the sum of all operator chains in
-    `op_chain_sum`. All operator chains must have length two, and must
-    be disjoint.
+    `brick_wall_layer`. All operator chains must have length two, and
+    must be disjoint.
+
+    `brick_wall_layer` is taken to be a brick wall layer of an operator
+    (as it occurs during trotterization). This method then takes all
+    operator chains in `brick_wall_layer`, computes their operator
+    exponentials, and separates them using SVDs. All operator chain
+    exponentials are inserted into one PEPO. In other words, this method
+    computes `exp(sum(brick_wall_layer))`.
     """
     # sanity check
     assert op_layer_intact_check(
-        G=G, layer=op_chain_sum, target_chain_length=2, test_disjoint=True
+        G=G, layer=brick_wall_layer, target_chain_length=2, test_disjoint=True
     )
     if not all("D" in data.keys() for node, data in G.nodes(data=True)):
         raise ValueError("No physical dimensions saved in graph.")
@@ -224,7 +256,7 @@ def __PEPO_exp_two_site_op_chains(
     op = Identity(G=G, D=D, sanity_check=sanity_check)
 
     # Inserting matrix exponentials into op.
-    for op_chain in op_chain_sum:
+    for op_chain in brick_wall_layer:
         node1, node2 = op_chain.keys()
         exp_op = scialg.expm(np.kron(op_chain[node1], op_chain[node2]))
 
@@ -262,7 +294,8 @@ def __PEPO_exp_two_site_op_chains(
         U = U.reshape(D[node1], D[node1], chi)
         Vh = Vh.reshape(chi, D[node2], D[node2])
 
-        # Defining the indices at which matrix exponentials will be inserted.
+        # Constructing the indices at which matrix exponentials will be
+        # inserted.
         index1 = lambda i: tuple(
             i if iAdj == leg1 else 0
             for iAdj, _ in enumerate(op.G.adj[node1])
@@ -276,15 +309,15 @@ def __PEPO_exp_two_site_op_chains(
             slice(D[node2]), slice(D[node2])
         )
 
-        # inserting matrix expoentials.
+        # Inserting matrix expoentials.
         for i in range(chi):
             op[node1][index1(i)] = U[:,:,i]
             op[node2][index2(i)] = Vh[i,:,:]
 
-        # adjusting bond dimension
+        # Adjusting bond dimension.
         op.G[node1][node2][0]["size"] = chi
 
-    # the tree traversal checks are not applicable
+    # The tree traversal checks are not applicable.
     op.check_tree = False
 
     if sanity_check: assert op.intact
@@ -292,12 +325,313 @@ def __PEPO_exp_two_site_op_chains(
     return op
 
 
-def simple_update_TEBD(psi: PEPS, H: PEPO) -> PEPS:
+# -----------------------------------------------------------------------------
+#                   Simple update imaginary time evolution
+# -----------------------------------------------------------------------------
+
+
+def simple_update_TEBD(
+        psi: PEPS,
+        H: PEPO,
+        dtau: float = 0.05,
+        nSteps: int = 100,
+        trotter_order: int = 1,
+        singval_threshold: float = 1e-10,
+        min_bond_dim: Union[int, nx.MultiGraph] = 1,
+        max_bond_dim: Union[int, nx.MultiGraph] = np.inf,
+        verbose: bool = False,
+        sanity_check: bool = False,
+    ) -> PEPS:
     """
     TEBD using the simple-update method from
     [Phys. Rev. Lett. 101, 090603 (2008)](https://doi.org/10.1103/PhysRevLett.101.090603).
+    Implements imaginary time evolution with a timestep of `dtau`, for
+    `nSteps` steps.
+
+    The arguments `singval_threshold`, `min_bond_dim` and `max_bond_dim`
+    govern the behavior of the SVDs on the bonds. During truncation of
+    singular values, values with magnitude below `singval_threshold` are
+    discarded. If given, `min_bond_dim` and `max_bond_dim` enforce
+    strict limits on the size of the bond dimension. Accepts either an
+    integer, or a `nx.MultiGraph`, in which case the `"size"` argument
+    on the edges determines the bond dimension on that edge.
     """
-    raise NotImplementedError
+    if sanity_check:
+        assert psi.intact and H.intact
+
+    # Checking compatibility of state and operator.
+    if not graph_compatible(psi.G, H.G):
+        raise ValueError(
+            "State and operator are not compatible."
+        )
+
+    # Preparing target edge sizes.
+    if not isinstance(min_bond_dim, nx.MultiGraph):
+        min_bond_dim = PEPO.prepare_graph(
+            G=psi.G, chi=min_bond_dim, sanity_check=sanity_check
+        )
+    if not isinstance(max_bond_dim, nx.MultiGraph):
+        max_bond_dim = PEPO.prepare_graph(
+            G=psi.G, chi=max_bond_dim, sanity_check=sanity_check
+        )
+
+    if not graph_compatible(psi.G, min_bond_dim):
+        raise ValueError(
+            "Minimum bond dimension and state have non-compatible graphs."
+        )
+    if not graph_compatible(psi.G, max_bond_dim):
+        raise ValueError(
+            "Maximum bond dimension and state have non-compatible graphs."
+        )
+
+    # Checking compatibility of sizes in min_bond_dim and max_bond_dim.
+    for node1, node2 in psi.G.edges():
+        if (min_bond_dim[node1][node2][0]["size"]
+            > max_bond_dim[node1][node2][0]["size"]):
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        f"Minimum bond dimension {min_bond_dim} on edge ",
+                        f"({node1}, {node2}) is larger than maximum bond ",
+                        f"dimension {max_bond_dim}. Setting bond dimension ",
+                        "to unlimited. This may increase runtime drastically."
+                    )),
+                    RuntimeWarning
+                )
+            max_bond_dim[node1][node2][0]["size"] = np.inf
+
+    if singval_threshold <= 0:
+        warnings.warn(
+            "".join((
+                "Singular value threshold is smaller than or equal to zero. ",
+                "This leads to no truncation dependence on singular value ",
+                "magnitude."
+            )),
+            RuntimeWarning
+        )
+        singval_threshold = 0
+
+    # Trotterization of the operator.
+    layers = get_brick_wall_layers(
+        op=H * (-dtau), trotter_order=trotter_order, sanity_check=sanity_check
+    )
+
+    for istep in tqdm.tqdm(
+        np.arange(nSteps),
+        desc="TEBD itime steps",
+        disable=not verbose
+    ):
+        for layer in layers:
+            for op_chain in layer:
+                # How many operators in the operator chain?
+                if len(op_chain.keys()) == 2:
+                    # Two operators; we must extract the relevant parameters
+                    # for the truncated SVD.
+                    node1, node2 = op_chain.keys()
+
+                    __simple_update_apply_op_chain_two_site(
+                        psi=psi,
+                        op_chain=op_chain,
+                        singval_threshold=singval_threshold,
+                        min_bond_dim=min_bond_dim[node1][node2][0]["size"],
+                        max_bond_dim=max_bond_dim[node1][node2][0]["size"],
+                        sanity_check=sanity_check
+                    )
+
+                elif len(op_chain.keys()) == 1:
+                    # One operator; no additional parameters needed to apply
+                    # the operator chain.
+                    __simple_update_apply_op_chain_single_site(
+                        psi=psi,
+                        op_chain=op_chain,
+                        sanity_check=sanity_check
+                    )
+
+                else:
+                    raise NotImplementedError("".join((
+                        "Encountered operator chain with ",
+                        f"{len(op_chain.keys())} operators during ",
+                        "simple update TEBD."
+                    )))
+
+    return psi
+
+
+def __simple_update_apply_op_chain_single_site(
+        psi: PEPS,
+        op_chain: dict[int, np.ndarray],
+        sanity_check: bool = False,
+    ) -> None:
+    """
+    Applies `exp(op_chain)` to the state `psi`. `psi` is modified
+    in-place.
+    """
+    if sanity_check: assert psi.intact
+
+    if len(op_chain.keys()) != 1:
+        raise ValueError("".join((
+            "__simple_update_apply_op_chain_single_site received operator ",
+            f"chain with {len(op_chain.keys())} operators."
+        )))
+
+    for node, op in op_chain.items():
+        # Assembling indices for einsum.
+        idx_in = tuple(_ for _ in range(psi[node].ndim))
+        idx_out = idx_in[:-1] + (psi[node].ndim,)
+
+        # Applying the operator exponential.
+        psi[node] = np.einsum(
+            psi[node], idx_in,
+            scialg.expm(op), (psi[node].ndim, psi[node].ndim - 1),
+            idx_out
+        )
+
+    return
+
+
+def __simple_update_apply_op_chain_two_site(
+        psi: PEPS,
+        op_chain: dict[int, np.ndarray],
+        singval_threshold: float = None,
+        min_bond_dim: int = None,
+        max_bond_dim: int = None,
+        sanity_check: bool = False,
+    ) -> None:
+    """
+    Applies `exp(op_chain)` to the state `psi`. `psi` is modified
+    in-place. The arguments `singval_threshold`, `min_bond_dim` and
+    `max_bond_dim` determine the behavior of the truncated SVD.
+    """
+    if sanity_check: assert psi.intact
+
+    if len(op_chain.keys()) != 2:
+        raise ValueError("".join((
+            "__simple_update_apply_op_chain_single_site received operator ",
+            f"chain with {len(op_chain.keys())} operators."
+        )))
+
+    node1, node2 = op_chain.keys()
+    op1, op2 = op_chain.values()
+
+    leg1 = psi.G[node1][node2][0]["legs"][node1]
+    leg2 = psi.G[node1][node2][0]["legs"][node2]
+    nLegs1 = psi[node1].ndim
+    nLegs2 = psi[node2].ndim
+
+    # Calculating operator exponential, and re-shaping.
+    op_exp = scialg.expm(np.kron(op1, op2))
+    op_exp = op_exp.reshape(
+        (op1.shape[0], op2.shape[0], op1.shape[1], op2.shape[1])
+    )
+
+    # Assembling indices for einsum.
+    idx_node1 = tuple(
+        nLegs1 + nLegs2 if i == leg1 else i
+        for i in range(nLegs1)
+    )
+    idx_node2 = tuple(
+        nLegs1 + nLegs2 if i == leg2 else nLegs1 + i
+        for i in range(nLegs2)
+    )
+    idx_exp = (
+        nLegs1 + nLegs2 + 1, nLegs1 + nLegs2 + 2, # output legs
+        nLegs1 - 1, nLegs1 + nLegs2 - 1 # input legs
+    )
+    idx_out = list(
+        idx_node1[:-1] # remaining legs node1
+        + (nLegs1 + nLegs2 + 1,) # physical leg node1
+        + idx_node2[:-1] # remaining legs node2
+        + (nLegs1 + nLegs2 + 2,) # physical leg node2
+    )
+    idx_out.remove(nLegs1 + nLegs2)
+    idx_out.remove(nLegs1 + nLegs2)
+
+    # Absorbing operator exponential into the state tensors.
+    block_tensor = np.einsum(
+        psi[node1], idx_node1,
+        psi[node2], idx_node2,
+        op_exp, idx_exp,
+        idx_out
+    )
+
+    # Re-shaping block_tensor in preparation for SVD.
+    size1 = np.prod([
+        1 if neighbor == node2 else psi.G[node1][neighbor][0]["size"]
+        for neighbor in psi.G.adj[node1]
+    ]) * psi.D[node1]
+    size2 = np.prod([
+        1 if neighbor == node1 else psi.G[node2][neighbor][0]["size"]
+        for neighbor in psi.G.adj[node2]
+    ]) * psi.D[node2]
+    block_tensor = block_tensor.reshape((size1, size2))
+
+    # SVD of re-shaped block tensor. U will be inserted into node1,
+    # Vh will be inserted into node2.
+    U, singvals, Vh = np.linalg.svd(block_tensor, full_matrices=False)
+
+    # Truncation.
+    threshold_mask = singvals > singval_threshold
+    min_dim_mask = tuple(
+        True if i < min_bond_dim else False
+        for i in range(singvals.shape[-1])
+    )
+    max_dim_mask = tuple(
+        True if i < max_bond_dim else False
+        for i in range(singvals.shape[-1])
+    )
+    mask = np.logical_and(
+        np.logical_or(threshold_mask, min_dim_mask),
+        max_dim_mask
+    )
+    U = U[:, mask]
+    singvals = singvals[mask]
+    Vh = Vh[mask, :]
+
+    # Absorbing singular values.
+    U = U @ np.diag(np.sqrt(singvals))
+    Vh = np.diag(np.sqrt(singvals)) @ Vh
+
+    newsize = np.sum(mask)
+
+    # Constructing the new shape for U.
+    newshape1 = list(None for neighbor in psi.G.adj[node1])
+    for neighbor in psi.G.adj[node1]:
+        if neighbor == node2: continue
+        leg = psi.G[node1][neighbor][0]["legs"][node1]
+        size = psi.G[node1][neighbor][0]["size"]
+        newshape1[leg] = size
+    newshape1.remove(None)
+    newshape1 += [psi.D[node1], newsize]
+
+    # Constructing the new shape for Vh.
+    newshape2 = list(None for neighbor in psi.G.adj[node2])
+    for neighbor in psi.G.adj[node2]:
+        if neighbor == node1: continue
+        leg = psi.G[node2][neighbor][0]["legs"][node2]
+        size = psi.G[node2][neighbor][0]["size"]
+        newshape2[leg] = size
+    newshape2.remove(None)
+    newshape2 = [newsize,] + newshape2 + [psi.D[node2],]
+
+    # Re-shaping U and Vh.
+    U = U.reshape(newshape1)
+    Vh = Vh.reshape(newshape2)
+
+    # Transposing U and Vh, s.t. the axes corresponding to the edge (node1,
+    # node2) are at the correct places.
+    axes1 = tuple(range(0, leg1)) + (nLegs1 - 1,) + tuple(range(leg1, nLegs1 - 1))
+    axes2 = tuple(range(1, leg2 + 1)) + (0,) + tuple(range(leg2 + 1, nLegs2))
+    U = np.transpose(U, axes=axes1)
+    Vh = np.transpose(Vh, axes=axes2)
+
+    # Updating size of the edge, and inserting U and Vh.
+    psi.G[node1][node2][0]["size"] = newsize
+    psi[node1] = U
+    psi[node2] = Vh
+
+    if sanity_check: assert psi.intact
+
+    return
 
 
 if __name__ == "__main__":

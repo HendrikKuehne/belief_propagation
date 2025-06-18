@@ -354,6 +354,17 @@ def L2BP_compression(
                 )
             max_bond_dim[node1][node2][0]["size"] = np.inf
 
+    if singval_threshold <= 0:
+        warnings.warn(
+            "".join((
+                "Singular value threshold is smaller than or equal to zero. ",
+                "This leads to no truncation dependence on singular value ",
+                "magnitude."
+            )),
+            RuntimeWarning
+        )
+        singval_threshold = 0
+
     # Handling kwargs.
     if "iterator_desc_prefix" in kwargs.keys():
         kwargs["iterator_desc_prefix"] = "".join((
