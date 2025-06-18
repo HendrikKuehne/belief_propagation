@@ -304,13 +304,13 @@ class PEPS:
             rng: np.random.Generator = np.random.default_rng(),
             real: bool = False,
             bond_dim_strategy: str = "uniform",
-            keep_legs: bool = True,
+            keep_legs: bool = False,
             sanity_check: bool = False,
         ) -> "PEPS":
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
         the physical dimension is `D`. Leg ordering in `G` is included
-        based on value of `keep_legs` (default is `True`). Bond
+        based on value of `keep_legs` (default is `False`). Bond
         dimensions are initialized using `bond_dim_strategy`; see
         `PEPS.set_bond_dimensions`.
         """

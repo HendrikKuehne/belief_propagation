@@ -1225,30 +1225,33 @@ class Braket(BaseBraket):
             raise ValueError("Damping factor must be between 0 and 1.")
 
         if not normalize:
-            warnings.warn(
-                "".join((
-                    "BP without normalization might soon break, or be broken ",
-                    "alraedy, and should not be used. On trees, BP is exact ",
-                    "with normalization, too."
-                )),
-                FutureWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "BP without normalization might soon break, or be ",
+                        "broken alraedy, and should not be used. On trees, ",
+                        "BP is exact with normalization, too."
+                    )),
+                    FutureWarning
+                )
 
         if self.G.number_of_nodes() == 1:
-            warnings.warn(
-                "The network consists of one node only. Exciting.",
-                UserWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "The network consists of one node only. Exciting.",
+                    UserWarning
+                )
             return
 
         if (not nx.is_tree(self.G)) and (not normalize):
-            warnings.warn(
-                "".join((
-                    "Normalization during BP disabled on a graph with loops. ",
-                    "This likely leads to diverging messages.",
-                    UserWarning
-                ))
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Normalization during BP disabled on a graph with ",
+                        "loops. This likely leads to diverging messages.",
+                        UserWarning
+                    ))
+                )
 
         # Handling kwargs.
         if "iterator_desc_prefix" in kwargs.keys():
@@ -1260,13 +1263,14 @@ class Braket(BaseBraket):
             kwargs["iterator_desc_prefix"] = ""
 
         if trials == 0:
-            warnings.warn(
-                "".join((
-                    "Braket.BP received trials = 0. This results in no BP ",
-                    "iteration attempt."
-                )),
-                UserWarning
-            )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Braket.BP received trials = 0. This results in no ",
+                        "BP iteration attempt."
+                    )),
+                    UserWarning
+                )
 
         eps_list = ()
         iTrial = 0

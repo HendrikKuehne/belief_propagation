@@ -148,6 +148,9 @@ This will be updated continuously, as questions come to mind.
       Tensor Generalized Approximate Message Passing  
       [arXiv:2504:00008](https://arxiv.org/abs/2504.00008)
         * Tensor ring decomposition using Belief Propagation
+    * H. C. Jiang, Z. Y. Weng, T. Xiang  
+      Accurate determination of tensor network state of quantum lattice models in two dimensions  
+      [Phys. Rev. Lett. 101, 090603 (2008)](https://doi.org/10.1103/PhysRevLett.101.090603) ([arXiv:0806.3719](https://arxiv.org/abs/0806.3719))
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  

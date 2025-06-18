@@ -11,6 +11,7 @@ import networkx as nx
 import scipy.linalg as scialg
 
 from belief_propagation.PEPO import PEPO
+from belief_propagation.PEPS import PEPS
 from belief_propagation.hamiltonians import Identity
 from belief_propagation.utils import (
     get_disjoint_subsets_from_opchains,
@@ -289,6 +290,14 @@ def __PEPO_exp_two_site_op_chains(
     if sanity_check: assert op.intact
 
     return op
+
+
+def simple_update_TEBD(psi: PEPS, H: PEPO) -> PEPS:
+    """
+    TEBD using the simple-update method from
+    [Phys. Rev. Lett. 101, 090603 (2008)](https://doi.org/10.1103/PhysRevLett.101.090603).
+    """
+    raise NotImplementedError
 
 
 if __name__ == "__main__":

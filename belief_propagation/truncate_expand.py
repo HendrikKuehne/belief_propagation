@@ -399,6 +399,9 @@ def L2BP_compression(
         ndim1 = psi.G.nodes[node1]["T"].ndim
         ndim2 = psi.G.nodes[node2]["T"].ndim
 
+        # Saving old size for diagnosis.
+        old_sizes += (overlap.ket.G[node1][node2][0]["size"],)
+
         # Get messages.
         msg_12 = np.reshape(
             overlap.msg[node1][node2][:,0,:], shape=(size, size)
@@ -441,10 +444,6 @@ def L2BP_compression(
             ),
             maxsize_mask
         )
-
-        # Saving values for runtime information.
-        old_sizes += (len(keep_mask),)
-        new_sizes += (sum(keep_mask),)
 
         if sum(nonzero_mask) == 0:
             raise RuntimeError(f"Edge ({node1}, {node2}) is zero-valued.")
@@ -503,6 +502,9 @@ def L2BP_compression(
 
         # Updating size of edge.
         newpsi.G[node1][node2][0]["size"] = P1.shape[1]
+
+        # Saving new size for diagnosis.
+        new_sizes += (newpsi.G[node1][node2][0]["size"],)
 
     if verbose:
         # Printing runtime information.
@@ -667,6 +669,9 @@ def QR_gauging(
 
     Uses the reduced mode of the QR decomposition, and can thus reduce
     bond dimensions. Thus this method may result in compression.
+
+    Function signature includes `kwargs` for compatibility reasons in
+    the gauging functions of the DMRG-classes.
     """
     if sanity_check: assert psi.intact
 
