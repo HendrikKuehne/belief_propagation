@@ -10,6 +10,7 @@ __all__ = [
 
 from typing import Union
 import warnings
+import copy
 
 import numpy as np
 import networkx as nx
@@ -90,21 +91,9 @@ def operator_exponential(
     `(O1, O2, ..., On)` is applied to a quantum state like
     `|out> = On * ... * O2 * O1 * |in>`.
     """
-    if trotter_order == 1:
-        op_list = __operator_exponential_first_order_trotter(
-            op=op, sanity_check=sanity_check
-        )
-
-    elif trotter_order == 2:
-        op_list = __operator_exponential_second_order_trotter(
-            op=op, sanity_check=sanity_check
-        )
-
-    else:
-        raise NotImplementedError("".join((
-            f"Time evolution from trotterization order {trotter_order} not ",
-            "implemented."
-        )))
+    op_list = __trotter_operator_exponential(
+        op=op, trotter_order=trotter_order, sanity_check=sanity_check
+    )
 
     if not contract:
         # no contraction; returning the PEPOs separately in a list.
@@ -117,60 +106,25 @@ def operator_exponential(
     return contracted_op
 
 
-def __operator_exponential_first_order_trotter(
+def __trotter_operator_exponential(
         op: PEPO,
-        sanity_check: bool = False
+        trotter_order: int,
+        sanity_check: bool
     ) -> tuple[PEPO]:
     """
-    Time evolution operator from first-order trotterization.
+    Decomposes the operator into brick wall layers based on
+    `trotter_order`, and calculates the operator exponential of each
+    layer.
     """
     # Decomposing PEPO into brick wall layers.
     layers = get_brick_wall_layers(
-        op=op, trotter_order=1, sanity_check=sanity_check
+        op=op, trotter_order=trotter_order, sanity_check=sanity_check
     )
 
     # Operators that will be returned.
     op_list = ()
 
     # Trotterization: operator exponential for each brick wall layer.
-    for layer in layers:
-        num_sites_in_chain = len(layer[0])
-
-        if num_sites_in_chain == 1:
-            op_list += (__PEPO_exp_single_site_brick_wall_layer(
-                G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
-            ),)
-
-        elif num_sites_in_chain == 2:
-            op_list += (__PEPO_exp_two_site_brick_wall_layer(
-                G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
-            ),)
-
-        else:
-            raise NotImplementedError("".join((
-                "Operator exponential for operator chains longer than three ",
-                "sites is not implemented."
-            )))
-
-    return op_list
-
-
-def __operator_exponential_second_order_trotter(
-        op: PEPO,
-        sanity_check: bool = False
-    ) -> tuple[PEPO]:
-    """
-    Time evolution operator from first-order trotterization.
-    """
-    # decomposing PEPO into layers.
-    layers = get_brick_wall_layers(
-        op=op, trotter_order=2, sanity_check=sanity_check
-    )
-
-    # Operators that will be returned.
-    op_list: tuple[PEPO] = ()
-
-    # trotterization: operator exponential for each layer separately.
     for layer in layers:
         num_sites_in_chain = len(layer[0])
 
@@ -229,6 +183,7 @@ def __PEPO_exp_single_site_brick_wall_layer(
 def __PEPO_exp_two_site_brick_wall_layer(
         G: nx.MultiGraph,
         brick_wall_layer: tuple[dict[int, np.ndarray]],
+        singval_eps: float = None,
         sanity_check: bool = False
     ) -> PEPO:
     """
@@ -242,6 +197,10 @@ def __PEPO_exp_two_site_brick_wall_layer(
     exponentials, and separates them using SVDs. All operator chain
     exponentials are inserted into one PEPO. In other words, this method
     computes `exp(sum(brick_wall_layer))`.
+
+    Singular values close to zero are truncated. If
+    `singval_eps = None`, the absolute tolerance for closeness to zero
+    is the Numpy machine epsilon of the datatype.
     """
     # sanity check
     assert op_layer_intact_check(
@@ -249,6 +208,17 @@ def __PEPO_exp_two_site_brick_wall_layer(
     )
     if not all("D" in data.keys() for node, data in G.nodes(data=True)):
         raise ValueError("No physical dimensions saved in graph.")
+
+    # Handling singular value epsilon.
+    if singval_eps is None:
+        singval_eps = lambda dtype: np.finfo(dtype).eps
+        # In choosing the machine epsilon as truncation threshold, I am
+        # assuming that the singular values I want to keep are reasonably close
+        # to one (compare relatice precision of floating point types). After
+        # looking at examples, this in fact seems to be the case.
+    else:
+        singval_eps__ = copy.deepcopy(singval_eps)
+        singval_eps = lambda x: singval_eps__
 
     # Getting physical dimensions.
     D = {node: D for node, D in G.nodes(data="D")}
@@ -274,6 +244,18 @@ def __PEPO_exp_two_site_brick_wall_layer(
         U, singvals, Vh = scialg.svd(
             exp_op, full_matrices=False, overwrite_a=True
         )
+
+        # Truncating vanishing singular values.
+        mask = np.logical_not(np.isclose(
+            a=singvals,
+            b=0,
+            rtol=0,
+            atol=singval_eps(singvals.dtype)
+        ))
+        U = U[:, mask]
+        singvals = singvals[mask]
+        Vh = Vh[mask, :]
+
         U = U @ np.diag(np.sqrt(singvals))
         Vh = np.diag(np.sqrt(singvals)) @ Vh
 
@@ -336,7 +318,7 @@ def simple_update_TEBD(
         dtau: float = 0.05,
         nSteps: int = 100,
         trotter_order: int = 1,
-        singval_threshold: float = 1e-10,
+        singval_threshold: float = None,
         min_bond_dim: Union[int, nx.MultiGraph] = 1,
         max_bond_dim: Union[int, nx.MultiGraph] = np.inf,
         verbose: bool = False,
@@ -355,6 +337,9 @@ def simple_update_TEBD(
     strict limits on the size of the bond dimension. Accepts either an
     integer, or a `nx.MultiGraph`, in which case the `"size"` argument
     on the edges determines the bond dimension on that edge.
+
+    If `singval_threshold is None`, the Numpy machine epsilon for the
+    respective data type will be used.
     """
     if sanity_check:
         assert psi.intact and H.intact
@@ -400,16 +385,27 @@ def simple_update_TEBD(
                 )
             max_bond_dim[node1][node2][0]["size"] = np.inf
 
-    if singval_threshold <= 0:
-        warnings.warn(
-            "".join((
-                "Singular value threshold is smaller than or equal to zero. ",
-                "This leads to no truncation dependence on singular value ",
-                "magnitude."
-            )),
-            RuntimeWarning
-        )
-        singval_threshold = 0
+    if singval_threshold is None:
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    "No singular value threshold given; machine epsilon will ",
+                    "be used. This may result in unconstrained growth of ",
+                    "virtual bond dimensions."
+                )),
+                RuntimeWarning
+            )
+    elif singval_threshold <= 0:
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    "Singular value threshold is smaller than or equal to ",
+                    "zero. Setting to machine epsilon. This may result in ",
+                    "unconstrained growth of virtual bond dimensions."
+                )),
+                RuntimeWarning
+            )
+            singval_threshold = None
 
     # Trotterization of the operator.
     layers = get_brick_wall_layers(
@@ -460,7 +456,7 @@ def simple_update_TEBD(
 def __simple_update_apply_op_chain_single_site(
         psi: PEPS,
         op_chain: dict[int, np.ndarray],
-        sanity_check: bool = False,
+        sanity_check: bool,
     ) -> None:
     """
     Applies `exp(op_chain)` to the state `psi`. `psi` is modified
@@ -492,17 +488,32 @@ def __simple_update_apply_op_chain_single_site(
 def __simple_update_apply_op_chain_two_site(
         psi: PEPS,
         op_chain: dict[int, np.ndarray],
-        singval_threshold: float = None,
-        min_bond_dim: int = None,
-        max_bond_dim: int = None,
-        sanity_check: bool = False,
+        singval_threshold: float,
+        min_bond_dim: int,
+        max_bond_dim: int,
+        sanity_check: bool,
     ) -> None:
     """
     Applies `exp(op_chain)` to the state `psi`. `psi` is modified
     in-place. The arguments `singval_threshold`, `min_bond_dim` and
     `max_bond_dim` determine the behavior of the truncated SVD.
+
+    If `singval_threshold is None`, the Numpy machine epsilon for the
+    respective data type will be used.
     """
     if sanity_check: assert psi.intact
+
+    # Handling singular value threshold.
+    if singval_threshold is None:
+        singval_threshold = lambda dtype: np.finfo(dtype).eps
+        # By choosing the machine epsilon as truncation threshold, one is
+        # assuming that the singular values one wants to keep are reasonably
+        # close to one (compare relatice precision of floating point types).
+        # This might not be the case, depending on the value of dtau! Choosing
+        # a threshold that is too large leads to a loss of precision.
+    else:
+        singval_threshold__ = copy.deepcopy(singval_threshold)
+        singval_threshold = lambda x: singval_threshold__
 
     if len(op_chain.keys()) != 2:
         raise ValueError("".join((
@@ -570,7 +581,7 @@ def __simple_update_apply_op_chain_two_site(
     U, singvals, Vh = np.linalg.svd(block_tensor, full_matrices=False)
 
     # Truncation.
-    threshold_mask = singvals > singval_threshold
+    threshold_mask = singvals > singval_threshold(singvals.dtype)
     min_dim_mask = tuple(
         True if i < min_bond_dim else False
         for i in range(singvals.shape[-1])
