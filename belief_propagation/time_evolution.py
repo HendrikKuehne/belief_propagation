@@ -23,7 +23,8 @@ from belief_propagation.hamiltonians import Identity
 from belief_propagation.utils import (
     get_disjoint_subsets_from_opchains,
     op_layer_intact_check,
-    graph_compatible
+    graph_compatible,
+    multi_kron
 )
 
 
@@ -321,9 +322,10 @@ def simple_update_TEBD(
         singval_threshold: float = None,
         min_bond_dim: Union[int, nx.MultiGraph] = 1,
         max_bond_dim: Union[int, nx.MultiGraph] = np.inf,
+        return_all_states: bool = False,
         verbose: bool = False,
         sanity_check: bool = False,
-    ) -> PEPS:
+    ) -> Union[PEPS, tuple[PEPS]]:
     """
     TEBD using the simple-update method from
     [Phys. Rev. Lett. 101, 090603 (2008)](https://doi.org/10.1103/PhysRevLett.101.090603).
@@ -340,6 +342,10 @@ def simple_update_TEBD(
 
     If `singval_threshold is None`, the Numpy machine epsilon for the
     respective data type will be used.
+
+    Returns the final state if `return_all_states == False`. Otherwise,
+    returns a tuple of the initial state and all states that were
+    encountered during computation.
     """
     if sanity_check:
         assert psi.intact and H.intact
@@ -412,13 +418,22 @@ def simple_update_TEBD(
         op=H * (-dtau), trotter_order=trotter_order, sanity_check=sanity_check
     )
 
+    if return_all_states: all_states = (copy.deepcopy(psi),)
+
     for istep in tqdm.tqdm(
         np.arange(nSteps),
         desc="TEBD itime steps",
         disable=not verbose
     ):
         for layer in layers:
+            layer_magnitude = 1
             for op_chain in layer:
+                # Estimating the magnitude of this layer s.t. we can normalize
+                # the state later.
+                exp_layer = scialg.expm(multi_kron(*op_chain.values()))
+                singvals = scialg.svdvals(exp_layer, overwrite_a=True)
+                layer_magnitude *= np.max(np.abs(singvals))
+
                 # How many operators in the operator chain?
                 if len(op_chain.keys()) == 2:
                     # Two operators; we must extract the relevant parameters
@@ -450,7 +465,13 @@ def simple_update_TEBD(
                         "simple update TEBD."
                     )))
 
-    return psi
+        # Normalizing psi, using the estimate of the magnitude of the layer.
+        psi = psi * (1 / layer_magnitude**2)
+
+        if return_all_states: all_states += (copy.deepcopy(psi),)
+
+    if return_all_states: return all_states
+    else: return psi
 
 
 def __simple_update_apply_op_chain_single_site(
