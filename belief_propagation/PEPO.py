@@ -2,7 +2,7 @@
 Projector-entangled pair operators on arbitrary graphs.
 """
 
-__all__ = ["PEPO", "PauliPEPO"]
+__all__ = ["OpChain", "PEPO", "PauliPEPO", "Zero", "Identity"]
 
 import warnings
 import itertools
@@ -29,6 +29,186 @@ from belief_propagation.PEPS import PEPS
 # -----------------------------------------------------------------------------
 #                   Operator classes
 # -----------------------------------------------------------------------------
+
+
+class OpChain(dict):
+    """
+    An operator chain is a tensor product of operators, s.t. every
+    operator acts on a different site in the system. These serve as
+    important bulding blocks of many-body Hamiltonians; many such
+    Hamiltonians are sums of operator chains.
+    """
+
+    def toarray(self, create_using: str = "numpy", sanity_check: bool = False):
+        """
+        Evaluates the tensor product of this operator chain. The order
+        of the physical dimensions is inherited from the keys: operators
+        are sorted in ascending key-order.
+        
+        `create_using` is forwarded to `PEPO.toarray` or
+        `utils.multi_kron`, respectively.
+        """
+        if self.G is not None:
+            pepo = self.topepo(sanity_check=sanity_check)
+            return pepo.toarray(
+                create_using=create_using, sanity_check=sanity_check
+            )
+
+        return multi_kron(
+            *(self[node] for node in sorted(self.keys())),
+            create_using=create_using
+        )
+
+    def topepo(
+            self,
+            G: nx.MultiGraph = None,
+            sanity_check: bool = False
+        ) -> "PEPO":
+        """
+        Creates the PEPO that contains this operator chain. Tries to
+        use `self.G`, if it is not `None`; uses the argument `G`
+        otherwise.
+        """
+        if self.G is not None:
+            G = self.G
+        else:
+            if G is None:
+                raise ValueError("No graph available.")
+
+        # Extracting physical dimension.
+        D = {node: op.shape[0] for node, op in self.items()}
+
+        if not nx.utils.nodes_equal(nodes1=G.nodes(), nodes2=D.keys()):
+            # Physical dimension is not defined on all sites. Trying to infer
+            # physical dimension.
+            phys_dim_set = set(op.shape[-1] for op in self.values())
+            if len(phys_dim_set) == 1:
+                # There is a unique physical dimension; adding it to the
+                # remaining sites.
+                D_inferred = phys_dim_set.pop()
+                for node in G:
+                    if node not in D.keys(): D[node] = D_inferred
+            else:
+                raise ValueError("".join((
+                    "Physical dimension cannot be inferred sites. If ops ",
+                    "contains operators with different dimensions, ops must ",
+                    "contain an operator for every site."
+                )))
+
+        H = Identity(G=G, D=D, sanity_check=sanity_check)
+
+        for node, op in self.items():
+            # sanity check
+            if not G.has_node(node):
+                raise ValueError(f"Node {node} not contained in graph.")
+            if not op.shape == (D[node], D[node]):
+                raise ValueError("".join((
+                    f"Operator on node {node} has wrong shape: Expected ",
+                    f"({D[node]}, {D[node]}), got " + str(op.shape) + "."
+                )))
+
+            index = (tuple(0 for _ in H.G.adj[node])
+                     + (slice(D[node]), slice(D[node])))
+            H[node][index] = op
+
+        # Since we inserted non-identity operators, the tree traversal checks
+        # are not applicable.
+        H.check_tree = False
+
+        if sanity_check: assert H.intact
+
+        return H
+
+    @property
+    def intact(self) -> bool:
+        """
+        Checks if the operator chain is intact. Some tests can only be
+        done if the operator chain has access to the graph on which the
+        system is defined. Access to the graph can be given by defining
+        `self.G`.
+        """
+        # Are all operators in the chain square?
+        if not all(arr.shape[0] == arr.shape[1] for arr in self.values()):
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "There are non-square operators in the operator chain.",
+                    RuntimeWarning
+                )
+            return False
+
+        if self.G is None:
+            # The subsequent tests require the graph, and can this not be done.
+            return True
+
+        # Are all nodes of the chain contained in the graph?
+        if not all(self.G.has_node(node) for node in self.keys()):
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "There are nodes in the operator chain, that are not ",
+                        "contained in the underlying graph."
+                    )),
+                    RuntimeWarning
+                )
+
+        # Do physical dimensions in graph and operator chain match?
+        if all("D" in data.keys() for node, data in self.G.nodes(data=True)):
+            if not all(
+                self[node].shape[-1] == self.G.nodes[node]["D"]
+                for node in self.keys()
+            ):
+                with tqdm.tqdm.external_write_mode():
+                    warnings.warn(
+                        "".join((
+                            "Physical dimensions in operator chain and ",
+                            "underlying graph do not match."
+                        )),
+                        RuntimeWarning
+                    )
+                return False
+
+        return True
+
+    def __mul__(self, x: float) -> "OpChain":
+        """
+        Multiplication of an operator chain by a scalar.
+        """
+        x_root = x ** (1 / len(self))
+        new_chain = copy.deepcopy(self)
+        for key in new_chain.keys(): new_chain[key] = new_chain[key] * x_root
+
+        return new_chain
+
+    def __rmul__(self, x: float) -> "OpChain":
+        return self.__mul__(x)
+
+    def __imul__(self, x: float) -> "OpChain":
+        """
+        In-line multiplication of an operator chain by a scalar.
+        """
+        x_root = x ** (1 / len(self))
+        for key in self.keys(): self[key] = self[key] * x_root
+
+        return self
+
+    def __init__(
+            self,
+            chain,
+            G: nx.MultiGraph = None,
+            sanity_check: bool = False,
+            **kwargs
+        ) -> None:
+        """
+        Internally calls `dict(chain)`.
+        """
+        super().__init__(chain, **kwargs)
+
+        self.G: nx.MultiGraph = G
+        """Underlying graph of the operator chain."""
+
+        if sanity_check: assert self.intact
+
+        return
 
 
 class PEPO:
@@ -96,14 +276,14 @@ class PEPO:
 
     def toarray(
             self,
-            create_using: str = "cotengra",
+            create_using: str = "numpy",
             sanity_check: bool = False
         ):
         """
         Construct a matrix representation of this operator. Different
         methods are implemented, which can be selected by the argument
         `create_using`:
-        * `cotengra`: Dense Numpy-array from contraction of the PEPO.
+        * `numpy`: Dense Numpy-array from contraction of the PEPO.
         * `scipy.csr`: Scipy csr-sparse array, constructed using
         operator chains.
         * `sparse`: Scipy csr-sparse matrix from sparse contraction of
@@ -113,7 +293,7 @@ class PEPO:
         labels of the nodes: the nodes are sorted in ascending order.        
         """
 
-        if create_using == "cotengra":
+        if create_using == "numpy":
             return self.__to_dense(sanity_check=sanity_check)
 
         if create_using == "scipy.csr":
@@ -429,7 +609,7 @@ class PEPO:
             remove_ids: bool = True,
             return_virtidx: bool = False,
             sanity_check: bool = False
-        ) -> tuple[dict[int, np.ndarray]]:
+        ) -> Union[tuple[OpChain], tuple[dict[int, tuple[int]]]]:
         """
         Returns all operator chains. An operator chain is a collection
         of operators. The summation of the tensor products of all
@@ -488,6 +668,10 @@ class PEPO:
 
                 # Substituting indices with tensors.
                 if save_tensors: chain[key] = T
+
+            if save_tensors:
+                # Converting dicts to OpChain objexts.
+                operator_chains[iChain] = OpChain(chain)
 
         if return_virtidx:
             return tuple(operator_chains), operator_chain_virtidx
@@ -1620,6 +1804,81 @@ def all_edges_present(
         G.edges(),
         [tuple(edge) for edge in edges_to_indices.keys()]
     )
+
+
+# -----------------------------------------------------------------------------
+#                   Standard Operators
+# -----------------------------------------------------------------------------
+
+
+def Zero(
+        G: nx.MultiGraph,
+        D: Union[int, dict[int, int]],
+        dtype=np.complex128,
+        sanity_check: bool = False
+    ) -> PEPO:
+    """
+    Returns a zero-valued PEPO on graph `G`. Physical dimension `D`.
+    If `D` is a dict, it must contain the physical dimension for every
+    site in `G`.
+    """
+    # sanity check.
+    if isinstance(D, dict):
+        if not nx.utils.nodes_equal(nodes1=G.nodes(), nodes2=D.keys()):
+            raise ValueError(
+                "D must define the physical dimension on every site of G."
+            )
+
+    op = PEPO()
+    op.G = PEPO.prepare_graph(G=G, chi=1, D=D)
+
+    # Root node is node with smallest degree.
+    op.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
+
+    # Depth-first search tree.
+    op.tree = nx.dfs_tree(G, op.root)
+
+    # Since the PEPO contains only zeros, the tree traversal checks are not
+    # applicable.
+    op.check_tree = False
+
+    # Adding local operators.
+    for node in op:
+        op[node] = np.zeros(
+            shape = (tuple(1 for _ in range(len(G.adj[node])))
+                     + (op.D[node], op.D[node])),
+            dtype=dtype
+        )
+
+    if sanity_check: assert op.intact
+
+    return op
+
+
+def Identity(
+        G: nx.MultiGraph,
+        D: Union[int, dict[int, int]],
+        dtype=np.complex128,
+        sanity_check: bool = False
+    ) -> PEPO:
+    """
+    Returns the identity PEPO on graph `G`. Physical dimension `D`.
+    If `D` is a dict, it must contain the physical dimension for every
+    site in `G`.
+    """
+    Id = Zero(G=G, D=D, dtype=dtype, sanity_check=sanity_check)
+
+    # Adding local identities.
+    for node in Id:
+        Id[node][...,:,:] = Id.I(node=node)
+
+    if nx.is_tree(G):
+        # Enabling tree traversal checks.
+        Id.check_tree = True
+
+    if sanity_check: assert Id.intact
+
+    return Id
 
 
 if __name__ == "__main__":

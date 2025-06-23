@@ -37,8 +37,7 @@ from belief_propagation.utils import (
     same_legs,
     check_msg_intact
 )
-from belief_propagation.hamiltonians import Identity
-from belief_propagation.PEPO import PEPO
+from belief_propagation.PEPO import PEPO, Identity
 from belief_propagation.PEPS import PEPS
 
 

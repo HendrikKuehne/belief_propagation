@@ -28,7 +28,8 @@ from belief_propagation.utils import (
     graph_compatible,
     check_msg_intact
 )
-from belief_propagation.PEPO import PEPO
+from belief_propagation.PEPO import PEPO, Zero
+# Zero is used for convenience; can be circumvented easily.
 from belief_propagation.PEPS import PEPS
 from belief_propagation.braket import (
     Braket,
@@ -41,8 +42,6 @@ from belief_propagation.truncate_expand import (
     loop_series_contraction,
     insert_excitation
 )
-from belief_propagation.hamiltonians import Zero
-# Only used for convenience; can be circumvented easily.
 
 
 class DMRG:

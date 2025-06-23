@@ -129,6 +129,9 @@ This will be updated continuously, as questions come to mind.
     * Glen Evenbly, Nicola Pancotti, Ashley Milsted, Johnnie Gray, Garnet Kin-Lic Chan  
       Loop Series Expansions for Tensor Networks  
       [arXiv:2409.03108](https://arxiv.org/abs/2409.03108)
+        * Giorgio Parisi, František Slanina  
+          Loop expansion around the Bethe–Peierls approximation for lattice models[^1]  
+          [J. Stat. Mech. (2006) L02003](https://doi.org/10.1088/1742-5468/2006/02/L02003) ([arXiv:cond-mat/0512529](https://arxiv.org/abs/cond-mat/0512529))
     * Joris M. Mooij; Hilbert J. Kappen  
       Sufficient Conditions for Convergence of the Sum–Product Algorithm  
       [IEEE Transactions on Information Theory vol. 53, no. 12, 2007](https://doi.org/10.1109/TIT.2007.909166)
@@ -190,4 +193,6 @@ This will be updated continuously, as questions come to mind.
   * Andrew M. Childs, Yuan Su, Minh C. Tran, Nathan Wiebe, Shuchen Zhu  
     Theory of Trotter Error with Commutator Scaling  
     [Phys. Rev. X 11, 011020 (2021)](https://doi.org/10.1103/PhysRevX.11.011020) ([arXiv:1912.08854](https://arxiv.org/abs/1912.08854))
-    * Explicit form of second order Trotteriation
+    * Explicit form of n-th order Trotteriation
+
+[^1]: Could this be related to Gray's Loop Series Expansion?

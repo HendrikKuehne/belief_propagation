@@ -17,7 +17,7 @@ import networkx as nx
 import scipy.linalg as scialg
 import tqdm
 
-from belief_propagation.PEPO import PEPO
+from belief_propagation.PEPO import PEPO, OpChain
 from belief_propagation.PEPS import PEPS
 from belief_propagation.hamiltonians import Identity
 from belief_propagation.utils import (
@@ -32,7 +32,7 @@ def get_brick_wall_layers(
         op: PEPO,
         trotter_order: int = 1,
         sanity_check: bool = False
-    ) -> tuple[tuple[dict[int, tuple]]]:
+    ) -> tuple[tuple[OpChain]]:
     """
     Decomposes a PEPO into multiple layers based on the brick wall
     layout. This is accomplished by decomposing the PEPO into operator
@@ -41,36 +41,61 @@ def get_brick_wall_layers(
     # sanity check
     if sanity_check: assert op.intact
 
-    op_chains = op.operator_chains(sanity_check=sanity_check)
+    op_chains: tuple[OpChain] = op.operator_chains(
+        sanity_check=sanity_check,
+        save_tensors=True
+    )
 
     singlesite_layers, brick_wall_layers = get_disjoint_subsets_from_opchains(
         op_chains
     )
 
-    all_layers = ()
+    all_layers: tuple[tuple[OpChain]] = ()
     if singlesite_layers != ((),): all_layers += (*singlesite_layers,)
     if brick_wall_layers != ((),): all_layers += (*brick_wall_layers,)
 
+    ordered_layers = __assemble_layers_in_trotter_order(
+        layers=all_layers,
+        trotter_order=trotter_order,
+        sanity_check=sanity_check
+    )
+
+    return ordered_layers
+
+
+def __assemble_layers_in_trotter_order(
+        layers: tuple[tuple[OpChain]],
+        trotter_order: int,
+        sanity_check: bool = False
+    ) -> tuple[tuple[OpChain]]:
+    """
+    Given the brick wall layers in `layers`, returns the trotterization
+    to order `trotter_order`.
+
+    `layers` contains the brick wall layers of `t*H`, where `H` is an
+    operator. Let the layers be denoted as operators `O1`, `O2`, and so
+    on. This function solves the problem of approximating
+    `exp(O1 + O2 + ...)` to a given order in `t`, by returning the
+    layers in the correct order with correct prefactors incorporated
+    into the layers. Method from [Phys. Rev. X 11, 011020 (2021)](https://doi.org/10.1103/PhysRevX.11.011020).
+    """
     if trotter_order == 1:
         # Nothing to be done for first-order trotterization.
-        return all_layers
+        return layers
 
     if trotter_order == 2:
         # Multiplying every layer by 1/2.
-        for layer in all_layers[1:]:
+        for layer in layers[1:]:
             # Multiplying the respective operator chain by 1/2 amounts to
             # multiplying the first operator in the chain by 1/2.
-            for op_chain in layer:
-                for key in op_chain.keys():
-                    op_chain[key] *= .5
-                    break
+            for op_chain in layer: op_chain *= .5
 
         # Assembling the correct layer order for second-order trotterization.
-        ordered_layers = all_layers[:0:-1] + all_layers
+        ordered_layers = layers[:0:-1] + layers
 
         return ordered_layers
 
-    return all_layers
+    raise NotImplementedError
 
 
 # -----------------------------------------------------------------------------
@@ -150,7 +175,7 @@ def __trotter_operator_exponential(
 
 def __PEPO_exp_single_site_brick_wall_layer(
         G: nx.MultiGraph,
-        brick_wall_layer: tuple[dict[int, np.ndarray]],
+        brick_wall_layer: tuple[OpChain],
         sanity_check: bool = False
     ) -> PEPO:
     """
@@ -183,7 +208,7 @@ def __PEPO_exp_single_site_brick_wall_layer(
 
 def __PEPO_exp_two_site_brick_wall_layer(
         G: nx.MultiGraph,
-        brick_wall_layer: tuple[dict[int, np.ndarray]],
+        brick_wall_layer: tuple[OpChain],
         singval_eps: float = None,
         sanity_check: bool = False
     ) -> PEPO:
@@ -476,14 +501,16 @@ def simple_update_TEBD(
 
 def __simple_update_apply_op_chain_single_site(
         psi: PEPS,
-        op_chain: dict[int, np.ndarray],
+        op_chain: OpChain,
         sanity_check: bool,
     ) -> None:
     """
     Applies `exp(op_chain)` to the state `psi`. `psi` is modified
     in-place.
     """
-    if sanity_check: assert psi.intact
+    if sanity_check:
+        assert psi.intact
+        assert op_chain.intact
 
     if len(op_chain.keys()) != 1:
         raise ValueError("".join((
@@ -508,7 +535,7 @@ def __simple_update_apply_op_chain_single_site(
 
 def __simple_update_apply_op_chain_two_site(
         psi: PEPS,
-        op_chain: dict[int, np.ndarray],
+        op_chain: OpChain,
         singval_threshold: float,
         min_bond_dim: int,
         max_bond_dim: int,
@@ -522,7 +549,9 @@ def __simple_update_apply_op_chain_two_site(
     If `singval_threshold is None`, the Numpy machine epsilon for the
     respective data type will be used.
     """
-    if sanity_check: assert psi.intact
+    if sanity_check:
+        assert psi.intact
+        assert op_chain.intact
 
     # Handling singular value threshold.
     if singval_threshold is None:

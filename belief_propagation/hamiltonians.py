@@ -5,8 +5,6 @@ Example hamiltonians as PEPOs.
 __all__ = [
     "TFI",
     "Heisenberg",
-    "Zero",
-    "Identity",
     "posneg_TFI",
     "operator_chain",
     "operator_layer"
@@ -21,7 +19,7 @@ import networkx as nx
 import tqdm
 
 from belief_propagation.utils import multi_kron, op_layer_intact_check
-from belief_propagation.PEPO import PEPO, PauliPEPO
+from belief_propagation.PEPO import OpChain, PEPO, PauliPEPO, Identity
 
 
 class TFI(PauliPEPO):
@@ -445,76 +443,6 @@ class Heisenberg(PauliPEPO):
         return
 
 
-def Zero(
-        G: nx.MultiGraph,
-        D: Union[int, dict[int, int]],
-        dtype=np.complex128,
-        sanity_check: bool = False
-    ) -> PEPO:
-    """
-    Returns a zero-valued PEPO on graph `G`. Physical dimension `D`.
-    If `D` is a dict, it must contain the physical dimension for every
-    site in `G`.
-    """
-    # sanity check.
-    if isinstance(D, dict):
-        if not nx.utils.nodes_equal(nodes1=G.nodes(), nodes2=D.keys()):
-            raise ValueError(
-                "D must define the physical dimension on every site of G."
-            )
-
-    op = PEPO()
-    op.G = PEPO.prepare_graph(G=G, chi=1, D=D)
-
-    # Root node is node with smallest degree.
-    op.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
-
-    # Depth-first search tree.
-    op.tree = nx.dfs_tree(G, op.root)
-
-    # Since the PEPO contains only zeros, the tree traversal checks are not
-    # applicable.
-    op.check_tree = False
-
-    # Adding local operators.
-    for node in op:
-        op[node] = np.zeros(
-            shape = (tuple(1 for _ in range(len(G.adj[node])))
-                     + (op.D[node], op.D[node])),
-            dtype=dtype
-        )
-
-    if sanity_check: assert op.intact
-
-    return op
-
-
-def Identity(
-        G: nx.MultiGraph,
-        D: Union[int, dict[int, int]],
-        dtype=np.complex128,
-        sanity_check: bool = False
-    ) -> PEPO:
-    """
-    Returns the identity PEPO on graph `G`. Physical dimension `D`.
-    If `D` is a dict, it must contain the physical dimension for every
-    site in `G`.
-    """
-    Id = Zero(G=G, D=D, dtype=dtype, sanity_check=sanity_check)
-
-    # Adding local identities.
-    for node in Id:
-        Id[node][...,:,:] = Id.I(node=node)
-
-    if nx.is_tree(G):
-        # Enabling tree traversal checks.
-        Id.check_tree = True
-
-    if sanity_check: assert Id.intact
-
-    return Id
-
-
 def posneg_TFI(
         G: nx.MultiGraph,
         J: float = 1,
@@ -654,68 +582,9 @@ def posneg_TFI(
     return pos_op,neg_op
 
 
-def operator_chain(
-        G: nx.MultiGraph,
-        ops: dict[int, np.ndarray],
-        sanity_check: bool = False
-    ) -> PEPO:
-    """
-    Product of single-site operators. The dictionary `ops` contains the
-    operators as values, and the sites on which they act as keys.
-    """
-    if ops == {}:
-        raise ValueError(
-            "operator_chain() received empty operator chain."
-        )
-
-    # Extracting physical dimension.
-    D = {node: op.shape[0] for node, op in ops.items()}
-
-    if not nx.utils.nodes_equal(nodes1=G.nodes(), nodes2=D.keys()):
-        # Physical dimension is not defined on all sites. Trying to infer
-        # physical dimension.
-        phys_dim_set = set(op.shape[-1] for op in ops.values())
-        if len(phys_dim_set) == 1:
-            # There is a unique physical dimension; adding it to the remaining
-            # sites.
-            D_inferred = phys_dim_set.pop()
-            for node in G:
-                if node not in D.keys(): D[node] = D_inferred
-        else:
-            raise ValueError("".join((
-                "Physical dimension cannot be inferred sites. If ops ",
-                "contains operators with different dimensions, ops must ",
-                "contain an operator for every site."
-            )))
-
-    H = Identity(G=G, D=D, sanity_check=sanity_check)
-
-    for node, op in ops.items():
-        # sanity check
-        if not G.has_node(node):
-            raise ValueError(f"Node {node} not contained in graph.")
-        if not op.shape == (D[node], D[node]):
-            raise ValueError("".join((
-                f"Operator on node {node} has wrong shape: Expected ",
-                f"({D[node]}, {D[node]}), got " + str(op.shape) + "."
-            )))
-
-        index = (tuple(0 for _ in H.G.adj[node])
-                 + (slice(D[node]), slice(D[node])))
-        H[node][index] = op
-
-    # Since we inserted non-identity operators, the tree traversal checks are
-    # not applicable.
-    H.check_tree = False
-
-    if sanity_check: assert H.intact
-
-    return H
-
-
 def operator_layer(
         G: nx.MultiGraph,
-        op_chains: tuple[dict[int, np.ndarray]],
+        op_chains: tuple[OpChain],
         sanity_check: bool = False
     ) -> PEPO:
     """
@@ -740,12 +609,10 @@ def operator_layer(
         test_disjoint=True
     )
 
-    op = operator_chain(G=G, ops=op_chains[0], sanity_check=sanity_check)
+    op = op_chains[0].topepo(G=G, sanity_check=sanity_check)
 
-    for ops in op_chains[1:]:
-        op = op + operator_chain(
-            G=G, ops=ops, sanity_check=sanity_check
-        )
+    for chain in op_chains[1:]:
+        op = op + chain.topepo(G=G, sanity_check=sanity_check)
 
     if sanity_check: assert op.intact
 

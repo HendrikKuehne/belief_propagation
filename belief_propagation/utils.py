@@ -76,7 +76,7 @@ def multi_kron(*ops, create_using: str = "numpy"):
     Tensor product of all the given operators.
     """
     if create_using == "numpy":
-        res_op = 1
+        res_op = np.ones(shape=(1,))
         for op in ops: res_op = np.kron(res_op, op)
         return res_op
 
@@ -598,7 +598,7 @@ def cycle_length_ranking(G: nx.Graph,noisy: bool = True) -> list[tuple[int]]:
 
 def is_disjoint_layer(
         layer: tuple[dict[int, tuple]],
-        op_chain: dict[int, tuple] = dict()
+        additional_chain: dict[int, tuple] = dict()
     ) -> bool:
     """
     Tests if the set `op_chains` of operator chains is disjoint,
@@ -606,7 +606,7 @@ def is_disjoint_layer(
     If `op_chain` is given, tests if `op_chains` is disjoint upon
     addition of `op_chain`.
     """
-    new_sites = set(op_chain.keys())
+    new_sites = set(additional_chain.keys())
     for op_chain_ in layer:
         if len(new_sites & set(op_chain_.keys())) > 0: return False
 
@@ -634,15 +634,21 @@ def get_disjoint_subsets_from_opchains(
         if len(op_chain.keys()) == 1:
             # Single-site operators will be grouped in one chain.
             iLayer = 0
-            while not is_disjoint_layer(singlesite_layers[iLayer], op_chain):
+            while not is_disjoint_layer(
+                layer=singlesite_layers[iLayer],
+                additional_chain=op_chain
+            ):
                 iLayer += 1
                 if len(singlesite_layers) == iLayer: singlesite_layers += [(),]
             singlesite_layers[iLayer] += (op_chain,)
 
         else:
-            # Single-site operators will be grouped in one chain.
+            # Multiple-site operators will be grouped in one chain.
             iLayer = 0
-            while not is_disjoint_layer(brick_wall_layers[iLayer], op_chain):
+            while not is_disjoint_layer(
+                layer=brick_wall_layers[iLayer],
+                additional_chain=op_chain
+            ):
                 iLayer += 1
                 if len(brick_wall_layers) == iLayer: brick_wall_layers += [(),]
             brick_wall_layers[iLayer] += (op_chain,)
