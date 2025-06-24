@@ -2,7 +2,14 @@
 Projector-entangled pair operators on arbitrary graphs.
 """
 
-__all__ = ["OpChain", "PEPO", "PauliPEPO", "Zero", "Identity"]
+__all__ = [
+    "OpChain",
+    "OpLayer",
+    "PEPO",
+    "PauliPEPO",
+    "Zero",
+    "Identity"
+]
 
 import warnings
 import itertools
@@ -31,7 +38,7 @@ from belief_propagation.PEPS import PEPS
 # -----------------------------------------------------------------------------
 
 
-class OpChain(dict):
+class OpChain(dict[int, np.ndarray]):
     """
     An operator chain is a tensor product of operators, s.t. every
     operator acts on a different site in the system. These serve as
@@ -41,9 +48,9 @@ class OpChain(dict):
 
     def toarray(self, create_using: str = "numpy", sanity_check: bool = False):
         """
-        Evaluates the tensor product of this operator chain. The order
-        of the physical dimensions is inherited from the keys: operators
-        are sorted in ascending key-order.
+        Construct a matrix representation of this operator chain. The
+        order of the physical dimensions is inherited from the keys:
+        operators are sorted in ascending key-order.
         
         `create_using` is forwarded to `PEPO.toarray` or
         `utils.multi_kron`, respectively.
@@ -150,6 +157,7 @@ class OpChain(dict):
                     )),
                     RuntimeWarning
                 )
+            return False
 
         # Do physical dimensions in graph and operator chain match?
         if all("D" in data.keys() for node, data in self.G.nodes(data=True)):
@@ -173,27 +181,28 @@ class OpChain(dict):
         """
         Multiplication of an operator chain by a scalar.
         """
-        x_root = x ** (1 / len(self))
         new_chain = copy.deepcopy(self)
-        for key in new_chain.keys(): new_chain[key] = new_chain[key] * x_root
+        for key in new_chain.keys():
+            new_chain[key] = new_chain[key] * x
+            break
 
         return new_chain
 
-    def __rmul__(self, x: float) -> "OpChain":
-        return self.__mul__(x)
+    def __rmul__(self, x: float) -> "OpChain": return self.__mul__(x)
 
     def __imul__(self, x: float) -> "OpChain":
         """
         In-line multiplication of an operator chain by a scalar.
         """
-        x_root = x ** (1 / len(self))
-        for key in self.keys(): self[key] = self[key] * x_root
+        for key in self.keys():
+            self[key] = self[key] * x
+            break
 
         return self
 
     def __init__(
             self,
-            chain,
+            chain = dict(),
             G: nx.MultiGraph = None,
             sanity_check: bool = False,
             **kwargs
@@ -205,6 +214,155 @@ class OpChain(dict):
 
         self.G: nx.MultiGraph = G
         """Underlying graph of the operator chain."""
+
+        if sanity_check: assert self.intact
+
+        return
+
+
+class OpLayer(tuple[OpChain]):
+    """
+    Tuple of `OpChain` objects. Represents a collection of operator
+    chains.
+    """
+
+    def toarray(
+            self,
+            G: nx.MultiGraph = None,
+            create_using: str = "numpy",
+            sanity_check: bool = False
+        ):
+        """
+        Construct a matrix representation of this operator layer.
+
+        `create_using` is forwarded to `PEPO.toarray`.
+        """
+        pepo = self.topepo(G=G, sanity_check=sanity_check)
+        return pepo.toarray(
+            create_using=create_using,
+            sanity_check=sanity_check
+        )
+
+    def topepo(
+            self,
+            G: nx.MultiGraph = None,
+            sanity_check: bool = False
+        ) -> "PEPO":
+        """
+        Creates the PEPO that contains this operator layer. This
+        corresponds to the sum of all operator chains.
+        """
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    "So far, this method simply adds operator chains. There is a ",
+                    "more elegant method: if the operator chains are disjoint, ",
+                    "they can be compressed into a PEPO with smaller bond ",
+                    "dimension. This has yet to be implemented."
+                )),
+                FutureWarning
+            )
+
+        if sanity_check: assert self.intact
+
+        if self.G is not None:
+            G = self.G
+        else:
+            if G is None:
+                raise ValueError("No graph available.")
+
+        pepo = self[0].topepo(G=G, sanity_check=sanity_check)
+        for chain in self[1:]:
+            pepo = pepo + chain.topepo(G=G, sanity_check=sanity_check)
+
+        if sanity_check: assert pepo.intact
+
+        return pepo
+
+    @property
+    def disjoint(self) -> bool:
+        """Returns `True` if the constituent operator chains are disjoint."""
+        site_occupations = {}
+        for chain in self:
+            for node in chain.keys():
+                if node not in site_occupations.keys():
+                    site_occupations[node] = 1
+                else:
+                    return False
+
+        return True
+
+    @property
+    def intact(self) -> bool:
+        """
+        An operator layer is intact if all the operator chains that it
+        contains are intact.
+        """
+        for chain in self:
+            newchain = copy.deepcopy(chain)
+            newchain.G = self.G
+            if not newchain.intact: return False
+
+        return True
+
+    @property
+    def chain_length_set(self) -> set[int]:
+        """
+        Returns a set that contains the lengths of all operator chains.
+        """
+        return set(len(chain) for chain in self)
+
+    def __mul__(self, x: float) -> "OpLayer":
+        """
+        Multiplication of an operator layer by a scalar is equivalent to
+        multiplication of all constituent operator chains by a scalar.
+        """
+        newlayer = copy.deepcopy(self)
+        for chain in newlayer: chain *= x
+
+        return self.__class__(iterable=newlayer, G=self.G)
+
+    def __rmul__(self, x: float) -> "OpLayer": return self.__mul__(x)
+
+    def __imul__(self, x: float) -> "OpLayer": return self.__mul__(x)
+
+    def __add__(self, layer: "OpLayer") -> "OpLayer":
+        """
+        Inheriting tuple addition.
+        """
+        if not isinstance(layer, self.__class__):
+            raise ValueError("Value for layer is not OpChain instance.")
+        if (self.G is not None) and (layer.G is not None):
+            if not graph_compatible(self.G, layer.G):
+                raise ValueError("Layer graphs are incompatible.")
+
+        return self.__class__(iterable=super().__add__(layer), G=self.G)
+
+    def __iadd__(self, layer: "OpLayer") -> "OpLayer":
+        return self.__add__(layer=layer)
+
+    def __new__(
+            cls,
+            iterable: Iterable = tuple(),
+            G: nx.MultiGraph = None,
+            sanity_check: bool = False
+        ) -> "OpLayer":
+        """Creation of a new operator layer."""
+        # The arguments G and sanity_check are included here for compatibility
+        # with the initialization.
+        return super().__new__(cls, iterable)
+
+    def __init__(
+            self,
+            iterable: Iterable = tuple(),
+            G: nx.MultiGraph = None,
+            sanity_check: bool = False
+        ) -> None:
+        # The iterable argument is included here for compatibility with the
+        # __new__ method.
+
+        self.G: nx.MultiGraph = G
+        """Underlying graph of the operator layer."""
 
         if sanity_check: assert self.intact
 

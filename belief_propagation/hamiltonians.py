@@ -6,20 +6,15 @@ __all__ = [
     "TFI",
     "Heisenberg",
     "posneg_TFI",
-    "operator_chain",
-    "operator_layer"
 ]
 
 import copy
-import warnings
-from typing import Union
 
 import numpy as np
 import networkx as nx
-import tqdm
 
-from belief_propagation.utils import multi_kron, op_layer_intact_check
-from belief_propagation.PEPO import OpChain, PEPO, PauliPEPO, Identity
+from belief_propagation.utils import multi_kron
+from belief_propagation.PEPO import PEPO, PauliPEPO
 
 
 class TFI(PauliPEPO):
@@ -580,43 +575,6 @@ def posneg_TFI(
     if sanity_check: assert pos_op.intact and neg_op.intact
 
     return pos_op,neg_op
-
-
-def operator_layer(
-        G: nx.MultiGraph,
-        op_chains: tuple[OpChain],
-        sanity_check: bool = False
-    ) -> PEPO:
-    """
-    A PEPO that contains disjoint operator chains.
-    """
-    with tqdm.tqdm.external_write_mode():
-        warnings.warn(
-            "".join((
-                "So far, this method simply adds operator chains. There is a ",
-                "more elegant method: if the operator chains are disjoint, ",
-                "they can be compressed into a PEPO with smaller bond ",
-                "dimension. This has yet to be implemented."
-            )),
-            FutureWarning
-        )
-
-    # sanity check
-    assert op_layer_intact_check(
-        G=G,
-        op_chains=op_chains,
-        test_same_length=False,
-        test_disjoint=True
-    )
-
-    op = op_chains[0].topepo(G=G, sanity_check=sanity_check)
-
-    for chain in op_chains[1:]:
-        op = op + chain.topepo(G=G, sanity_check=sanity_check)
-
-    if sanity_check: assert op.intact
-
-    return op
 
 
 if __name__ == "__main__":

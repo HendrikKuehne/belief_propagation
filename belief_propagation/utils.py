@@ -14,6 +14,7 @@ __all__ = [
     "multi_tensor_rank",
     "entropy",
     "fidelity",
+    "suzuki_recursion_coefficients",
     # hermiticity
     "is_hermitian_matrix",
     "is_hermitian_message",
@@ -29,19 +30,20 @@ __all__ = [
     # sanity checks and diagnosis
     "network_intact_check",
     "network_message_check",
-    "op_layer_intact_check",
     "same_legs",
     "graph_compatible",
 ]
 
 import warnings
 import itertools
+from functools import lru_cache
 from typing import Callable, Union
 
 import numpy as np
 import networkx as nx
 import scipy.linalg as scialg
 import scipy.sparse as scisparse
+import scipy.optimize as sciopt
 import tqdm
 
 # -----------------------------------------------------------------------------
@@ -298,6 +300,74 @@ def fidelity(psi: np.ndarray, subspace: tuple[np.ndarray]) -> float:
 
     return np.real_if_close(F)
 
+
+@lru_cache
+def suzuki_recursion_coefficients(
+        m: int,
+        r: int,
+        max_retries: int = 1000,
+        eps: float = 1e-10,
+        verbose: bool = False,
+        raise_err: bool = False
+    ) -> np.ndarray:
+    """
+    Numerical calculation of the recursion coefficients in product
+    formulas. Theorem 1.1 from
+    [J. Math. Phys. 32, 400-407 (1991)](https://doi.org/10.1063/1.529425).
+    This function tries a maximum of `numretries` parameter combinations
+    and breaks when a solution is `eps` close to zero.
+    """
+
+    # Defining the function that is to be minimized and the constraint.
+    def minfunc(p: np.ndarray) -> float:
+        return np.abs(np.sum(p ** m))
+
+    constraint = {
+        "type": "eq",
+        "fun": lambda p: np.sum(p) - 1,
+        "jac": lambda p: np.ones(shape=p.shape)
+    }
+
+    iterator = tqdm.tqdm(
+        np.arange(max_retries),
+        desc="Minimization trials",
+        disable=not verbose
+    )
+
+    for iTrial in iterator:
+        # Initial guess chosen randomly.
+        p0 = np.random.normal(loc=0, scale=10, size=r)
+        p0 /= np.sum(p0)
+
+        res = sciopt.minimize(
+            fun=minfunc,
+            x0=p0,
+            method="SLSQP",
+            constraints=constraint
+        )
+        popt = res.x
+
+        minval = minfunc(popt)
+        if np.isclose(a=minval, b=0, rtol=0, atol=eps):
+            iterator.close()
+            break
+
+    if not np.isclose(a=minval, b=0, rtol=0, atol=eps):
+        msg = "".join((
+            f"Parameters found give min. func value of {minfunc(popt):.3e}. ",
+            f"Did not reach eps value {eps:.3e}."
+        ))
+
+        if raise_err:
+            raise RuntimeError(msg)
+        else:
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(msg, RuntimeWarning)
+
+    if not res.success:
+        raise RuntimeError("SciPy did not return successfully.")
+
+    return popt
 
 # -----------------------------------------------------------------------------
 #                   Hermiticity of Different Objects
@@ -592,71 +662,6 @@ def cycle_length_ranking(G: nx.Graph,noisy: bool = True) -> list[tuple[int]]:
 
 
 # -----------------------------------------------------------------------------
-#                   Operator Chains & Operator Layers
-# -----------------------------------------------------------------------------
-
-
-def is_disjoint_layer(
-        layer: tuple[dict[int, tuple]],
-        additional_chain: dict[int, tuple] = dict()
-    ) -> bool:
-    """
-    Tests if the set `op_chains` of operator chains is disjoint,
-    i.e. the operator chains in `op_chains` act on different sites.
-    If `op_chain` is given, tests if `op_chains` is disjoint upon
-    addition of `op_chain`.
-    """
-    new_sites = set(additional_chain.keys())
-    for op_chain_ in layer:
-        if len(new_sites & set(op_chain_.keys())) > 0: return False
-
-    return True
-
-
-def get_disjoint_subsets_from_opchains(
-        op_chains: tuple[dict[int, tuple]]
-    ) -> tuple[tuple[tuple[dict[int, tuple]]]]:
-    """
-    Given operator chains, decomposes them into as many
-    disjoint subsets as are necessary for a brick wall
-    layout. Returns a tuple containing the single-site
-    layers, and a tuple containing the multi-site layers
-    (aka brick-wall layers).
-    """
-    # Layers of the hamiltonian are sets of operators, s.t. all operators
-    # within the layer commute. This is achieved by grouping spatially disjoint
-    # operators together in the layers. Single-site operators will be grouped
-    # separately.
-    singlesite_layers = [(),]
-    brick_wall_layers = [(),]
-
-    for op_chain in op_chains:
-        if len(op_chain.keys()) == 1:
-            # Single-site operators will be grouped in one chain.
-            iLayer = 0
-            while not is_disjoint_layer(
-                layer=singlesite_layers[iLayer],
-                additional_chain=op_chain
-            ):
-                iLayer += 1
-                if len(singlesite_layers) == iLayer: singlesite_layers += [(),]
-            singlesite_layers[iLayer] += (op_chain,)
-
-        else:
-            # Multiple-site operators will be grouped in one chain.
-            iLayer = 0
-            while not is_disjoint_layer(
-                layer=brick_wall_layers[iLayer],
-                additional_chain=op_chain
-            ):
-                iLayer += 1
-                if len(brick_wall_layers) == iLayer: brick_wall_layers += [(),]
-            brick_wall_layers[iLayer] += (op_chain,)
-
-    return tuple(singlesite_layers), tuple(brick_wall_layers)
-
-
-# -----------------------------------------------------------------------------
 #                   Sanity Checks & Diagnosis
 # -----------------------------------------------------------------------------
 
@@ -770,104 +775,6 @@ def network_message_check(G: nx.MultiGraph) -> bool:
                             UserWarning
                         )
                     return False
-
-    return True
-
-
-def op_layer_intact_check(
-        G: nx.MultiGraph,
-        layer: tuple[dict[int, np.ndarray]],
-        target_chain_length: int = None,
-        test_same_length: bool = False,
-        test_disjoint: bool = False
-    ) -> bool:
-    """
-    Tests if the operator chains in `op_chains` are intact.
-    This amounts to:
-    * Are all physical dimensions equal?
-    * Are the chains disjoint? (tested only if `test_disjoint = True`)
-    * Do all chains have the same length? (tested only if
-    `test_same_length = True`)
-        * Do all chains have the correct length? (tested only if the
-        reference length is given under `target_chain_length`)
-    """
-    if test_disjoint:
-        # Are the operator chains disjoint?
-        if not is_disjoint_layer(layer=layer):
-            with tqdm.tqdm.external_write_mode():
-                warnings.warn(
-                    "The operator chains are not disjoint.",
-                    UserWarning
-                )
-            return False
-
-    D = {}
-    length_set = set()
-
-    for iChain, op_chain in enumerate(layer):
-        # Saving operator chain length.
-        length_set.add(len(op_chain))
-
-        for node, T in op_chain.items():
-            # Does the graph contain this node?
-            if not G.has_node(node):
-                with tqdm.tqdm.external_write_mode():
-                    warnings.warn(
-                        "".join((
-                            f"Node {node} in operator chain {iChain}",
-                            "not contained in graph.",
-                        )),
-                        UserWarning
-                    )
-                return False
-
-            # Is the operator square?
-            if not T.shape[0] == T.shape[1]:
-                with tqdm.tqdm.external_write_mode():
-                    warnings.warn(
-                        "".join((
-                            f"Non-square operator on node {node} in operator ",
-                            f"chain {iChain}."
-                        )),
-                        UserWarning
-                    )
-                return False
-
-            # Are the physical dimensions equal?
-            if node in D.keys():
-                if not D[node] == T.shape[0]:
-                    with tqdm.tqdm.external_write_mode():
-                        warnings.warn(
-                            "".join((
-                                f"Physical dimension mismatch in node {node}."
-                            )),
-                            RuntimeWarning
-                        )
-                    return False
-            else:
-                D[node] = T.shape[0]
-
-    if target_chain_length is not None: test_same_length = True
-
-    if test_same_length:
-        if not len(length_set) == 1:
-            with tqdm.tqdm.external_write_mode():
-                warnings.warn(
-                    "Operator layer contains chains with varying length.",
-                    UserWarning
-                )
-            return False
-
-        if target_chain_length is not None:
-            chain_length = length_set.pop()
-            if chain_length != target_chain_length:
-                with tqdm.tqdm.external_write_mode():
-                    warnings.warn(
-                        "Wrong operator chain length; received "
-                        + f"{chain_length}, expected {target_chain_length}.",
-                        UserWarning
-                    )
-                return False
 
     return True
 

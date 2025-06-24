@@ -17,26 +17,155 @@ import networkx as nx
 import scipy.linalg as scialg
 import tqdm
 
-from belief_propagation.PEPO import PEPO, OpChain
+from belief_propagation.PEPO import PEPO, OpChain, OpLayer, Identity
 from belief_propagation.PEPS import PEPS
-from belief_propagation.hamiltonians import Identity
 from belief_propagation.utils import (
-    get_disjoint_subsets_from_opchains,
-    op_layer_intact_check,
     graph_compatible,
-    multi_kron
+    multi_kron,
+    suzuki_recursion_coefficients
 )
+
+
+def __disjoint_oplayers_from_opchains(
+        op_chains: tuple[OpChain],
+        sanity_check: bool = False
+    ) -> tuple[tuple[OpLayer]]:
+    """
+    Given operator chains, decomposes them into as many disjoint subsets
+    as are necessary for a brick wall layout. Returns a tuple containing
+    the single-site layers, and a tuple containing the multi-site layers
+    (aka brick-wall layers).
+    """
+    # Layers of the hamiltonian are sets of operators, s.t. all operators
+    # within the layer commute. This is achieved by grouping spatially disjoint
+    # operators together in the layers. Single-site operators will be grouped
+    # separately.
+    if sanity_check: assert all(chain.intact for chain in op_chains)
+
+    singlesite_layers = [OpLayer(),]
+    brick_wall_layers = [OpLayer(),]
+
+    for op_chain in op_chains:
+        if len(op_chain) == 1:
+            # Single-site operators will be grouped in one chain.
+            iLayer = 0
+            while not (singlesite_layers[iLayer]
+                       + OpLayer(iterable=(op_chain,))).disjoint:
+                iLayer += 1
+                if len(singlesite_layers) == iLayer:
+                    singlesite_layers += [OpLayer(),]
+
+            singlesite_layers[iLayer] += OpLayer(iterable=(op_chain,))
+
+        else:
+            # Multiple-site operators will be grouped in one chain.
+            iLayer = 0
+            while not (brick_wall_layers[iLayer]
+                       + OpLayer(iterable=(op_chain,))).disjoint:
+                iLayer += 1
+                if len(brick_wall_layers) == iLayer:
+                    brick_wall_layers += [OpLayer(),]
+
+            brick_wall_layers[iLayer] += OpLayer(iterable=(op_chain,))
+
+    return tuple(singlesite_layers), tuple(brick_wall_layers)
+
+
+def __assemble_layers_in_trotter_order(
+        layers: tuple[OpLayer],
+        trotter_order: int,
+        sanity_check: bool = False
+    ) -> tuple[OpLayer]:
+    """
+    Given the brick wall layers in `layers`, returns the trotterization
+    to order `trotter_order`.
+
+    `layers` contains the brick wall layers of `t*H`, where `H` is an
+    operator. Let the layers be denoted as operators `O1`, `O2`, and so
+    on. This function solves the problem of approximating
+    `exp(O1 + O2 + ...)` to a given order in `t`, by returning the
+    layers in the correct order with correct prefactors incorporated
+    into the layers. Recursion rules from
+    [Phys. Rev. X 11, 011020 (2021)](https://doi.org/10.1103/PhysRevX.11.011020)
+    and
+    [J. Math. Phys. 32, 400-407 (1991)](https://doi.org/10.1063/1.529425).
+    """
+    if sanity_check: assert all(layer.intact for layer in layers)
+
+    if (not int(trotter_order) == trotter_order) or trotter_order <= 0:
+        raise ValueError("".join((
+            f"Received trotter_order = {trotter_order}. Trotterization order ",
+            "must be a larger-than-zero integer."
+        )))
+
+    if trotter_order == 1:
+        # Nothing to be done for first-order trotterization.
+        return copy.deepcopy(layers)
+
+    if trotter_order == 2:
+        # Multiplying every layer by 1/2.
+        newlayers = (layers[0],) + tuple(layer * .5 for layer in layers[1:])
+
+        # Assembling the correct layer order for second-order trotterization.
+        ordered_layers = newlayers[:0:-1] + newlayers
+
+        return ordered_layers
+
+    if trotter_order % 2 == 0:
+        # Method from https://doi.org/10.1103/PhysRevX.11.011020.
+        u = 1 / (4 - 4 ** (1 / (trotter_order - 1)))
+        outer_layers = __assemble_layers_in_trotter_order(
+            layers=tuple(layer * u for layer in layers),
+            trotter_order=trotter_order - 2,
+            sanity_check=sanity_check
+        )
+        middle_layers = __assemble_layers_in_trotter_order(
+            layers=tuple(layer * (1 - 4 * u) for layer in layers),
+            trotter_order=trotter_order - 2,
+            sanity_check=sanity_check
+        )
+
+        return 2 * outer_layers + middle_layers + 2 * outer_layers
+
+    if trotter_order % 2 == 1:
+        # Method from https://doi.org/10.1063/1.529425.
+        # Choosing m = r is a heuristic that seems to work reasonably well for
+        # uneven trotterization orders; there might be more reasonably
+        # guesses. It is desirable to choose r as small as possible, s.t. this
+        # function returns as few operator layers as necessary.
+        popt = suzuki_recursion_coefficients(
+            m=trotter_order,
+            r=trotter_order,
+            eps=1e-10,
+            max_retries=10000,
+            raise_err=True
+        )
+
+        newlayers: tuple[OpLayer] = ()
+        for p in popt:
+            newlayers += __assemble_layers_in_trotter_order(
+                layers=tuple(layer * p for layer in layers),
+                trotter_order=trotter_order - 1,
+                sanity_check=sanity_check
+            )
+
+        return newlayers
+
+    raise NotImplementedError
 
 
 def get_brick_wall_layers(
         op: PEPO,
+        t: float = 1,
         trotter_order: int = 1,
         sanity_check: bool = False
-    ) -> tuple[tuple[OpChain]]:
+    ) -> tuple[OpLayer]:
     """
     Decomposes a PEPO into multiple layers based on the brick wall
     layout. This is accomplished by decomposing the PEPO into operator
-    chains, and choosing (spatially) disjoint subsets.
+    chains, and choosing (spatially) disjoint subsets. Returns the
+    oerator layers in correct trotterization order, multiplied with the
+    factor `t`.
     """
     # sanity check
     if sanity_check: assert op.intact
@@ -46,8 +175,8 @@ def get_brick_wall_layers(
         save_tensors=True
     )
 
-    singlesite_layers, brick_wall_layers = get_disjoint_subsets_from_opchains(
-        op_chains
+    singlesite_layers, brick_wall_layers = __disjoint_oplayers_from_opchains(
+        op_chains=op_chains, sanity_check=sanity_check
     )
 
     all_layers: tuple[tuple[OpChain]] = ()
@@ -60,42 +189,9 @@ def get_brick_wall_layers(
         sanity_check=sanity_check
     )
 
-    return ordered_layers
+    ordered_scaled_layers = tuple(layer * t for layer in ordered_layers)
 
-
-def __assemble_layers_in_trotter_order(
-        layers: tuple[tuple[OpChain]],
-        trotter_order: int,
-        sanity_check: bool = False
-    ) -> tuple[tuple[OpChain]]:
-    """
-    Given the brick wall layers in `layers`, returns the trotterization
-    to order `trotter_order`.
-
-    `layers` contains the brick wall layers of `t*H`, where `H` is an
-    operator. Let the layers be denoted as operators `O1`, `O2`, and so
-    on. This function solves the problem of approximating
-    `exp(O1 + O2 + ...)` to a given order in `t`, by returning the
-    layers in the correct order with correct prefactors incorporated
-    into the layers. Method from [Phys. Rev. X 11, 011020 (2021)](https://doi.org/10.1103/PhysRevX.11.011020).
-    """
-    if trotter_order == 1:
-        # Nothing to be done for first-order trotterization.
-        return layers
-
-    if trotter_order == 2:
-        # Multiplying every layer by 1/2.
-        for layer in layers[1:]:
-            # Multiplying the respective operator chain by 1/2 amounts to
-            # multiplying the first operator in the chain by 1/2.
-            for op_chain in layer: op_chain *= .5
-
-        # Assembling the correct layer order for second-order trotterization.
-        ordered_layers = layers[:0:-1] + layers
-
-        return ordered_layers
-
-    raise NotImplementedError
+    return ordered_scaled_layers
 
 
 # -----------------------------------------------------------------------------
@@ -105,6 +201,7 @@ def __assemble_layers_in_trotter_order(
 
 def operator_exponential(
         op: PEPO,
+        t: float = 1,
         trotter_order: int = 1,
         contract: bool = False,
         sanity_check: bool = False
@@ -118,7 +215,7 @@ def operator_exponential(
     `|out> = On * ... * O2 * O1 * |in>`.
     """
     op_list = __trotter_operator_exponential(
-        op=op, trotter_order=trotter_order, sanity_check=sanity_check
+        op=op, t=t, trotter_order=trotter_order, sanity_check=sanity_check
     )
 
     if not contract:
@@ -134,6 +231,7 @@ def operator_exponential(
 
 def __trotter_operator_exponential(
         op: PEPO,
+        t: float,
         trotter_order: int,
         sanity_check: bool
     ) -> tuple[PEPO]:
@@ -142,24 +240,24 @@ def __trotter_operator_exponential(
     `trotter_order`, and calculates the operator exponential of each
     layer.
     """
-    # Decomposing PEPO into brick wall layers.
+    # Trotterization: decomposing PEPO into brick wall layers.
     layers = get_brick_wall_layers(
-        op=op, trotter_order=trotter_order, sanity_check=sanity_check
+        op=op, t=t, trotter_order=trotter_order, sanity_check=sanity_check
     )
 
     # Operators that will be returned.
     op_list = ()
 
-    # Trotterization: operator exponential for each brick wall layer.
+    # Operator exponential for each brick wall layer.
     for layer in layers:
-        num_sites_in_chain = len(layer[0])
+        chain_length_set = layer.chain_length_set
 
-        if num_sites_in_chain == 1:
+        if chain_length_set == set((1,)):
             op_list += (__PEPO_exp_single_site_brick_wall_layer(
                 G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
 
-        elif num_sites_in_chain == 2:
+        elif chain_length_set == set((2,)):
             op_list += (__PEPO_exp_two_site_brick_wall_layer(
                 G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
@@ -167,7 +265,8 @@ def __trotter_operator_exponential(
         else:
             raise NotImplementedError("".join((
                 "Operator exponential for operator chains longer than three ",
-                "sites is not implemented."
+                "sites, or with chains of different length, is not ",
+                "implemented."
             )))
 
     return op_list
@@ -175,7 +274,7 @@ def __trotter_operator_exponential(
 
 def __PEPO_exp_single_site_brick_wall_layer(
         G: nx.MultiGraph,
-        brick_wall_layer: tuple[OpChain],
+        brick_wall_layer: OpLayer,
         sanity_check: bool = False
     ) -> PEPO:
     """
@@ -184,10 +283,11 @@ def __PEPO_exp_single_site_brick_wall_layer(
     must be disjoint. In other words, this method computes
     `exp(sum(brick_wall_layer))`.
     """
-    # sanity check
-    assert op_layer_intact_check(
-        G=G, layer=brick_wall_layer, target_chain_length=1, test_disjoint=True
-    )
+    if sanity_check:
+        assert brick_wall_layer.intact
+        assert brick_wall_layer.disjoint
+        assert brick_wall_layer.chain_length_set == set((1,))
+
     if not all("D" in data.keys() for node, data in G.nodes(data=True)):
         raise ValueError("No physical dimensions saved in graph.")
 
@@ -208,7 +308,7 @@ def __PEPO_exp_single_site_brick_wall_layer(
 
 def __PEPO_exp_two_site_brick_wall_layer(
         G: nx.MultiGraph,
-        brick_wall_layer: tuple[OpChain],
+        brick_wall_layer: OpLayer,
         singval_eps: float = None,
         sanity_check: bool = False
     ) -> PEPO:
@@ -228,10 +328,11 @@ def __PEPO_exp_two_site_brick_wall_layer(
     `singval_eps = None`, the absolute tolerance for closeness to zero
     is the Numpy machine epsilon of the datatype.
     """
-    # sanity check
-    assert op_layer_intact_check(
-        G=G, layer=brick_wall_layer, target_chain_length=2, test_disjoint=True
-    )
+    if sanity_check:
+        assert brick_wall_layer.intact
+        assert brick_wall_layer.disjoint
+        assert brick_wall_layer.chain_length_set == set((2,))
+
     if not all("D" in data.keys() for node, data in G.nodes(data=True)):
         raise ValueError("No physical dimensions saved in graph.")
 
@@ -440,7 +541,7 @@ def simple_update_TEBD(
 
     # Trotterization of the operator.
     layers = get_brick_wall_layers(
-        op=H * (-dtau), trotter_order=trotter_order, sanity_check=sanity_check
+        op=H, t=-dtau, trotter_order=trotter_order, sanity_check=sanity_check
     )
 
     if return_all_states: all_states = (copy.deepcopy(psi),)
