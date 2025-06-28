@@ -36,7 +36,7 @@ __all__ = [
 
 import warnings
 import itertools
-from functools import lru_cache
+from functools import cache
 from typing import Callable, Union
 
 import numpy as np
@@ -301,7 +301,7 @@ def fidelity(psi: np.ndarray, subspace: tuple[np.ndarray]) -> float:
     return np.real_if_close(F)
 
 
-@lru_cache
+@cache
 def suzuki_recursion_coefficients(
         m: int,
         r: int,

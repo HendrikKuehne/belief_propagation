@@ -19,6 +19,7 @@ import tqdm
 
 from belief_propagation.PEPO import PEPO, OpChain, OpLayer, Identity
 from belief_propagation.PEPS import PEPS
+from belief_propagation.braket import Braket
 from belief_propagation.utils import (
     graph_compatible,
     multi_kron,
@@ -449,6 +450,7 @@ def simple_update_TEBD(
         min_bond_dim: Union[int, nx.MultiGraph] = 1,
         max_bond_dim: Union[int, nx.MultiGraph] = np.inf,
         return_all_states: bool = False,
+        normalize_every: int = np.inf,
         verbose: bool = False,
         sanity_check: bool = False,
     ) -> Union[PEPS, tuple[PEPS]]:
@@ -468,6 +470,8 @@ def simple_update_TEBD(
 
     If `singval_threshold is None`, the Numpy machine epsilon for the
     respective data type will be used.
+
+    Normalizes the state `normalize_every` steps, if given.
 
     Returns the final state if `return_all_states == False`. Otherwise,
     returns a tuple of the initial state and all states that were
@@ -546,7 +550,7 @@ def simple_update_TEBD(
 
     if return_all_states: all_states = (copy.deepcopy(psi),)
 
-    for istep in tqdm.tqdm(
+    for iStep in tqdm.tqdm(
         np.arange(nSteps),
         desc="TEBD itime steps",
         disable=not verbose
@@ -554,11 +558,18 @@ def simple_update_TEBD(
         for layer in layers:
             layer_magnitude = 1
             for op_chain in layer:
-                # Estimating the magnitude of this layer s.t. we can normalize
-                # the state later.
-                exp_layer = scialg.expm(multi_kron(*op_chain.values()))
-                singvals = scialg.svdvals(exp_layer, overwrite_a=True)
-                layer_magnitude *= np.max(np.abs(singvals))
+                if False:
+                    raise NotImplementedError("".join((
+                        "I tried to normalize the state without contracting ",
+                        "it explicitly. This doesn't seem to work yet, so",
+                        "normalization is done with explicit conttrcation so ",
+                        "far."
+                    )))
+                    # Estimating the magnitude of this layer s.t. we can
+                    # normalize the state later.
+                    exp_layer = scialg.expm(multi_kron(*op_chain.values()))
+                    singvals = scialg.svdvals(exp_layer, overwrite_a=True)
+                    layer_magnitude *= np.max(np.abs(singvals))
 
                 # How many operators in the operator chain?
                 if len(op_chain.keys()) == 2:
@@ -591,8 +602,15 @@ def simple_update_TEBD(
                         "simple update TEBD."
                     )))
 
-        # Normalizing psi, using the estimate of the magnitude of the layer.
-        psi = psi * (1 / layer_magnitude**2)
+        if iStep % normalize_every == 0:
+            # Normalizing psi.
+            print(f"step {iStep}: {iStep % normalize_every}")
+            norm = Braket.Overlap(
+                psi1=psi,
+                psi2=psi,
+                sanity_check=sanity_check
+            ).contract(sanity_check=sanity_check)
+            psi = psi * (1 / np.sqrt(norm))
 
         if return_all_states: all_states += (copy.deepcopy(psi),)
 
