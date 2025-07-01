@@ -23,7 +23,8 @@ from belief_propagation.braket import Braket
 from belief_propagation.utils import (
     graph_compatible,
     multi_kron,
-    suzuki_recursion_coefficients
+    suzuki_recursion_coefficients,
+    write_callable_bonddim_to_graph
 )
 
 
@@ -488,12 +489,12 @@ def simple_update_TEBD(
 
     # Preparing target edge sizes.
     if not isinstance(min_bond_dim, nx.MultiGraph):
-        min_bond_dim = PEPO.prepare_graph(
-            G=psi.G, chi=min_bond_dim, sanity_check=sanity_check
+        min_bond_dim = write_callable_bonddim_to_graph(
+            G=psi.G, bond_dim=min_bond_dim, sanity_check=sanity_check
         )
     if not isinstance(max_bond_dim, nx.MultiGraph):
-        max_bond_dim = PEPO.prepare_graph(
-            G=psi.G, chi=max_bond_dim, sanity_check=sanity_check
+        max_bond_dim = write_callable_bonddim_to_graph(
+            G=psi.G, bond_dim=max_bond_dim, sanity_check=sanity_check
         )
 
     if not graph_compatible(psi.G, min_bond_dim):
@@ -504,22 +505,6 @@ def simple_update_TEBD(
         raise ValueError(
             "Maximum bond dimension and state have non-compatible graphs."
         )
-
-    # Checking compatibility of sizes in min_bond_dim and max_bond_dim.
-    for node1, node2 in psi.G.edges():
-        if (min_bond_dim[node1][node2][0]["size"]
-            > max_bond_dim[node1][node2][0]["size"]):
-            with tqdm.tqdm.external_write_mode():
-                warnings.warn(
-                    "".join((
-                        f"Minimum bond dimension {min_bond_dim} on edge ",
-                        f"({node1}, {node2}) is larger than maximum bond ",
-                        f"dimension {max_bond_dim}. Setting bond dimension ",
-                        "to unlimited. This may increase runtime drastically."
-                    )),
-                    RuntimeWarning
-                )
-            max_bond_dim[node1][node2][0]["size"] = np.inf
 
     if singval_threshold is None:
         with tqdm.tqdm.external_write_mode():
@@ -574,15 +559,17 @@ def simple_update_TEBD(
                 # How many operators in the operator chain?
                 if len(op_chain.keys()) == 2:
                     # Two operators; we must extract the relevant parameters
-                    # for the truncated SVD.
+                    # for the truncated SVD at this edge.
                     node1, node2 = op_chain.keys()
+                    min_chi = min_bond_dim[node1][node2][0]["size"](iStep)
+                    max_chi = max_bond_dim[node1][node2][0]["size"](iStep)
 
                     __simple_update_apply_op_chain_two_site(
                         psi=psi,
                         op_chain=op_chain,
                         singval_threshold=singval_threshold,
-                        min_bond_dim=min_bond_dim[node1][node2][0]["size"],
-                        max_bond_dim=max_bond_dim[node1][node2][0]["size"],
+                        min_bond_dim=min_chi,
+                        max_bond_dim=max_chi,
                         sanity_check=sanity_check
                     )
 
@@ -604,7 +591,6 @@ def simple_update_TEBD(
 
         if iStep % normalize_every == 0:
             # Normalizing psi.
-            print(f"step {iStep}: {iStep % normalize_every}")
             norm = Braket.Overlap(
                 psi1=psi,
                 psi2=psi,
@@ -671,6 +657,18 @@ def __simple_update_apply_op_chain_two_site(
     if sanity_check:
         assert psi.intact
         assert op_chain.intact
+
+    if min_bond_dim > max_bond_dim:
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    F"Minimum bond dimension {min_bond_dim} is larger than ",
+                    f"maximum bond dimension {max_bond_dim}. Setting minimum ",
+                    "bond dimension equal to maximum bond dimension."
+                )),
+                RuntimeWarning
+            )
+        min_bond_dim = max_bond_dim
 
     # Handling singular value threshold.
     if singval_threshold is None:

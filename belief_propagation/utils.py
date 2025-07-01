@@ -22,6 +22,7 @@ __all__ = [
     # graphs
     "write_exp_bonddim_to_graph",
     "divide_graph",
+    "write_callable_bonddim_to_graph",
     "cycle_cutnumber_ranking",
     "cycle_length_ranking",
     # operator chains and operator layers
@@ -38,6 +39,7 @@ import warnings
 import itertools
 from functools import cache
 from typing import Callable, Union
+import copy
 
 import numpy as np
 import networkx as nx
@@ -506,7 +508,7 @@ def write_exp_bonddim_to_graph(
     ) -> None:
     """
     Writes bond dimension to the edges of `G`, that is required for
-    exact solutions. Saves bond dimension in `size` attrivute of edges
+    exact solutions. Saves bond dimension in `size` attribute of edges
     of `G`. `D` contains the physical dimension for every node in `G`.
     `G` is modified in-place.
 
@@ -587,6 +589,32 @@ def divide_graph(G: nx.MultiGraph) -> frozenset[frozenset[int]]:
 
     return cuts
 
+
+def write_callable_bonddim_to_graph(
+        bond_dim: Union[int, Callable[[int], int]],
+        G: nx.MultiGraph,
+        sanity_check: bool = False
+    ) -> nx.MultiGraph:
+    """
+    Given a bond dimension `bond_dim`, adds it to every edge in `G`.
+    Intended to be used during runs of imaginary time evolution or
+    compression. `bond_dim` can be an integer or a callable, where the
+    callable takes an integer and returns an integer.
+
+    Bond dimensions are saved as attributes of the graph edges, with the
+    key `size`.
+    """
+    if not callable(bond_dim):
+        bond_dim_val = copy.deepcopy(bond_dim)
+        bond_dim = lambda _: bond_dim_val
+
+    newG = nx.MultiGraph(G.edges())
+    for node1, node2 in newG.edges():
+        newG[node1][node2][0]["size"] = bond_dim
+
+    if sanity_check: assert network_message_check(G=newG)
+
+    return newG
 
 # -----------------------------------------------------------------------------
 #                   Ranking Edges in Graphs
