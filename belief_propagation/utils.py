@@ -33,6 +33,8 @@ __all__ = [
     "network_message_check",
     "same_legs",
     "graph_compatible",
+    # runtime routines
+    "dtau_to_nSteps",
 ]
 
 import warnings
@@ -370,6 +372,7 @@ def suzuki_recursion_coefficients(
         raise RuntimeError("SciPy did not return successfully.")
 
     return popt
+
 
 # -----------------------------------------------------------------------------
 #                   Hermiticity of Different Objects
@@ -897,6 +900,43 @@ def check_msg_intact(
         return False
 
     return True
+
+
+# -----------------------------------------------------------------------------
+#                   Runtime routines.
+# -----------------------------------------------------------------------------
+
+
+def dtau_to_nSteps(
+        dtau: Union[float, Callable[[int], float]],
+        tau_total: float,
+        max_nSteps: int = 1e6
+    ) -> int:
+    """
+    Given the time step and the total time elapsed, returns the number
+    of steps. If `dtau` is callable, it is assumed that it accepts an
+    integer step number and returns the time step for that step.
+    """
+    if not callable(dtau): return int(tau_total / dtau)
+
+    nSteps = 0
+    tau = 0
+    while tau < tau_total:
+        tau += dtau(nSteps)
+        nSteps += 1
+
+        if nSteps > max_nSteps:
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Number of steps exceeds 1 million. Stopping ",
+                        "to avoid infinite loop."
+                    )),
+                    RuntimeWarning
+                )
+            break
+
+    return nSteps
 
 
 if __name__ == "__main__":

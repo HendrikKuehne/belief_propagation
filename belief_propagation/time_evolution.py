@@ -8,7 +8,7 @@ __all__ = [
     "simple_update_TEBD"
 ]
 
-from typing import Union
+from typing import Union, Callable
 import warnings
 import copy
 
@@ -24,7 +24,8 @@ from belief_propagation.utils import (
     graph_compatible,
     multi_kron,
     suzuki_recursion_coefficients,
-    write_callable_bonddim_to_graph
+    write_callable_bonddim_to_graph,
+    dtau_to_nSteps
 )
 
 
@@ -444,8 +445,9 @@ def __PEPO_exp_two_site_brick_wall_layer(
 def simple_update_TEBD(
         psi: PEPS,
         H: PEPO,
-        dtau: float = 0.05,
-        nSteps: int = 100,
+        dtau: Union[float, Callable[[int], float]] = 0.05,
+        nSteps: int = None,
+        tau_total: float = 5,
         trotter_order: int = 1,
         singval_threshold: float = None,
         min_bond_dim: Union[int, nx.MultiGraph] = 1,
@@ -459,7 +461,7 @@ def simple_update_TEBD(
     TEBD using the simple-update method from
     [Phys. Rev. Lett. 101, 090603 (2008)](https://doi.org/10.1103/PhysRevLett.101.090603).
     Implements imaginary time evolution with a timestep of `dtau`, for
-    `nSteps` steps.
+    a total (imaginary) time `tau_total`.
 
     The arguments `singval_threshold`, `min_bond_dim` and `max_bond_dim`
     govern the behavior of the SVDs on the bonds. During truncation of
@@ -472,7 +474,7 @@ def simple_update_TEBD(
     If `singval_threshold is None`, the Numpy machine epsilon for the
     respective data type will be used.
 
-    Normalizes the state `normalize_every` steps, if given.
+    Normalizes the state every `normalize_every` steps, if given.
 
     Returns the final state if `return_all_states == False`. Otherwise,
     returns a tuple of the initial state and all states that were
@@ -528,9 +530,21 @@ def simple_update_TEBD(
             )
             singval_threshold = None
 
+    # Inferring number of steps.
+    if nSteps is None: nSteps = dtau_to_nSteps(dtau=dtau, tau_total=tau_total)
+
+    # Handling dtau.
+    if not callable(dtau):
+        dtau_val = copy.deepcopy(dtau)
+        dtau = lambda _: dtau_val
+    dtau = tuple(dtau(iStep) for iStep in range(nSteps))
+
     # Trotterization of the operator.
     layers = get_brick_wall_layers(
-        op=H, t=-dtau, trotter_order=trotter_order, sanity_check=sanity_check
+        op=H,
+        t=1,
+        trotter_order=trotter_order,
+        sanity_check=sanity_check
     )
 
     if return_all_states: all_states = (copy.deepcopy(psi),)
@@ -540,7 +554,10 @@ def simple_update_TEBD(
         desc="TEBD itime steps",
         disable=not verbose
     ):
-        for layer in layers:
+        # Svaling the operator layers by the timestep.
+        scaled_layers = tuple(layer * (-dtau[iStep]) for layer in layers)
+
+        for layer in scaled_layers:
             layer_magnitude = 1
             for op_chain in layer:
                 if False:

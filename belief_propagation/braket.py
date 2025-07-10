@@ -2458,7 +2458,7 @@ def BP_excitations(
         # sufficient if node is a hole.
         pepoG.nodes[node]["T"] = np.reshape(
             np.outer(np.ones(shape=2**nLegs), (1, 0, 0, 1)),
-            newshape=tuple(2 for _ in range(nLegs + 2))
+            shape=tuple(2 for _ in range(nLegs + 2))
         )
 
         if node not in holes:

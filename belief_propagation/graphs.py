@@ -11,6 +11,7 @@ __all__ = [
     "tree",
     "hex",
     "heavyhex",
+    "grid",
     "line",
 ]
 
@@ -364,6 +365,18 @@ def heavyhex(m: int,n: int) -> nx.MultiGraph:
     return G
 
 
+def grid(m: int, n: int) -> nx.MultiGraph:
+    """
+    Creates a grid graph with `m` rows and `n` columns.
+    """
+    G = nx.grid_2d_graph(m=m, n=n, create_using=nx.MultiGraph)
+    # re-labeling nodes
+    mapping = {(i, j): i * n + j for i in range(m) for j in range(n)}
+    G = nx.relabel_nodes(G, mapping)
+
+    return G
+
+
 def line(N: int) -> nx.MultiGraph:
     """Exactly what you think it is."""
     G = nx.MultiGraph()
@@ -372,7 +385,7 @@ def line(N: int) -> nx.MultiGraph:
         G.add_node(0)
         return G
 
-    G.add_edges_from(tuple((i, i+1) for i in range(N-1)))
+    G.add_edges_from(tuple((i, i + 1) for i in range(N - 1)))
     return G
 
 
@@ -407,7 +420,7 @@ def loop_hist(
     return hist, edges
 
 
-def plot_loop_hist(G: nx.MultiGraph,show_plot: bool = True) -> plt.Figure:
+def plot_loop_hist(G: nx.MultiGraph, show_plot: bool = True) -> plt.Figure:
     """
     Plots the histogram of the loop lengths of `G`.
     """
