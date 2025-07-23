@@ -304,6 +304,9 @@ class BaseBraket:
         # It is no longer guaranteed that the messages are converged.
         self._converged = False
 
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, ket.dtype)
+
         return
 
     @property
@@ -319,8 +322,11 @@ class BaseBraket:
         assert graph_compatible(self.G, bra.G, sanity_check=True)
         self._bra = bra
 
-        # it is no longer guaranteed that the messages are converged
+        # It is no longer guaranteed that the messages are converged
         self._converged = False
+
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, bra.dtype)
 
         return
 
@@ -337,8 +343,11 @@ class BaseBraket:
         assert graph_compatible(self.G, op.G, sanity_check=True)
         self._op = op
 
-        # it is no longer guaranteed that the messages are converged
+        # It is no longer guaranteed that the messages are converged
         self._converged = False
+
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, op.dtype)
 
         return
 
@@ -423,6 +432,7 @@ class BaseBraket:
             bra=psi1.conj(sanity_check=sanity_check),
             op=Identity(G=psi1.G, D=psi1.D, sanity_check=sanity_check),
             ket=psi2,
+            dtype=np.result_type(psi1.dtype, psi2.dtype),
             sanity_check=sanity_check,
             **kwargs
         )
@@ -443,11 +453,12 @@ class BaseBraket:
             bra=psi.conj(sanity_check=sanity_check),
             op=op,
             ket=psi,
+            dtype=np.result_type(psi.dtype, op.dtype),
             sanity_check=sanity_check,
             **kwargs
         )
 
-    def __getitem__(self, node:int) -> tuple[np.ndarray]:
+    def __getitem__(self, node: int) -> tuple[np.ndarray]:
         """
         Subscripting with a node gives the tensor stack
         `(bra[node], op[node], ket[node])` at that node.
@@ -473,8 +484,11 @@ class BaseBraket:
         self._op[node] = Tstack[1]
         self._ket[node] = Tstack[2]
 
-        # it is no longer guaranteed that the messages are converged
+        # It is no longer guaranteed that the messages are converged.
         self._converged = False
+
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, *[T.dtype for T in Tstack])
 
         return
 
@@ -540,6 +554,7 @@ class BaseBraket:
             bra: PEPS,
             op: PEPO,
             ket: PEPS,
+            dtype: np.dtype = np.complex128,
             sanity_check: bool = False
         ) -> None:
         # sanity check
@@ -547,6 +562,9 @@ class BaseBraket:
             assert graph_compatible(bra.G, ket.G, sanity_check=sanity_check)
             assert graph_compatible(bra.G, op.G, sanity_check=sanity_check)
             assert bra.D == op.D and ket.D == op.D
+
+        self.dtype = dtype
+        """Data type of all arrays."""
 
         self.G: nx.MultiGraph = self.__class__.prepare_graph(
             G=op.G,
@@ -616,7 +634,8 @@ class Braket(BaseBraket):
                         ket_size=ket_size,
                         real=real,
                         method=msg_init,
-                        rng=rng
+                        rng=rng,
+                        dtype=self.dtype
                     )
                 else:
                     # sending node is leaf node
@@ -1557,7 +1576,8 @@ class Braket(BaseBraket):
             ket_size: int,
             real: bool = False,
             method: str = "normal",
-            rng: np.random.Generator = np.random.default_rng()
+            rng: np.random.Generator = np.random.default_rng(),
+            dtype: np.dtype = None,
         ) -> np.ndarray:
         """
         Generates a new message with shape
@@ -1572,19 +1592,21 @@ class Braket(BaseBraket):
         If bra- and ket-sizes are different, completely random messages
         are returned.
         """
+        # Numpy data type.
+        if dtype is None:
+            dtype = np.float128 if real else np.complex128
+
         # Random number generation.
         if real:
-            randn = lambda size: rng.standard_normal(size)
+            randn = lambda size: rng.standard_normal(size).astype(dtype)
         else:
-            randn = lambda size: crandn(size, rng)
+            randn = lambda size: crandn(size=size, rng=rng, dtype=dtype)
 
         # Random matrix generation.
         if real:
-            matrixgen = lambda N: scistats.ortho_group.rvs(dim=N, size=1)
+            matrixgen = lambda N: scistats.ortho_group.rvs(dim=N, size=1).astype(dtype)
         else:
-            matrixgen = lambda N: scistats.unitary_group.rvs(dim=N, size=1)
-
-        dtype = np.float128 if real else np.complex128
+            matrixgen = lambda N: scistats.unitary_group.rvs(dim=N, size=1).astype(dtype)
 
         if bra_size == ket_size:
             msg = np.zeros(shape=(bra_size, op_size, ket_size), dtype=dtype)
@@ -1652,12 +1674,19 @@ class Braket(BaseBraket):
             msg: dict[int, dict[int, np.ndarray]] = None,
             edge_T: dict[int, dict[int, np.ndarray]] = None,
             converged: bool = False,
+            dtype: np.dtype = np.complex128,
             sanity_check: bool = False
         ) -> None:
         """
         Initialize a new braket.
         """
-        super().__init__(bra=bra, op=op, ket=ket, sanity_check=False)
+        super().__init__(
+            bra=bra,
+            op=op,
+            ket=ket,
+            dtype=dtype,
+            sanity_check=False
+        )
 
         self.msg: dict[int, dict[int, np.ndarray]] = msg
         """

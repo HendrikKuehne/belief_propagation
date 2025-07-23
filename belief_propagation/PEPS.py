@@ -301,10 +301,11 @@ class PEPS:
             G: nx.MultiGraph,
             D: Union[int, dict[int, int]],
             chi: int,
-            rng: np.random.Generator = np.random.default_rng(),
             real: bool = False,
             bond_dim_strategy: str = "uniform",
             keep_legs: bool = False,
+            rng: np.random.Generator = np.random.default_rng(),
+            dtype: np.dtype = np.complex128,
             sanity_check: bool = False,
         ) -> "PEPS":
         """
@@ -412,6 +413,12 @@ class PEPS:
             )
 
         if isinstance(state, dict):
+            # Trying to infer the data type.
+            dtype_set: set[np.dtype] = set()
+            for node, T in state.items():
+                dtype_set.add(T.dtype)
+            if len(dtype_set) == 1: dtype = dtype_set.pop()
+
             # sanity check
             if not nx.utils.nodes_equal(state.keys(), G.nodes()):
                 raise ValueError("".join((
@@ -421,7 +428,7 @@ class PEPS:
             if any(state[node].ndim != 1 for node in G.nodes()):
                 raise ValueError("All local states must be pure states.")
 
-            psi = cls.Dummy(G=G, sanity_check=sanity_check)
+            psi = cls.Dummy(G=G, dtype=dtype, sanity_check=sanity_check)
 
             for node in psi:
                 # Re-sizing the tensor from psi, s.t. the tensor from the state
@@ -611,7 +618,11 @@ class PEPS:
                 "Attempting to set site tensor with wrong number of legs."
             )
 
+        # Inserting the tensor.
         self.G.nodes[node]["T"] = T
+
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, T.dtype)
 
         return
 
@@ -624,6 +635,9 @@ class PEPS:
 
         N = newPEPS.nsites
         for node in newPEPS: newPEPS[node] = newPEPS[node] * (x**(1/N))
+
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, np.min_scalar_type(x**(1/N)))
 
         return newPEPS
 
@@ -705,9 +719,14 @@ class PEPS:
         """
         Initialisation from a graph that contains site tensors.
         """
-        # Inferring physical dimension.
+        # Inferring physical dimension and data type.
+        dtype_list: list[np.dtype] = []
         for node, T in G.nodes(data="T"):
             G.nodes[node]["D"] = T.shape[-1]
+            dtype_list += [T.dtype,]
+
+        self.dtype = np.result_type(*dtype_list)
+        """Data type of all arrays."""
 
         # Inferring edge sizes.
         for node1, node2, data in G.edges(data=True):

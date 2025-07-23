@@ -56,14 +56,16 @@ import tqdm
 
 def crandn(
         size: Union[int, tuple[int]] = None,
-        rng: np.random.Generator = np.random.default_rng()
+        rng: np.random.Generator = np.random.default_rng(),
+        dtype: np.dtype = np.complex128,
     ) -> np.ndarray:
     """
     Draw random samples from the standard complex normal (Gaussian)
     distribution.
     """
     # 1/sqrt(2) is a normalization factor.
-    return (rng.normal(size=size) + 1j*rng.normal(size=size)) / np.sqrt(2)
+    arr = (rng.normal(size=size) + 1j * rng.normal(size=size)) / np.sqrt(2)
+    return arr.astype(dtype)
 
 
 def delta_tensor(
@@ -203,6 +205,7 @@ def gen_eigval_problem(
     the eigenvector to `eigvals[i]`.
     """
     cond = np.linalg.cond(B)
+    with tqdm.tqdm.external_write_mode(): print(f"{cond:.3e}")
 
     if cond > maxcond:
         # B is singular; employing Tikhonov-regularization.

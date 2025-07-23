@@ -694,7 +694,6 @@ class PEPO:
             chi: Union[int, Iterable[int]],
             N_pas: int,
             N_out: int,
-            dtype=np.complex128
         ) -> np.ndarray:
         """
         Returns the minimum tensor for PEPO at node `node`, that is, a
@@ -718,7 +717,6 @@ class PEPO:
                 chi=tuple(chi for _ in range(1 + N_pas + N_out)),
                 N_pas=N_pas,
                 N_out=N_out,
-                dtype=dtype
             )
 
         if hasattr(chi, "__iter__"):
@@ -733,7 +731,7 @@ class PEPO:
 
             T = np.zeros(
                 shape=[chi_ for chi_ in chi] + [self.D[node], self.D[node]],
-                dtype=dtype
+                dtype=self.dtype
             )
 
             # particle index
@@ -1054,7 +1052,7 @@ class PEPO:
         if not node in self:
             raise ValueError(f"Graph does not contain node {node}.")
 
-        return np.eye(self.D[node])
+        return np.eye(self.D[node], dtype=self.dtype)
 
     @property
     def nsites(self) -> int:
@@ -1268,10 +1266,7 @@ class PEPO:
     @property
     def D(self) -> dict[int, int]:
         """Physical dimension at every node."""
-        return {
-            node: self.G.nodes[node]["D"]
-            for node in self
-        }
+        return {node: self.G.nodes[node]["D"] for node in self}
 
     @staticmethod
     def view_tensor(T: np.ndarray):
@@ -1385,9 +1380,12 @@ class PEPO:
         a tree `tree` that determines the graph traversal by the finite
         state automaton. `G` must have a leg ordering.
         """
-        # Inferring physical dimension.
+        # Inferring physical dimension and data type.
+        dtype_list = []
         for node, T in G.nodes(data="T"):
             G.nodes[node]["D"] = T.shape[-1]
+            dtype_list += [T.dtype,]
+        dtype = np.result_type(*dtype_list)
 
         # Inferring edge sizes.
         for node1, node2, data in G.edges(data=True):
@@ -1416,7 +1414,7 @@ class PEPO:
         root = sorted(tuple(tree.nodes), key=lambda x: len(tree.pred[x]))[0]
 
         # Initialising the new PEPO.
-        op = cls()
+        op = cls(dtype=dtype)
         op.G = G
         op.tree = tree
         op.root = root
@@ -1460,6 +1458,9 @@ class PEPO:
 
         self.G.nodes[node]["T"] = T
 
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, T.dtype)
+
         return
 
     def __mul__(self, x: float):
@@ -1483,6 +1484,9 @@ class PEPO:
             for node, index in chain.items():
                 newPEPO[node][index] *= x
                 break
+
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(self.dtype, np.min_scalar_type(x))
 
         return newPEPO
 
@@ -1695,7 +1699,7 @@ class PEPO:
             # Permute dimensions of lhs to make both PEPOs compatible.
             lhs._permute_virtual_dimensions(rhs.G)
 
-        res = PEPO()
+        res = PEPO(dtype=np.common_type(lhs.dtype, rhs.dtype))
         res.root = lhs.root
         res.tree = lhs.tree
 
@@ -1798,16 +1802,22 @@ class PEPO:
 
         return True
 
-    def __init__(self) -> None:
+    def __init__(self, dtype: np.dtype = np.complex128) -> None:
         self.G: nx.MultiGraph
         """
         Graph that contains PEPO local tensors, leg ordering, virtual
         bond dimension sizes, and physical dimensions.
         """
+
+        self.dtype = dtype
+        """Data type of all arrays."""
+
         self.tree: nx.DiGraph
         """Spanning tree of the graph."""
+
         self.root: int
         """Root node of the spanning tree."""
+
         self.check_tree: bool = True
         """Are the tree traversal checks in `self.intact` enabled?"""
         # TODO: I don't like that I have to disable the tree traversal checks
@@ -1821,11 +1831,11 @@ class PauliPEPO(PEPO):
     Tensor product operators on spin systems,
     composed of Pauli operators.
     """
-    X = np.array([[0, 1], [1, 0]], dtype=np.complex128)
+    X = np.array([[0, 1], [1, 0]], dtype=np.complex64)
     """Pauli $X$-matrix."""
-    Y = np.array([[0, -1j], [1j, 0]], dtype=np.complex128)
+    Y = np.array([[0, -1j], [1j, 0]], dtype=np.complex64)
     """Pauli $Y$-matrix."""
-    Z = np.array([[1, 0], [0, -1]], dtype=np.complex128)
+    Z = np.array([[1, 0], [0, -1]], dtype=np.complex64)
     """Pauli $Z$-matrix."""
 
     @property
@@ -1873,8 +1883,12 @@ class PauliPEPO(PEPO):
 
         return True
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, dtype: np.dtype = np.complex128) -> None:
+        super().__init__(dtype=dtype)
+
+        self.X = self.X.astype(dtype=dtype)
+        self.Y = self.Y.astype(dtype=dtype)
+        self.Z = self.Z.astype(dtype=dtype)
 
         return
 

@@ -85,7 +85,7 @@ class DMRG:
                         self.overlap.ket.G[sender][receiver][0]["size"]
                     ),
                     fill_value=np.inf,
-                    dtype=np.complex128
+                    dtype=self.dtype
                 )
 
                 chi_filled = 0
@@ -135,7 +135,7 @@ class DMRG:
                 ) + (
                     self.D[node], self.D[node]
                 ),
-                dtype=np.complex128
+                dtype=self.dtype
             )
 
             chi_filled = {neighbor: 0 for neighbor in self.overlap.G.adj[node]}
@@ -403,9 +403,13 @@ class DMRG:
         self.__BP(sanity_check=sanity_check, **kwargs)
         Eprev = self.E0
 
-        for node in nx.dfs_postorder_nodes(
-            self.expvals[0].op.tree,
-            source=self.expvals[0].op.root
+        for node in tqdm.tqdm(
+            nx.dfs_postorder_nodes(
+                self.expvals[0].op.tree,
+                source=self.expvals[0].op.root
+            ),
+            desc=f"sweep {self.__iSweep}",
+            total=self.nsites
         ):
             H = self.__assemble_localH(node, sanity_check=sanity_check)
             N = self.__assemble_localN(node, sanity_check=sanity_check)
@@ -420,7 +424,7 @@ class DMRG:
                         DeprecationWarning
                     )
                 # Are local hamiltonian and environment correctly defined?
-                local_psi = self.ket[node].flatten()
+                local_psi = self.psi[node].flatten()
                 expval_local_cntr = ctg.einsum(
                     "i,ik,k", local_psi.conj(), H, local_psi
                 )
@@ -501,7 +505,7 @@ class DMRG:
             compress: bool = True,
             sanity_check: bool = False,
             **kwargs
-        ) -> None:
+        ) -> tuple[float]:
         """
         Runs single-site DMRG on the underlying braket. `kwargs` are
         passed to BP iterations. The state is not normalized afterwards!
@@ -509,7 +513,7 @@ class DMRG:
         if sanity_check: assert self.intact
 
         # Handling kwargss
-        kwargs["verbose"] = False
+        kwargs["verbose"] = True
 
         nSweeps = nSweeps if nSweeps != None else self.nSweeps
         iterator = tqdm.tqdm(
@@ -522,6 +526,7 @@ class DMRG:
         if gauge: self.gauge(sanity_check=sanity_check, **kwargs)
 
         for iSweep in iterator:
+            self.__iSweep = iSweep
             eps = self.__sweep(
                 gauge=gauge, sanity_check=sanity_check, **kwargs
             )
@@ -530,7 +535,7 @@ class DMRG:
 
             if compress: self.compress(sanity_check=sanity_check, **kwargs)
 
-        return
+        return eps_list
 
     def contract(self, sanity_check: bool = False) -> float:
         """
@@ -555,14 +560,14 @@ class DMRG:
         """
 
         if method == "QR":
-            self.ket = QR_gauging(
-                self.ket, sanity_check=sanity_check, **kwargs
+            self.psi = QR_gauging(
+                self.psi, sanity_check=sanity_check, **kwargs
             )
             return
 
         if method == "Schmidt":
-            self.ket = L2BP_compression(
-                self.ket,
+            self.psi = L2BP_compression(
+                self.psi,
                 singval_threshold=0,
                 return_singvals=False,
                 sanity_check=sanity_check,
@@ -586,8 +591,8 @@ class DMRG:
         """
 
         if method == "L2BP":
-            self.ket = L2BP_compression(
-                self.ket,
+            self.psi = L2BP_compression(
+                self.psi,
                 return_singvals=False,
                 sanity_check=sanity_check,
                 **kwargs
@@ -648,12 +653,12 @@ class DMRG:
                 and all(expval.converged for expval in self.expvals))
 
     @property
-    def ket(self) -> PEPS:
+    def psi(self) -> PEPS:
         """The current state of the system."""
         return self.overlap.ket
 
-    @ket.setter
-    def ket(self, newket:PEPS) -> None:
+    @psi.setter
+    def psi(self, newket:PEPS) -> None:
         """
         Changing the state of the system requires inserting a new PEPS
         in all `Braket` objects. Convergence markers will be set to
@@ -665,6 +670,11 @@ class DMRG:
             expval.ket = newket
             expval.bra = newket.conj()
 
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(
+            self.overlap.dtype, *[expval.dtype for expval in self.expvals]
+        )
+
         return
 
     @property
@@ -673,11 +683,16 @@ class DMRG:
         return sum(expval.cntr for expval in self.expvals) / self.overlap.cntr
 
     @property
+    def D(self) -> dict[int, int]:
+        """Physical dimension at every node."""
+        return self.psi.D
+
+    @property
     def nsites(self) -> int:
         """
         Number of sites of the system.
         """
-        return self.overlap.nsites
+        return self.psi.nsites
 
     @property
     def intact(self) -> bool:
@@ -786,6 +801,11 @@ class DMRG:
                 T
             )
 
+        # Changing the data type, if needed.
+        self.dtype = np.result_type(
+            self.overlap.dtype, *[expval.dtype for expval in self.expvals]
+        )
+
         return
 
     def __repr__(self) -> str:
@@ -801,11 +821,24 @@ class DMRG:
                 "converged." if self.converged else "not converged."
             ))
 
+    def __len__(self) -> int: return self.nsites
+
+    def __iter__(self) -> Iterator[int]:
+        """
+        Iterator over the nodes in the graph `self.psi.G`.
+        """
+        return iter(self.psi.G.nodes(data=False))
+
+    def __contains__(self, node: int) -> bool:
+        """Does this DMRG problem involve the node `node`?"""
+        return (node in self.psi) and all(node in op for op in self.expvals)
+
     def __init__(
             self,
             oplist: tuple[PEPO],
             psi_init: PEPS = None,
             chi: int = None,
+            dtype: np.dtype = np.complex128,
             sanity_check: bool = False,
             **kwargs
         ):
@@ -835,12 +868,16 @@ class DMRG:
                     "psi_init and chi cannot both be None."
                 )))
 
+        self.dtype = dtype
+        """Data type of all arrays."""
+
         # If not given, initial state is chosen randomly.
         if psi_init is None:
             psi_init = PEPS.init_random(
                 G=op.G,
                 D=oplist[0].D,
                 chi=chi,
+                dtype=self.dtype,
                 **kwargs
             )
 
@@ -1787,7 +1824,7 @@ class LoopSeriesDMRG:
 
     def __iter__(self) -> Iterator[int]:
         """
-        Iterator over the nodes in the graph `self.G`.
+        Iterator over the nodes in the graph `self.psi.G`.
         """
         return iter(self._psi.G.nodes(data=False))
 

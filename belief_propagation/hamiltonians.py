@@ -114,6 +114,7 @@ class TFI(PauliPEPO):
             G: nx.MultiGraph,
             J: float = 1,
             g: float = 0,
+            dtype: np.dtype = np.complex128,
             sanity_check: bool = False
         ) -> None:
         """
@@ -124,7 +125,7 @@ class TFI(PauliPEPO):
         from `G`. The last two dimensions of every PEPO tensor are the
         physical dimensions.
         """
-        super().__init__()
+        super().__init__(dtype=dtype)
 
         self.G = PEPO.prepare_graph(
             G=G,
@@ -367,6 +368,7 @@ class Heisenberg(PauliPEPO):
             Jy: float = 1,
             Jz: float = 1,
             g: float = 0,
+            dtype: np.dtype = np.complex128,
             sanity_check: bool = False
         ):
         """
@@ -377,7 +379,7 @@ class Heisenberg(PauliPEPO):
         from `G`. The last two dimensions of every PEPO tensor are the
         physical dimensions.
         """
-        super().__init__()
+        super().__init__(dtype=dtype)
 
         self.G = PEPO.prepare_graph(G=G, chi=5, D=2, sanity_check=sanity_check)
 
@@ -442,6 +444,7 @@ def posneg_TFI(
         G: nx.MultiGraph,
         J: float = 1,
         g: float = 0,
+        dtype: np.dtype = np.complex128,
         sanity_check: bool = False
     ) -> tuple[PEPO, PEPO]:
     """
@@ -455,8 +458,8 @@ def posneg_TFI(
     Z_pos = np.array([[1, 0], [0, 0]])
     Z_neg = np.array([[0, 0], [0, -1]])
 
-    pos_op = PEPO()
-    neg_op = PEPO()
+    pos_op = PEPO(dtype=dtype)
+    neg_op = PEPO(dtype=dtype)
     # Why not PauliPEPO? Because pos_op and neg_op will contain operators that
     # are not pauli matrices (e.g. projectors), so the sanity check of
     # PauliPEPO would not work.
