@@ -201,8 +201,8 @@ def gen_eigval_problem(
     The parameter `eps` is used for Tikhonov regularization,
     if `B` is singular. `A` is written over during computation.
 
-    Returns `eigvals,eigvecs` as a tuple, where `eigvecs[:,i]` is
-    the eigenvector to `eigvals[i]`.
+    Returns `eigvals, eigvecs` as a tuple, where `eigvecs[:, i]` is
+    the eigenvector with eigenvalue `eigvals[i]`.
     """
     cond = np.linalg.cond(B)
     with tqdm.tqdm.external_write_mode(): print(f"{cond:.3e}")
@@ -224,16 +224,16 @@ def gen_eigval_problem(
     else:
         eig_solver = np.linalg.eig
 
-    lambda_B,U_B = eig_solver(B)
+    lambda_B, U_B = eig_solver(B)
 
-    if np.any(np.isclose(lambda_B,0)): lambda_B += eps
+    if np.any(np.isclose(lambda_B, 0)): lambda_B += eps
     U_B_tilde = U_B / np.diag(np.sqrt(lambda_B))
 
     A_tilde = U_B_tilde.conj().T @ A @ U_B_tilde
 
-    lambda_A,U_A = eig_solver(A_tilde)
+    lambda_A, U_A = eig_solver(A_tilde)
 
-    return lambda_A,U_B_tilde @ U_A
+    return lambda_A, U_B_tilde @ U_A
 
 
 def multi_tensor_rank(T: np.ndarray, threshold: float = 1e-8) -> tuple[int]:

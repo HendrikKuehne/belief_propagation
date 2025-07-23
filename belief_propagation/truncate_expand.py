@@ -290,11 +290,11 @@ def QR_bottleneck(
 
 def L2BP_compression(
         psi: PEPS,
-        singval_threshold: float = 1e-10,
         overlap: Braket = None,
-        return_singvals: bool = True,
+        singval_threshold: float = 1e-10,
         min_bond_dim: Union[int, nx.MultiGraph] = 1,
         max_bond_dim: Union[int, nx.MultiGraph] = np.inf,
+        return_singvals: bool = False,
         verbose: bool = False,
         sanity_check: bool = False,
         **kwargs

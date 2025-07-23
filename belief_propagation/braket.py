@@ -107,7 +107,7 @@ class BaseBraket:
             inputs: list[list[str]],
             arrays: list[np.ndarray],
             size_dict: dict[str, int],
-            target_width: int = 20,
+            target_width: int = 5,
             parallel: bool = False,
             verbose: bool = False,
             **kwargs
@@ -116,7 +116,7 @@ class BaseBraket:
         Exact contraction using a `cotengra.HyperOptimizer` object. This
         is only recommended for large networks, as it incurs a
         significant computational overhead.
-        * `target_size`: Maximum number of dimensions of any
+        * `target_width`: Maximum number of dimensions of any
         intermediate tensor. Is passed to dynamic slicing options of
         `ctg.HyperOptimizer` as `target_size = max_edge_size **
         target_width`, where `max_edge_size` is the largest edge size
@@ -127,16 +127,17 @@ class BaseBraket:
         * `kwargs` are passed to `ctg.HyperOptimizer`.
         """
 
-        # Handling kwargs.
+        # Calculating maximum size of intermediate tensors.
         max_edge_size = max(size_dict.values())
         target_size = max_edge_size ** target_width
 
-        opt = ctg.HyperOptimizer(
-            parallel=parallel,
-            slicing_reconf_opts={"target_size": target_size},
-            progbar=verbose,
-            **kwargs
-        )
+        # Handling kwargs.
+        if "slicing_reconf_opts" not in kwargs.keys():
+            kwargs["slicing_reconf_opts"] = {
+                "target_size": target_size
+            }
+
+        opt = ctg.HyperOptimizer(parallel=parallel, **kwargs)
         tree = opt.search(inputs=inputs, output=(), size_dict=size_dict)
 
         return tree.contract(arrays)
