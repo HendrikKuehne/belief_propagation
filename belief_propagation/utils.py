@@ -10,6 +10,7 @@ __all__ = [
     "proportional",
     "rel_err",
     "check_msg_psd",
+    "cond",
     "gen_eigval_problem",
     "multi_tensor_rank",
     "entropy",
@@ -187,53 +188,153 @@ def check_msg_psd(
     raise NotImplementedError
 
 
-def gen_eigval_problem(
+def cond(
+        A: Union[np.ndarray, scisparse.linalg.LinearOperator],
+        p = None
+    ) -> float:
+    """
+    Condition number of `A`. `p` determines the norm that is used; see
+    [here](https://numpy.org/doc/stable/reference/generated/numpy.linalg.cond.html).
+    """
+    if not isinstance(A, scisparse.linalg.LinearOperator):
+        return np.linalg.cond(A, p=p)
+
+    # kwargs for svd solver.
+    kwargs = {"k": 1, "return_singular_vectors": False}
+
+    if p == 2 or p is None:
+        if hasattr(A, "inv"):
+            norm = scisparse.linalg.svds(A=A, which="LM", **kwargs)
+            invnorm = scisparse.linalg.svds(A=A.inv, which="LM", **kwargs)
+            return (norm * invnorm).item()
+
+        else:
+            maxsingval = scisparse.linalg.svds(A=A, which="LM", **kwargs)
+            minsingval = scisparse.linalg.svds(A=A, which="SM", **kwargs)
+            return (maxsingval / minsingval).item()
+
+    if p == -2:
+        if hasattr(A, "inv"):
+            norm = scisparse.linalg.svds(A=A, which="SM", **kwargs)
+            invnorm = scisparse.linalg.svds(A=A.inv, which="SM", **kwargs)
+            return (norm * invnorm).item()
+
+        else:
+            maxsingval = scisparse.linalg.svds(A=A, which="LM", **kwargs)
+            minsingval = scisparse.linalg.svds(A=A, which="SM", **kwargs)
+            return (minsingval / maxsingval).item()
+
+    raise NotImplementedError("".join((
+        "Matrix-free condition number calculations are implemented only ",
+        "for p = 2 or p = -2."
+    )))
+
+
+def __gen_eigval_problem_matrixfree(
+        A: scisparse.linalg.LinearOperator,
+        B: scisparse.linalg.LinearOperator,
+        k: int = 1,
+        maxcond: float = 1e6,
+        eps: float = 1e-5,
+        **scisparsekwargs
+    ) -> tuple[np.ndarray, np.ndarray]:
+    cond_number = cond(B)
+
+    if cond_number > maxcond:
+        # B is ill-conditioned; employing Tikhonov-regularization.
+        B = B + eps * scisparse.linalg.aslinearoperator(
+            scisparse.eye(B.shape[0])
+        )
+
+    eigvals, eigvecs = scisparse.linalg.eigs(
+        A=A,
+        M=B,
+        k=k,
+        which="SR",
+        tol=1e-10,
+        **scisparsekwargs,
+    )
+
+    return eigvals, eigvecs
+
+
+def __gen_eigval_problem_dense(
         A: np.ndarray,
         B: np.ndarray,
         maxcond: float = 1e6,
         eps: float = 1e-5
     ) -> tuple[np.ndarray, np.ndarray]:
+    cond_number = cond(B)
+
+    if cond_number > maxcond:
+        # B is ill-conditioned; employing Tikhonov-regularization.
+        B = B + eps * np.eye(B.shape[0])
+
+    eigvals, eigvecs = scialg.eig(
+        a=A,
+        b=B,
+        overwrite_a=True,
+        overwrite_b=True,
+    )
+
+    return eigvals, eigvecs
+
+
+def gen_eigval_problem(
+        A: Union[np.ndarray, scisparse.linalg.LinearOperator],
+        B: Union[np.ndarray, scisparse.linalg.LinearOperator],
+        maxcond: float = 1e6,
+        eps: float = 1e-5,
+        force_dense: bool = False,
+        raise_no_convergence_err: bool = False,
+        **scisparsekwargs
+    ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Solves the generalized eigenvalue problem, using the
-    workaround introduced [here](https://arxiv.org/abs/1903.11240v3).
-    Tikhonov regularization is used if the condition number
-    of `B` is larger than `maxcond`.
-    The parameter `eps` is used for Tikhonov regularization,
-    if `B` is singular. `A` is written over during computation.
+    Solves the generalized eigenvalue problem, as defined by operators
+    `A` and `B`.
+
+    If `A` and `B` are both SciPy linear operators (or a sublass
+    thereof), `scipy.sparse.linalg.eig` is called. `scisparsekwargs`
+    are passed to `scipy.sparse.linalg.eig`. If `force_dense` is true,
+    `A` and `B` are contracted to matrices and the dense eigenvalue
+    problem is solved.
+
+    If `A` and `B` are matrices, `scipy.linalg.eig` is called. If the
+    condition number of `B` is larger than `maxcond` the
+    workaround introduced [here](https://arxiv.org/abs/1903.11240v3) is
+    used. The parameter `eps` is used for Tikhonov regularization. `A`
+    is written over during computation.
 
     Returns `eigvals, eigvecs` as a tuple, where `eigvecs[:, i]` is
     the eigenvector with eigenvalue `eigvals[i]`.
     """
-    cond = np.linalg.cond(B)
-    with tqdm.tqdm.external_write_mode(): print(f"{cond:.3e}")
+    if (isinstance(A, scisparse.linalg.LinearOperator)
+        and isinstance(B, scisparse.linalg.LinearOperator)
+        and (not force_dense)):
+        # A and B are linear operators - we can use the matrix-free SciPy
+        # method.
+        try:
+            return __gen_eigval_problem_matrixfree(
+                A=A, B=B, maxcond=maxcond, eps=eps, **scisparsekwargs
+            )
+        except Exception as e:
+            if raise_no_convergence_err: raise e
 
-    if cond > maxcond:
-        # B is singular; employing Tikhonov-regularization.
-        B_inverse = np.linalg.inv(B + eps * np.eye(B.shape[0]))
-        return scialg.eig(B_inverse @ A, overwrite_a=True)
-    else:
-        return scialg.eig(
-            a=A,
-            b=B,
-            overwrite_a=True,
-            overwrite_b=True,
-        )
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "SciPy matrix-free calculation did not converge. ",
+                        "Defaulting to dense diagonalization."
+                    )),
+                    RuntimeWarning
+                )
 
-    if is_hermitian(A) and is_hermitian(B):
-        eig_solver = np.linalg.eigh
-    else:
-        eig_solver = np.linalg.eig
+    # If force_dense is True or if SciPy failed, we need to contract the
+    # operators.
+    if isinstance(A, scisparse.linalg.LinearOperator): A = A.toarray()
+    if isinstance(B, scisparse.linalg.LinearOperator): B = B.toarray()
 
-    lambda_B, U_B = eig_solver(B)
-
-    if np.any(np.isclose(lambda_B, 0)): lambda_B += eps
-    U_B_tilde = U_B / np.diag(np.sqrt(lambda_B))
-
-    A_tilde = U_B_tilde.conj().T @ A @ U_B_tilde
-
-    lambda_A, U_A = eig_solver(A_tilde)
-
-    return lambda_A, U_B_tilde @ U_A
+    return __gen_eigval_problem_dense(A=A, B=B, maxcond=maxcond, eps=eps)
 
 
 def multi_tensor_rank(T: np.ndarray, threshold: float = 1e-8) -> tuple[int]:
@@ -437,7 +538,7 @@ def is_hermitian_message(
 
     A message is conjugated by switching its bra- and ket-leg, while
     leaving the operator leg in its place, and taking the complex
-    conjugate. Tetsts for anti-hermiticity, if `antihermitian = True`.
+    conjugate. Tests for anti-hermiticity, if `antihermitian = True`.
     """
     # sanity check
     if not msg.ndim == 3:
@@ -456,7 +557,7 @@ def is_hermitian_message(
 @hermitian_wrapper
 def is_antihermitian_message(msg: np.ndarray) -> np.ndarray:
     """
-    Is the message `msg` hermitian?
+    Is the message `msg` anti-hermitian?
 
     A message is conjugated by switching its bra- and ket-leg, while
     leaving the operator leg in its place, and taking the complex
@@ -499,7 +600,7 @@ def is_hermitian_environment(env: np.ndarray) -> np.ndarray:
     ket_legs = tuple(2*nLegs + i for i in range(nLegs))
     env_conj = np.transpose(env, axes=ket_legs + op_legs + bra_legs).conj()
 
-    return env -  env_conj
+    return env - env_conj
 
 
 # -----------------------------------------------------------------------------

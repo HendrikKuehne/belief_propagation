@@ -668,13 +668,15 @@ def feynman_cut(
 def QR_gauging(
         psi: PEPS,
         tree: nx.DiGraph = None,
+        ortho_center: int = None,
         nodes: tuple[int] = None,
         sanity_check: bool = False,
         **kwargs
     ) -> PEPS:
     """
     Gauging of a state using QR decompositions. The root node of `tree`
-    is the orthogonality center; if `tree` is not given, a breadth-first
+    is the orthogonality center; if given, `ortho_center` will be the
+    orthogonality center. If `tree` is not given, a breadth-first
     search spanning tree will be used. If given, only the nodes in
     `nodes` will be gauged.
 
@@ -687,14 +689,20 @@ def QR_gauging(
     if sanity_check: assert psi.intact
 
     if tree is None:
-        # Orthogonality center will be the node with the largest number of
-        # neighborhoods.
-        ortho_center = 0
-        max_degree = 0
-        for node in psi.G.nodes():
-            if len(psi.G.adj[node]) > max_degree:
-                ortho_center = node
-                max_degree = len(psi.G.adj[node])
+        if ortho_center is None:
+            # Orthogonality center will be the node with the largest number of
+            # neighborhoods.
+            ortho_center = 0
+            max_degree = 0
+            for node in psi.G.nodes():
+                if len(psi.G.adj[node]) > max_degree:
+                    ortho_center = node
+                    max_degree = len(psi.G.adj[node])
+        else:
+            if not ortho_center in psi: raise ValueError(
+                f"Graph of state does not contain orho_center {ortho_center}."
+            )
+
         tree = nx.bfs_tree(G=psi.G, source=ortho_center)
     else:
         # Sanity check for tree.

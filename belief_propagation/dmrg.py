@@ -17,6 +17,7 @@ import numpy as np
 import networkx as nx
 import cotengra as ctg
 import tqdm
+import scipy.sparse as scisparse
 
 from belief_propagation.utils import (
     is_hermitian_matrix,
@@ -43,6 +44,291 @@ from belief_propagation.truncate_expand import (
     insert_excitation
 )
 
+# -----------------------------------------------------------------------------
+#                   Subclassing scisparse.linalg.LinearOperator
+#                   s.t. we are able to do the local DMRG update
+#                   in a matrix-free fashion.
+# -----------------------------------------------------------------------------
+
+class LocalOperator(scisparse.linalg.LinearOperator):
+    """
+    Base class for matrix-free operators, defined via tensor network
+    contraction.
+    """
+
+    def toarray(self) -> np.ndarray:
+        """
+        Contracts the tensor network and returns the matrix that
+        represents the operator.
+
+        Leg ordering of the local operator: (bra virtual dimensions, bra
+        physical dimension, ket virtual dimensions, ket physical dimension).
+        The order of the virtual legs is inherited from the "legs" indices on
+        the edges; the 0th leg ends up in the first dimension.
+        """
+        mat = np.einsum(*self.args, self.out_legs_array, optimize=True)
+        mat = np.reshape(mat, shape=self.shape)
+
+        return mat
+
+    def _matvec(self, vec: np.ndarray) -> np.ndarray:
+        """
+        Matrix-free action of `self` on a vector.
+        """
+        # Sanity check
+        if not np.prod(vec.shape) == self.shape[1]:
+            raise ValueError("".join((
+                "Vector has wrong number of elements; expected ",
+                f"{np.prod(self.in_shape_vec)}, got ",
+                f"{np.prod(vec.shape)}."
+            )))
+
+        # Re-shaping the vector.
+        vec = np.reshape(vec, shape=self.in_shape_vec)
+
+        # Adding vector to einsum arguments.
+        allargs = self.args + (vec, self.in_legs_vec + (...,))
+
+        res_vec = np.einsum(
+            *allargs,
+            self.out_legs_vec + (...,),
+            optimize=True
+        )
+
+        return res_vec.flatten()
+
+    def __init__(self, nLegs: int, dtype: np.dtype, shape: tuple[int]):
+        self.nLegs: int = nLegs
+        """Number of constituent messages."""
+
+        # Output leg ordering in self.toarray().
+        self.out_legs_array = (tuple(range(nLegs))
+                               + (3 * nLegs,)
+                               + tuple(range(2 * nLegs, 3 * nLegs))
+                               + (3*nLegs + 1,))
+
+        # Input leg ordering in self._matvec().
+        self.in_legs_vec = tuple(range(2 * nLegs, 3 * nLegs)) + (3*nLegs + 1,)
+
+        # Output leg ordering in self._matvec().
+        self.out_legs_vec = tuple(range(nLegs)) + (3 * nLegs,)
+
+        # Verifying against SciPy.
+        super().__init__(shape=shape, dtype=dtype)
+
+
+class LocalHamiltonianOperator(LocalOperator):
+    """
+    Local Hamiltonian in DMRG optimization step as matrix-free linear
+    operator.
+    """
+
+    def _adjoint(self) -> "LocalHamiltonianOperator":
+        """
+        Hermitian conjugate, by conjugation of the constituent messages
+        and the operator tensor.
+        """
+        # Assembling message data for hermitian conjugate.
+        msgdata = tuple(
+            (
+                self.args[2 * i].conj().T,
+                (
+                    self.args[2 * i + 1][0],
+                    self.args[2 * i + 1][1] - self.nLegs,
+                    self.args[2 * i + 1][2] - 2 * self.nLegs
+                )
+            )
+            for i in range(self.nLegs)
+        )
+
+        # Retrieving operator tensor for hermitian conjugate.
+        W = self.args[-2]
+        axes = list(range(W.ndim))
+        axes[-1] = W.ndim - 2
+        axes[-2] = W.ndim - 1
+        W_conj = W.transpose(axes)
+
+        return self.__class__(
+            nLegs=self.nLegs,
+            D=self.D,
+            W=W_conj,
+            msgdata=msgdata
+        )
+
+    def __init__(
+            self,
+            nLegs: int,
+            D: int,
+            W: np.ndarray,
+            msgdata: tuple[tuple[np.ndarray, tuple[int]]]
+        ) -> None:
+        """
+        Initializing the local Hamiltonian operator involves collecting
+        the data that is necessary for contraction.
+
+        Arguments:
+        * `nLegs`: Number of neighbors in the graph.
+        * `D`: Physical dimension.
+        * `W`: Hamiltonian PEPO tensor.
+        * `msgdata`: Message data. One tuple for each incoming message,
+        which consists of the legs (`(bra_leg, op_leg, ket_leg)`) and
+        the mesage itself.
+        """
+        # Sanity checks.
+        if W.ndim != nLegs + 2: raise ValueError("".join((
+            f"Operator PEPO tensor has wring shape. Expected {nLegs + 2} ",
+            f"legs, received {W.ndim}. W should have one dimension per ",
+            "neighbor, plus two physical dimensions."
+        )))
+        if len(msgdata) != nLegs: raise ValueError("".join((
+            f"Received wrong amount of message data. Expected {nLegs} message",
+            f"-value pairs, got {len(msgdata)}."
+        )))
+
+        # Inferring data type.
+        dtype = np.result_type(W.dtype, *[datum[0].dtype for datum in msgdata])
+
+        self.args = ()
+        """Contraction data, in sublist format, to be passed to einsum."""
+
+        self.in_shape_vec: tuple[int] = [None for _ in range(nLegs)]
+        """
+        During `self._matvec`, incoming vectors will be re-shaped into this
+        shape.
+        """
+
+        self.D: int = W.shape[-1]
+
+        for datum in msgdata:
+            # Assembling contraction arguments: messages.
+            self.args += (
+                # Message
+                datum[0],
+                # (bra_leg, op_leg, ket_leg)
+                tuple(i * nLegs + leg for i, leg in enumerate(datum[1]))
+            )
+
+            # Compiling vector re-shape data.
+            self.in_shape_vec[datum[1][2]] = datum[0].shape[-1]
+
+        self.in_shape_vec = tuple(self.in_shape_vec + [D,])
+
+        # Assembling contraction arguments: operator tensor.
+        self.args += (
+            W,
+            (tuple(nLegs + iLeg for iLeg in range(nLegs))
+             + (3 * nLegs, 3*nLegs + 1)),
+        )
+
+        super().__init__(
+            nLegs=nLegs,
+            shape=(np.prod(self.in_shape_vec), np.prod(self.in_shape_vec)),
+            dtype=dtype
+        )
+
+
+class LocalEnvironmentOperator(LocalOperator):
+    """
+    Local environment in DMRG optimization step as matrix-free linear
+    operator.
+    """
+
+    @property
+    def inv(self) -> "LocalEnvironmentOperator":
+        """Matrix inverse, by inversion of the constituent messages."""
+        msgdata = tuple(
+            (
+                np.linalg.inv(self.args[2 * i]),
+                (self.args[2*i + 1][0], self.args[2*i + 1][1] - 2*self.nLegs))
+            for i in range(self.nLegs)
+        )
+
+        return self.__class__(nLegs=self.nLegs, D=self.D, msgdata=msgdata)
+
+    def _adjoint(self) -> "LocalEnvironmentOperator":
+        """
+        Hermitian conjugate, by conjugation of the constituent messages.
+        """
+        # Assembling message data for hermitian conjugate.
+        msgdata = tuple(
+            (
+                self.args[2 * i].conj().T,
+                (self.args[2*i + 1][0], self.args[2*i + 1][1] - 2*self.nLegs))
+            for i in range(self.nLegs)
+        )
+        return self.__class__(nLegs=self.nLegs, D=self.D, msgdata=msgdata)
+
+    def __init__(
+            self,
+            nLegs: int,
+            D: int,
+            msgdata: tuple[tuple[np.ndarray, tuple[int]]]
+        ) -> None:
+        """
+        Initializing the local Hamiltonian operator involves collecting
+        the data that is necessary for contraction.
+
+        Arguments:
+        * `nLegs`: Number of neighbors in the graph.
+        * `D`: Physical dimension.
+        * `msgdata`: Message data. One tuple for each incoming message,
+        which consists of the legs (`(bra_leg, op_leg, ket_leg)`) and
+        the mesage itself.
+        """
+        # Sanity checks.
+        if len(msgdata) != nLegs: raise ValueError("".join((
+            f"Received wrong amount of message data. Expected {nLegs} message",
+            f"-value pairs, got {len(msgdata)}."
+        )))
+
+        # Inferring data type.
+        dtype = np.result_type(*[datum[0].dtype for datum in msgdata])
+
+        self.args = ()
+        """Contraction data, in sublist format, to be passed to einsum."""
+
+        self.in_shape_vec: tuple[int] = [None for _ in range(nLegs)]
+        """
+        During `self._matvec`, incoming vectors will be re-shaped into this
+        shape.
+        """
+
+        self.D = D
+
+        for datum in msgdata:
+            if not datum[0].ndim == 2: raise ValueError("".join((
+                "Constituent messages of a local environment tensor must ",
+                f"have two legs; received {datum[0].ndim} legs."
+            )))
+
+            # Assembling contraction arguments: messages.
+            self.args += (
+                # Message
+                datum[0],
+                # (bra_leg, ket_leg)
+                (datum[1][0], 2*nLegs + datum[1][1])
+            )
+
+            # Compiling vector re-shape data.
+            self.in_shape_vec[datum[1][1]] = datum[0].shape[-1]
+
+        self.in_shape_vec = tuple(self.in_shape_vec + [D,])
+
+        # Assembling contraction arguments: Identity for the physical legs.
+        self.args += (np.eye(self.D), (3 * nLegs, 3*nLegs + 1))
+
+        super().__init__(
+            nLegs=nLegs,
+            shape=(np.prod(self.in_shape_vec), np.prod(self.in_shape_vec)),
+            dtype=dtype
+        )
+
+# -----------------------------------------------------------------------------
+#                   DMRG classes.
+#                   TODO: It would be nice, prospectively, if
+#                   LoopSeriesDMRG inherited from DMRG.
+#                   should not be too difficult.
+# -----------------------------------------------------------------------------
 
 class DMRG:
     """
@@ -166,7 +452,7 @@ class DMRG:
             node: int,
             threshold: float = hermiticity_threshold,
             sanity_check: bool = False
-        ) -> np.ndarray:
+        ) -> LocalHamiltonianOperator:
         """
         Hamiltonian at `node`, calculated by taking inbound messages as
         environments. `threshold` is the absolute allowed error in the
@@ -180,55 +466,27 @@ class DMRG:
         if self._T_totalH is None:
             self.__assemble_T_totalH(sanity_check=sanity_check)
 
-        # The hamiltonian at node is obtained by tracing out the rest of the
-        # network. The environments are approximated by messages.
         nLegs = len(self.overlap.G.adj[node])
-        args = ()
-        """Arguments for einsum"""
 
-        out_legs = (tuple(range(nLegs))
-                    + (3 * nLegs,)
-                    + tuple(range(2 * nLegs, 3 * nLegs))
-                    + (3*nLegs + 1,))
-        # Leg ordering of the local hamiltonian: (bra virtual dimensions, bra
-        # physical dimension, ket virtual dimensions, ket physical dimension).
-        # The order of the virtual legs is inherited from the "legs" indices on
-        # the edges; the 0th leg ends up in the first dimension.
-        vir_dim = 1
-
+        msgdata = ()
+        # Collecting messages for operator initialization.
         for neighbor in self.overlap.G.adj[node]:
-            # collecting einsum arguments
-            args += (
+            msgdata += ((
                 self.msg[neighbor][node],
-                (
-                    # bra leg:
-                    self.overlap.bra.G[node][neighbor][0]["legs"][node],
-                    # operator leg:
-                    (nLegs
-                     + self.expvals[0].op.G[node][neighbor][0]["legs"][node]),
-                    # ket leg:
-                    (2 * nLegs
-                     + self.overlap.ket.G[node][neighbor][0]["legs"][node]),
-                )
-            )
+                (self.overlap.bra.G[node][neighbor][0]["legs"][node],
+                 self.expvals[0].op.G[node][neighbor][0]["legs"][node],
+                 self.overlap.ket.G[node][neighbor][0]["legs"][node]),
+            ),)
 
-            # Compiling virtual dimensions for later reshape.
-            vir_dim *= self.overlap.ket.G[node][neighbor][0]["size"]
-
-        args += (
-            # operator tensor
-            self._T_totalH[node],
-            (tuple(nLegs + iLeg for iLeg in range(nLegs))
-             + (3 * nLegs, 3*nLegs + 1)),
-        )
-
-        H = np.einsum(*args, out_legs, optimize=True)
-        H = np.reshape(
-            H, shape=(vir_dim * self.D[node], vir_dim * self.D[node])
+        H = LocalHamiltonianOperator(
+            nLegs=nLegs,
+            D=self.D[node],
+            W=self._T_totalH[node],
+            msgdata=msgdata
         )
 
         if sanity_check:
-            assert is_hermitian_matrix(H, threshold=threshold, verbose=False)
+            assert is_hermitian_matrix(H.toarray(), threshold=threshold, verbose=True)
 
         return H
 
@@ -237,7 +495,7 @@ class DMRG:
             node: int,
             threshold: float = hermiticity_threshold,
             sanity_check: bool = False
-        ) -> np.ndarray:
+        ) -> LocalEnvironmentOperator:
         """
         Environment at node. Calculated from `self.overlap`. This
         amounts to stacking and re-shaping messages, that are inbound to
@@ -249,56 +507,24 @@ class DMRG:
         if sanity_check: assert self.intact
 
         nLegs = len(self.overlap.G.adj[node])
-        args = ()
-        """Arguments for einsum"""
-
-        out_legs = (tuple(range(nLegs))
-                    + (3 * nLegs,)
-                    + tuple(range(2 * nLegs, 3 * nLegs))
-                    + (3*nLegs + 1,))
-        # Leg ordering of the local hamiltonian: (bra virtual dimensions, bra
-        # physical dimension, ket virtual dimensions, ket physical dimension)
-        # The order of the virtual dimensions is inherited from the "legs"
-        # indices on the edges; the 0th leg ends up in the first dimension.
-        vir_dim = 1
-
+ 
+        msgdata = ()
+        # Collecting messages for operator initialization.
         for neighbor in self.overlap.G.adj[node]:
-            if not self.overlap.msg[neighbor][node].shape[1] == 1:
-                with tqdm.tqdm.external_write_mode():
-                    warnings.warn(
-                        "".join((
-                            f"Message {neighbor} -> {node} does not ",
-                            "originate from an overlap!"
-                        )),
-                        RuntimeWarning
-                    )
+            msgdata += ((
+                self.overlap.msg[neighbor][node][:, 0, :],
+                (self.overlap.bra.G[node][neighbor][0]["legs"][node],
+                 self.overlap.ket.G[node][neighbor][0]["legs"][node])
+            ),)
 
-            msg = self.overlap.msg[neighbor][node][:,0,:]
-
-            # Collecting einsum arguments.
-            args += (
-                msg,
-                (
-                    # bra leg:
-                    self.overlap.bra.G[node][neighbor][0]["legs"][node],
-                    # ket leg:
-                    (2 * nLegs
-                     + self.overlap.ket.G[node][neighbor][0]["legs"][node]),
-                )
-            )
-
-            # Compiling virtual dimensions for later reshape.
-            vir_dim *= self.overlap.ket.G[node][neighbor][0]["size"]
-
-        # Identity for the physical dimension.
-        args += (self.overlap.op.I(node=node), (3 * nLegs, 3*nLegs + 1))
-
-        N = np.einsum(*args, out_legs, optimize=True)
-        N = np.reshape(
-            N, shape=(vir_dim * self.D[node], vir_dim * self.D[node])
+        N = LocalEnvironmentOperator(
+            nLegs=nLegs,
+            D=self.D[node],
+            msgdata=msgdata
         )
 
-        if sanity_check: assert is_hermitian_matrix(N, threshold=threshold)
+        if sanity_check:
+            assert is_hermitian_matrix(N.toarray(), threshold=threshold, verbose=True)
 
         return N
 
@@ -313,6 +539,8 @@ class DMRG:
             iterator_desc_prefix = kwargs.pop("iterator_desc_prefix")
         else:
             iterator_desc_prefix = "DMRG"
+
+        kwargs["verbose"] = False
 
         # Running BP on all Brakets that are not converged.
         if not self.overlap.converged:
@@ -399,70 +627,24 @@ class DMRG:
         else:
             iterator_desc_prefix = "DMRG | "
 
-        # Calculating environments and previous energy.
-        self.__BP(sanity_check=sanity_check, **kwargs)
-        Eprev = self.E0
-
-        for node in tqdm.tqdm(
-            nx.dfs_postorder_nodes(
-                self.expvals[0].op.tree,
-                source=self.expvals[0].op.root
-            ),
+        for iNode, node in tqdm.tqdm(
+            enumerate(self),
             desc=f"sweep {self.__iSweep}",
             total=self.nsites
         ):
+            if gauge:
+                # Gauging for increased numerical stability.
+                self.gauge(
+                    sanity_check=sanity_check,
+                    ortho_center=node,
+                )
+
+            # Calculating environments and previous energy.
+            self.__BP(sanity_check=sanity_check, **kwargs)
+            if iNode == 0: Eprev = self.E0
+
             H = self.__assemble_localH(node, sanity_check=sanity_check)
             N = self.__assemble_localN(node, sanity_check=sanity_check)
-
-            if False:
-                with tqdm.tqdm.external_write_mode():
-                    warnings.warn(
-                        "".join((
-                            "This check does not work anymore due to changes ",
-                            "in the normalization of messages."
-                        )),
-                        DeprecationWarning
-                    )
-                # Are local hamiltonian and environment correctly defined?
-                local_psi = self.psi[node].flatten()
-                expval_local_cntr = ctg.einsum(
-                    "i,ik,k", local_psi.conj(), H, local_psi
-                )
-                overlap_local_cntr = ctg.einsum(
-                    "i,ik,k", local_psi.conj(), N, local_psi
-                )
-                expvals_total_cntr = sum(
-                    expval.cntr for expval in self.expvals
-                )
-
-                if not np.isclose(expval_local_cntr, expvals_total_cntr):
-                    rel_err_ = rel_err(expvals_total_cntr, expval_local_cntr)
-                    with tqdm.tqdm.external_write_mode():
-                        warnings.warn(
-                            "".join((
-                                f"Local hamiltonian at node {node} does not ",
-                                "reproduce expectation value. Relative error ",
-                                f"{rel_err_:.3e}."
-                            )),
-                            RuntimeWarning
-                        )
-                if not np.isclose(overlap_local_cntr, self.overlap.cntr):
-                    rel_err_ = rel_err(self.overlap.cntr, overlap_local_cntr)
-                    with tqdm.tqdm.external_write_mode():
-                        warnings.warn(
-                            "".join((
-                                f"Local environment at node {node} does not ",
-                                "reproduce overlap. Relative error ",
-                                f"{rel_err_:.3e}."
-                            )),
-                            RuntimeWarning
-                        )
-
-            eigvals,eigvecs = gen_eigval_problem(
-                H,
-                N,
-                eps=self.tikhonov_regularization_eps
-            )
 
             # Finding the correct shape for the new site tensor.
             newshape = [np.nan for _ in self.overlap.G.adj[node]]
@@ -471,27 +653,40 @@ class DMRG:
                 newshape[leg] = self.overlap.ket.G[node][neighbor][0]["size"]
             newshape += [self.D[node],]
 
-            # Re-shaping statevector into site tensor.
-            T = np.reshape(eigvecs[:, np.argmin(eigvals)], shape=newshape)
-
-            # Inserting the new tensor and gauging the current node.
-            self[node] = T
-            if gauge:
-                self.gauge(
-                    sanity_check=sanity_check,
-                    tree=self.expvals[0].op.tree,
-                    nodes=(node,)
+            try:
+                eigvals, eigvecs = gen_eigval_problem(
+                    A=H,
+                    B=N,
+                    eps=self.tikhonov_regularization_eps,
+                    v0=self[node].flatten(),
+                    k=1,
+                    raise_no_convergence_err=True
                 )
 
-            # Calculating new environments.
-            self.__BP(
-                sanity_check=sanity_check,
-                iterator_desc_prefix="".join((
-                    iterator_desc_prefix,
-                    f"node {node}"
-                )),
-                **kwargs
-            )
+                # Re-shaping statevector into site tensor.
+                T = np.reshape(eigvecs[:, np.argmin(eigvals)], shape=newshape)
+
+                # Inserting the new tensor.
+                self[node] = T
+
+            except Exception as e:
+                # What one could alternatively do is not raise an exception on
+                # no convergence in gen_eigval_problem, s.t. the method would
+                # fall back to working with dense matrices. This is not
+                # feasible for large bond dimensions, however; hence the
+                # current procedure: If an exception is raised, this node will
+                # simply be skipped.
+                pass
+
+        # Calculating new environments, for calculation of energy after sweep.
+        self.__BP(
+            sanity_check=sanity_check,
+            iterator_desc_prefix="".join((
+                iterator_desc_prefix,
+                f"node {node}"
+            )),
+            **kwargs
+        )
 
         Enext = self.E0
 
@@ -511,9 +706,6 @@ class DMRG:
         passed to BP iterations. The state is not normalized afterwards!
         """
         if sanity_check: assert self.intact
-
-        # Handling kwargss
-        kwargs["verbose"] = True
 
         nSweeps = nSweeps if nSweeps != None else self.nSweeps
         iterator = tqdm.tqdm(

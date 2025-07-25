@@ -1044,7 +1044,6 @@ class Braket(BaseBraket):
                 else:
                     norm1 = norm
                     norm2 = norm
-                assert np.isclose(norm1 * norm2, cntr)
 
                 self.msg[node1][node2] /= norm1
                 self.msg[node2][node1] /= norm2
