@@ -12,6 +12,7 @@ import pickle
 import os
 import datetime
 from io import TextIOWrapper, StringIO
+import time
 
 import numpy as np
 import networkx as nx
@@ -657,10 +658,13 @@ class DMRG:
                 eigvals, eigvecs = gen_eigval_problem(
                     A=H,
                     B=N,
+                    force_dense=True if H.shape[0] < 1500 else False,
                     eps=self.tikhonov_regularization_eps,
+                    raise_no_convergence_err=True,
                     v0=self[node].flatten(),
                     k=1,
-                    raise_no_convergence_err=True
+                    Minv=N.inv,
+                    tol=1e-3 if self.__iSweep == 0 else 1e-10,
                 )
 
                 # Re-shaping statevector into site tensor.
@@ -673,7 +677,7 @@ class DMRG:
                 # What one could alternatively do is not raise an exception on
                 # no convergence in gen_eigval_problem, s.t. the method would
                 # fall back to working with dense matrices. This is not
-                # feasible for large bond dimensions, however; hence the
+                # feasible for large bond dimensions, however, hence the
                 # current procedure: If an exception is raised, this node will
                 # simply be skipped.
                 pass

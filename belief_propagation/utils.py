@@ -236,6 +236,7 @@ def __gen_eigval_problem_matrixfree(
         k: int = 1,
         maxcond: float = 1e6,
         eps: float = 1e-5,
+        tol: float = 1e-10,
         **scisparsekwargs
     ) -> tuple[np.ndarray, np.ndarray]:
     cond_number = cond(B)
@@ -246,12 +247,15 @@ def __gen_eigval_problem_matrixfree(
             scisparse.eye(B.shape[0])
         )
 
+        # If the environment inverse was given, it will no longer be accurate.
+        scisparsekwargs["Minv"] = None
+
     eigvals, eigvecs = scisparse.linalg.eigs(
         A=A,
         M=B,
         k=k,
         which="SR",
-        tol=1e-10,
+        tol=tol,
         **scisparsekwargs,
     )
 
