@@ -159,7 +159,6 @@ class LocalHamiltonianOperator(LocalOperator):
     def __init__(
             self,
             nLegs: int,
-            D: int,
             W: np.ndarray,
             msgdata: tuple[tuple[np.ndarray, tuple[int]]]
         ) -> None:
@@ -172,8 +171,10 @@ class LocalHamiltonianOperator(LocalOperator):
         * `D`: Physical dimension.
         * `W`: Hamiltonian PEPO tensor.
         * `msgdata`: Message data. One tuple for each incoming message,
-        which consists of the legs (`(bra_leg, op_leg, ket_leg)`) and
-        the mesage itself.
+        which consists of the mesage itself, and the legs
+        (`(bra_leg, op_leg, ket_leg)`). These legs are the legs of the
+        respective node, i.e. they denote which leg of the site tensor
+        the respective message leg connects to.
         """
         # Sanity checks.
         if W.ndim != nLegs + 2: raise ValueError("".join((
@@ -212,7 +213,7 @@ class LocalHamiltonianOperator(LocalOperator):
             # Compiling vector re-shape data.
             self.in_shape_vec[datum[1][2]] = datum[0].shape[-1]
 
-        self.in_shape_vec = tuple(self.in_shape_vec + [D,])
+        self.in_shape_vec = tuple(self.in_shape_vec + [self.D,])
 
         # Assembling contraction arguments: operator tensor.
         self.args += (
@@ -273,8 +274,8 @@ class LocalEnvironmentOperator(LocalOperator):
         * `nLegs`: Number of neighbors in the graph.
         * `D`: Physical dimension.
         * `msgdata`: Message data. One tuple for each incoming message,
-        which consists of the legs (`(bra_leg, op_leg, ket_leg)`) and
-        the mesage itself.
+        which consists of the mesage itself and the legs
+        (`(bra_leg, ket_leg)`).
         """
         # Sanity checks.
         if len(msgdata) != nLegs: raise ValueError("".join((
@@ -313,7 +314,7 @@ class LocalEnvironmentOperator(LocalOperator):
             # Compiling vector re-shape data.
             self.in_shape_vec[datum[1][1]] = datum[0].shape[-1]
 
-        self.in_shape_vec = tuple(self.in_shape_vec + [D,])
+        self.in_shape_vec = tuple(self.in_shape_vec + [self.D,])
 
         # Assembling contraction arguments: Identity for the physical legs.
         self.args += (np.eye(self.D), (3 * nLegs, 3*nLegs + 1))
@@ -330,6 +331,7 @@ class LocalEnvironmentOperator(LocalOperator):
 #                   LoopSeriesDMRG inherited from DMRG.
 #                   should not be too difficult.
 # -----------------------------------------------------------------------------
+
 
 class DMRG:
     """
@@ -361,10 +363,13 @@ class DMRG:
 
         for node1, node2 in self.overlap.G.edges():
             for sender, receiver in itertools.permutations((node1, node2)):
+                # Total bond dimension of the Hamiltonian on this edge.
                 chi = sum(
                     expval.op.G[sender][receiver][0]["size"]
                     for expval in self.expvals
                 )
+
+                # Initializing the message.
                 msg = np.full(
                     shape=(
                         self.overlap.bra.G[sender][receiver][0]["size"],
@@ -395,59 +400,6 @@ class DMRG:
 
         return
 
-    def __assemble_T_totalH(self, sanity_check: bool = False) -> None:
-        """
-        Evaluates the direct product of PEPO tensors, and writes to
-        `self._T_totalH`. Local hamiltonian tensors are block-diagonal
-        and contain the local tensors of `self.expvals` on the diagonal.
-        """
-        if sanity_check: assert self.intact
-
-        self._T_totalH = {node: None for node in self.overlap.G.nodes()}
-
-        for node in self.overlap.G.nodes():
-            # Total virtual bond dimension of the hamiltonian.
-            chi = {
-                neighbor: sum(
-                    expval.op.G[node][neighbor][0]["size"]
-                    for expval in self.expvals
-                )
-                for neighbor in self.overlap.G.adj[node]
-            }
-
-            H = np.zeros(
-                shape=tuple(
-                    chi[neighbor]
-                    for neighbor in self.overlap.G.adj[node]
-                ) + (
-                    self.D[node], self.D[node]
-                ),
-                dtype=self.dtype
-            )
-
-            chi_filled = {neighbor: 0 for neighbor in self.overlap.G.adj[node]}
-            # Filling the Hamiltonian.
-            for expval in self.expvals:
-                index = tuple(
-                    slice(
-                        chi_filled[neighbor],
-                        (chi_filled[neighbor]
-                         + expval.op.G[node][neighbor][0]["size"])
-                    )
-                    for neighbor in self.overlap.G.adj[node]
-                ) + (
-                    slice(self.D[node]), slice(self.D[node])
-                )
-                H[index] = expval.op[node]
-
-                for neighbor in self.overlap.G.adj[node]:
-                    edge_size = expval.op.G[node][neighbor][0]["size"]
-                    chi_filled[neighbor] += edge_size
-
-            self._T_totalH[node] = H
-
-        return
-
     def __assemble_localH(
             self,
             node: int,
@@ -463,33 +415,38 @@ class DMRG:
         # sanity check
         if sanity_check: assert self.intact
 
-        # Construct total PEPO tensors, if necessary.
-        if self._T_totalH is None:
-            self.__assemble_T_totalH(sanity_check=sanity_check)
-
         nLegs = len(self.overlap.G.adj[node])
 
-        msgdata = ()
-        # Collecting messages for operator initialization.
-        for neighbor in self.overlap.G.adj[node]:
-            msgdata += ((
-                self.msg[neighbor][node],
-                (self.overlap.bra.G[node][neighbor][0]["legs"][node],
-                 self.expvals[0].op.G[node][neighbor][0]["legs"][node],
-                 self.overlap.ket.G[node][neighbor][0]["legs"][node]),
+        H_ops = ()
+        for expval in self.expvals:
+            msgdata = ()
+            # Collecting messages for operator initialization.
+            for neighbor in expval.G.adj[node]:
+                msgdata += ((
+                    expval.msg[neighbor][node],
+                    (self.overlap.bra.G[node][neighbor][0]["legs"][node],
+                     expval.op.G[node][neighbor][0]["legs"][node],
+                     self.overlap.ket.G[node][neighbor][0]["legs"][node]),
+                ),)
+            H_ops += (LocalHamiltonianOperator(
+                nLegs=nLegs,
+                W=expval.op[node],
+                msgdata=msgdata
             ),)
 
-        H = LocalHamiltonianOperator(
-            nLegs=nLegs,
-            D=self.D[node],
-            W=self._T_totalH[node],
-            msgdata=msgdata
-        )
+        # The total effective hamiltonain is the sum of the effective
+        # hamiltonians from the constituent operators.
+        total_H = sum(H_ops[1:], start=H_ops[0])
 
         if sanity_check:
-            assert is_hermitian_matrix(H.toarray(), threshold=threshold, verbose=True)
+            # Is the effective hamiltonian truly hermitian?
+            assert is_hermitian_matrix(
+                total_H.matmat(np.eye(total_H.shape[0])),
+                threshold=threshold,
+                verbose=True
+            )
 
-        return H
+        return total_H
 
     def __assemble_localN(
             self,
@@ -599,9 +556,6 @@ class DMRG:
                                 f"braket {i} is not hermitian."
                             )))
 
-        # Composing messages from the expectation values.
-        self.__assemble_messages(sanity_check=sanity_check)
-
         if not self.converged:
             with tqdm.tqdm.external_write_mode():
                 warnings.warn("BP iteration not converged.", RuntimeWarning)
@@ -658,7 +612,7 @@ class DMRG:
                 eigvals, eigvecs = gen_eigval_problem(
                     A=H,
                     B=N,
-                    force_dense=True if H.shape[0] < 1500 else False,
+                    force_dense=False,#True if H.shape[0] < 1500 else False,
                     eps=self.tikhonov_regularization_eps,
                     raise_no_convergence_err=True,
                     v0=self[node].flatten(),
