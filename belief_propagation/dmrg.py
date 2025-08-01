@@ -51,6 +51,59 @@ from belief_propagation.truncate_expand import (
 #                   in a matrix-free fashion.
 # -----------------------------------------------------------------------------
 
+class _SumLocalOperator(scisparse.linalg._interface._SumLinearOperator):
+    """
+    In order to preserve the benefits of the SciPy implementation of
+    linear operators, yet be able to use my own implementation of
+    `LocalOperator.toarray`, this class inherits from SciPys
+    [_SumLinearOperator](https://github.com/scipy/scipy/blob/0cf8e9541b1a2457992bf4ec2c0c669da373e497/scipy/sparse/linalg/_interface.py#L692).
+    """
+
+    def toarray(self) -> np.ndarray:
+        """
+        The dense version of a sum of matrix-free operators is, of
+        course, the sum of the dense versions of the summands.
+        """
+        return (self.__toarray_backend_agnostic(self.args[0])
+                + self.__toarray_backend_agnostic(self.args[1]))
+
+    @staticmethod
+    def __toarray_backend_agnostic(
+        A: scisparse.linalg.LinearOperator
+    ) -> np.ndarray:
+        """
+        Provides a method to get the dense matrix of linear operators,
+        independently of whether they are in fact `LocalOperator`
+        instances (and thus possess a `toarray` method) or not. This is
+        needed s.t. I can sum instances of SciPys `LinearOperator` and
+        my own `LocalOperator`.
+        """
+        if hasattr(A, "toarray"):
+            return A.toarray()
+        else:
+            # The dense version of any matrix-free operator can be obtained by
+            # multiplying it with the identity matrix.
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Calculating dense version of operator using naive ",
+                        "implementation of scisparse.linalg.LinearOperator. ",
+                        "This is highly inefficient."
+                    )),
+                    RuntimeWarning
+                )
+            return A.matmat(np.eye(A.shape[0]))
+
+    def __add__(
+            self,
+            B: scisparse.linalg.LinearOperator
+        ) -> "_SumLocalOperator":
+        return self.__class__(self, B)
+
+    def __init__(self, A: "LocalOperator", B: "LocalOperator"):
+        super().__init__(A, B)
+
+
 class LocalOperator(scisparse.linalg.LinearOperator):
     """
     Base class for matrix-free operators, defined via tensor network
@@ -97,6 +150,9 @@ class LocalOperator(scisparse.linalg.LinearOperator):
         )
 
         return res_vec.flatten()
+
+    def __add__(self, B: scisparse.linalg.LinearOperator) -> _SumLocalOperator:
+        return _SumLocalOperator(A=self, B=B)
 
     def __init__(self, nLegs: int, dtype: np.dtype, shape: tuple[int]):
         self.nLegs: int = nLegs
@@ -325,6 +381,7 @@ class LocalEnvironmentOperator(LocalOperator):
             dtype=dtype
         )
 
+
 # -----------------------------------------------------------------------------
 #                   DMRG classes.
 #                   TODO: It would be nice, prospectively, if
@@ -405,7 +462,7 @@ class DMRG:
             node: int,
             threshold: float = hermiticity_threshold,
             sanity_check: bool = False
-        ) -> LocalHamiltonianOperator:
+        ) -> _SumLocalOperator:
         """
         Hamiltonian at `node`, calculated by taking inbound messages as
         environments. `threshold` is the absolute allowed error in the
@@ -441,7 +498,7 @@ class DMRG:
         if sanity_check:
             # Is the effective hamiltonian truly hermitian?
             assert is_hermitian_matrix(
-                total_H.matmat(np.eye(total_H.shape[0])),
+                total_H.toarray(),
                 threshold=threshold,
                 verbose=True
             )

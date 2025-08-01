@@ -334,10 +334,8 @@ def gen_eigval_problem(
                 )
 
     # If force_dense is True or if SciPy failed, we need the dense operators.
-    if isinstance(A, scisparse.linalg.LinearOperator):
-        A = A.matmat(np.eye(A.shape[0]))
-    if isinstance(B, scisparse.linalg.LinearOperator):
-        B = B.matmat(np.eye(B.shape[0]))
+    if isinstance(A, scisparse.linalg.LinearOperator): A = A.toarray()
+    if isinstance(B, scisparse.linalg.LinearOperator): B = B.toarray()
 
     return __gen_eigval_problem_dense(A=A, B=B, maxcond=maxcond, eps=eps)
 
@@ -751,7 +749,7 @@ def write_callable_bonddim_to_graph(
             size_val = copy.deepcopy(size)
             bond_dim[node1][node2][0]["size"] = lambda _: size_val
 
-    if sanity_check: assert network_message_check(G=newG)
+    if sanity_check: assert network_message_check(G=bond_dim)
 
     return bond_dim
 
