@@ -702,30 +702,57 @@ def divide_graph(G: nx.MultiGraph) -> frozenset[frozenset[int]]:
 
 
 def write_callable_bonddim_to_graph(
-        bond_dim: Union[int, Callable[[int], int]],
-        G: nx.MultiGraph,
+        bond_dim: Union[int, Callable[[int], int], nx.MultiGraph],
+        target_G: nx.MultiGraph,
         sanity_check: bool = False
     ) -> nx.MultiGraph:
     """
-    Given a bond dimension `bond_dim`, adds it to every edge in `G`.
-    Intended to be used during runs of imaginary time evolution or
-    compression. `bond_dim` can be an integer or a callable, where the
-    callable takes an integer and returns an integer.
-
-    Bond dimensions are saved as attributes of the graph edges, with the
-    key `size`.
+    Given a bond dimension `bond_dim`, adds it to every edge in
+    `target_G`. Intended to be used during runs of imaginary time
+    evolution or compression. `bond_dim` can be an integer, a callable,
+    or a graph. This function converts any of the previously mentioned
+    into a graph with the geometry of `target_G`, where every edge holds
+    a callable that returns bond dimensions. This callable will be saved
+    under the key `"size"`.
     """
+    if isinstance(bond_dim, nx.MultiGraph):
+        # Sanity check.
+        if not graph_compatible(bond_dim, target_G):
+            raise ValueError(
+                "Bond dimension graph and target graph are not compatible."
+            )
+
+    else:
+        # bond_dim is either integer or callable. We first write bond_dim to
+        # every edge in the graph, regardless of whether it is integer or
+        # callable.
+        bond_dim = nx.MultiGraph(incoming_graph_data=(
+            (node1, node2, {"size": bond_dim})
+            for node1, node2 in target_G.edges()
+        ))
+
     if not callable(bond_dim):
         bond_dim_val = copy.deepcopy(bond_dim)
         bond_dim = lambda _: bond_dim_val
 
-    newG = nx.MultiGraph(G.edges())
-    for node1, node2 in newG.edges():
-        newG[node1][node2][0]["size"] = bond_dim
+    # Checking for every edge whether the respective bond dimension is a
+    # callable or an integer. Integers are converted to callables that only
+    # ever return the respective value.
+    for node1, node2, size in bond_dim.edges(data="size"):
+        if not callable(size):
+            # Sanity check.
+            if not int(size) == size:
+                raise ValueError("".join((
+                    f"Bond dimension value on edge ({node1}, {node2}) is not ",
+                    "an integer."
+                )))
+
+            size_val = copy.deepcopy(size)
+            bond_dim[node1][node2][0]["size"] = lambda _: size_val
 
     if sanity_check: assert network_message_check(G=newG)
 
-    return newG
+    return bond_dim
 
 # -----------------------------------------------------------------------------
 #                   Ranking Edges in Graphs

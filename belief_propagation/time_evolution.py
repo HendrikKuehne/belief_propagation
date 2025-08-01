@@ -450,10 +450,11 @@ def simple_update_TEBD(
         tau_total: float = 5,
         trotter_order: int = 1,
         singval_threshold: float = None,
-        min_bond_dim: Union[int, nx.MultiGraph] = 1,
-        max_bond_dim: Union[int, nx.MultiGraph] = np.inf,
+        min_bond_dim: Union[int, nx.MultiGraph, Callable[[int], int]] = 1,
+        max_bond_dim: Union[int, nx.MultiGraph, Callable[[int], int]] = np.inf,
         return_all_states: bool = False,
         normalize_every: int = np.inf,
+        normalize_with: str = "BP",
         verbose: bool = False,
         sanity_check: bool = False,
     ) -> Union[PEPS, tuple[PEPS]]:
@@ -474,7 +475,9 @@ def simple_update_TEBD(
     If `singval_threshold is None`, the Numpy machine epsilon for the
     respective data type will be used.
 
-    Normalizes the state every `normalize_every` steps, if given.
+    Normalizes the state every `normalize_every` steps, if given. Method
+    is determined by `normalize_with` argument; currently, the choice is
+    between `"BP"` and `"exact"`.
 
     Returns the final state if `return_all_states == False`. Otherwise,
     returns a tuple of the initial state and all states that were
@@ -490,14 +493,12 @@ def simple_update_TEBD(
         )
 
     # Preparing target edge sizes.
-    if not isinstance(min_bond_dim, nx.MultiGraph):
-        min_bond_dim = write_callable_bonddim_to_graph(
-            G=psi.G, bond_dim=min_bond_dim, sanity_check=sanity_check
-        )
-    if not isinstance(max_bond_dim, nx.MultiGraph):
-        max_bond_dim = write_callable_bonddim_to_graph(
-            G=psi.G, bond_dim=max_bond_dim, sanity_check=sanity_check
-        )
+    min_bond_dim = write_callable_bonddim_to_graph(
+        G=psi.G, bond_dim=min_bond_dim, sanity_check=sanity_check
+    )
+    max_bond_dim = write_callable_bonddim_to_graph(
+        G=psi.G, bond_dim=max_bond_dim, sanity_check=sanity_check
+    )
 
     if not graph_compatible(psi.G, min_bond_dim):
         raise ValueError(
@@ -529,6 +530,17 @@ def simple_update_TEBD(
                 RuntimeWarning
             )
             singval_threshold = None
+
+    if normalize_with not in ("BP", "exact"):
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    f"Normalization method {normalize_with} not implemented. ",
+                    "Defaulting to normalization by BP contraction."
+                )),
+                UserWarning
+            )
+        normalize_with = "BP"
 
     # Inferring number of steps.
     if nSteps is None: nSteps = dtau_to_nSteps(dtau=dtau, tau_total=tau_total)
@@ -564,7 +576,7 @@ def simple_update_TEBD(
                     raise NotImplementedError("".join((
                         "I tried to normalize the state without contracting ",
                         "it explicitly. This doesn't seem to work yet, so",
-                        "normalization is done with explicit conttrcation so ",
+                        "normalization is done with explicit contraction so ",
                         "far."
                     )))
                     # Estimating the magnitude of this layer s.t. we can
@@ -608,11 +620,27 @@ def simple_update_TEBD(
 
         if iStep % normalize_every == 0:
             # Normalizing psi.
-            norm = Braket.Overlap(
+            overlap = Braket.Overlap(
                 psi1=psi,
                 psi2=psi,
                 sanity_check=sanity_check
-            ).contract(sanity_check=sanity_check)
+            )
+
+            if normalize_with == "BP":
+                norm = overlap.BP(
+                    verbose=verbose,
+                    iterator_desc_prefix="Normalization",
+                    sanity_check=sanity_check
+                )
+
+            elif normalize_with == "exact":
+                norm = overlap.contract(sanity_check=sanity_check)
+
+            else:
+                raise ValueError(
+                    f"Normalization method {normalize_with} not implemented."
+                )
+
             psi = psi * (1 / np.sqrt(norm))
 
         if return_all_states: all_states += (copy.deepcopy(psi),)
