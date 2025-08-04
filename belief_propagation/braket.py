@@ -597,6 +597,26 @@ class Braket(BaseBraket):
     Code for Belief Propagation.
     """
 
+    check_trap: bool = True
+    """Whether to check if BP is stuck in a trapping set."""
+    trap_threshold: float = 1e-11
+    """
+    Threshold below which two message epsilons are considered equal
+    during a trapping set test.
+    """
+    noconv_width: int = 15
+    """
+    During BP iterations, the algorithm checks the last
+    `fixed_point_check_window` message epsilons for equality. If they
+    are all equal, it is assumed that BP got stuck in a trapping set.
+    New messages will be initialized and the iteration re-started.
+    """
+    max_trap_retries: int = 1
+    """
+    The amount of times that BP will be re-tried if a trapping set is
+    detected.
+    """
+
     def construct_initial_messages(
             self,
             real: bool = False,
@@ -850,7 +870,11 @@ class Braket(BaseBraket):
             sanity_check=sanity_check
         )
 
-        for i in iterator:
+        # Keeping track of the number of times that BP got stuck in a
+        # trapping set.
+        self.trap_retries = 0
+
+        for iStep in iterator:
             eps = self.__message_passing_step(
                 damping=damping,
                 normalize=normalize,
@@ -861,11 +885,59 @@ class Braket(BaseBraket):
             eps_list += (eps,)
 
             if eps < threshold:
-                if verbose: iterator.set_postfix_str(
+                # Convergence.
+                iterator.set_postfix_str(
                     f"eps = {eps:.3e}; threshold reached; returning."
                 )
                 iterator.close()
                 return eps_list
+
+            if iStep > self.noconv_width and self.check_trap:
+                # Checking if BP is stuck in a trapping set.
+                diffs = np.array([
+                    eps_list[-i1] - eps_list[-i2]
+                    for i1, i2 in itertools.combinations(
+                        range(1, self.noconv_width + 1), r=2
+                    )
+                ])
+
+                if np.allclose(diffs, 0, rtol=0, atol=self.trap_threshold):
+                    # BP got stuck in a trapping set.
+                    iterator.close()
+
+                    if self.trap_retries < self.max_trap_retries:
+                        with tqdm.tqdm.external_write_mode():
+                            warnings.warn(
+                                "".join((
+                                    "BP got stuck in a trapping set. Re",
+                                    "starting BP iteration with increased ",
+                                    "damping and new messages."
+                                )),
+                                RuntimeWarning
+                            )
+                        self.trap_retries += 1
+                        return self.__message_passing_iteration(
+                            numiter=numiter,
+                            damping=damping + .1,
+                            real=real,
+                            normalize=normalize,
+                            threshold=threshold,
+                            parallel=parallel,
+                            iterator_desc_prefix=iterator_desc_prefix,
+                            verbose=verbose,
+                            new_messages=True,
+                            msg_init=msg_init,
+                            sanity_check=sanity_check
+                        )
+
+                    else:
+                        with tqdm.tqdm.external_write_mode():
+                            warnings.warn(
+                                "BP got stuck in a trapping set. Exiting.",
+                                RuntimeWarning
+                            )
+                        return eps_list
+
 
         return eps_list
 
@@ -1270,6 +1342,18 @@ class Braket(BaseBraket):
                         UserWarning
                     ))
                 )
+
+        if threshold < self.trap_threshold:
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        "Convergence threshold is below threshold for ",
+                        "trapping set detection! This prevents convergence ",
+                        "detection. Lowering trapping set threshold."
+                    )),
+                    RuntimeWarning
+                )
+            self.trap_threshold = 10 ** (np.log10(threshold) - 1)
 
         # Handling kwargs.
         if "iterator_desc_prefix" in kwargs.keys():

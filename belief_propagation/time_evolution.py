@@ -28,6 +28,10 @@ from belief_propagation.utils import (
     dtau_to_nSteps
 )
 
+# -----------------------------------------------------------------------------
+#                   Trotterization utilities
+# -----------------------------------------------------------------------------
+
 
 def __disjoint_oplayers_from_opchains(
         op_chains: tuple[OpChain],
@@ -133,8 +137,8 @@ def __assemble_layers_in_trotter_order(
     if trotter_order % 2 == 1:
         # Method from https://doi.org/10.1063/1.529425.
         # Choosing m = r is a heuristic that seems to work reasonably well for
-        # uneven trotterization orders; there might be more reasonably
-        # guesses. It is desirable to choose r as small as possible, s.t. this
+        # uneven trotterization orders; there might be more reasonable
+        # choices. It is desirable to choose r as small as possible, s.t. this
         # function returns as few operator layers as necessary.
         popt = suzuki_recursion_coefficients(
             m=trotter_order,

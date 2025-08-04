@@ -889,7 +889,7 @@ def loop_series_contraction(
     if "iterator_desc_prefix" in kwargs.keys():
         kwargs["iterator_desc_prefix"] = "".join((
             kwargs["iterator_desc_prefix"],
-            " | Loop Series Contraction | "
+            " | Loop Series Contraction"
         ))
     else:
         kwargs["iterator_desc_prefix"] = "Loop Series Contraction"
@@ -924,11 +924,18 @@ def loop_series_contraction(
         )
     braket.op.check_tree = False
 
-    if excitations is None:
+    if max_order == 0:
+        # The function BP_excitations internally calculates all excitations
+        # before returning only the ones that the user asked for. if max_order
+        # zero, we do not need to incur this overhead.
+        excitations = ()
+
+    elif excitations is None:
         # Finding excitations in the graph.
         excitations = BP_excitations(
             braket.G, max_order=max_order, sanity_check=sanity_check
         )
+
     else:
         excitations = tuple(
             exc for exc in excitations
@@ -938,7 +945,8 @@ def loop_series_contraction(
     iterator = tqdm.tqdm(
         iterable=excitations,
         desc="BP excitations",
-        disable=not verbose
+        disable=not verbose,
+        total=len(excitations)
     )
 
     cntr = 1
