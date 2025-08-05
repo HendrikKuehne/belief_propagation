@@ -40,6 +40,10 @@ from belief_propagation.utils import (
 from belief_propagation.PEPO import PEPO, Identity
 from belief_propagation.PEPS import PEPS
 
+# -----------------------------------------------------------------------------
+#                   Braket classes
+# -----------------------------------------------------------------------------
+
 
 @ray.remote(num_cpus=1)
 def contract_tensor_msg(
@@ -223,7 +227,7 @@ class BaseBraket:
 
         # Removing dummy physical dimensions.
         for node in cntr_network:
-            cntr_network.G.nodes[node]["T"] = cntr_network[node][-1][...,0]
+            cntr_network.G.nodes[node]["T"] = cntr_network[node][-1][..., 0]
 
         if sanity_check: assert network_message_check(G=cntr_network.G)
         return cntr_network.G
@@ -404,8 +408,8 @@ class BaseBraket:
             **kwargs
         ):
         """
-        Contraction of the tensor network contained in `G`. The TN will
-        be contained in `self.ket`. `kwargs` are passed to
+        Initialize a Braket that contains the tensor network in `G`. The
+        TN will be contained in `self.ket`. `kwargs` are passed to
         `cls.__init__`. `G` needs to contain a tensor on every site, and
         the `legs` attribute on every edge.
         """
@@ -634,21 +638,21 @@ class Braket(BaseBraket):
         to the bra, the second index belongs to the operator and the
         third one belongs to the ket.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         self.msg = {node: {} for node in self.G.nodes()}
 
         for node1, node2 in self.G.edges():
-            for sender, receiver in itertools.permutations(
-                (node1, node2)
-            ):
+            for sender, receiver in itertools.permutations((node1, node2)):
                 if len(self.G.adj[sender]) > 1:
-                    # ket and bra leg indices, and sizes
+                    # sender is not a leaf node.
+
+                    # Bra, op and ket leg indices, and sizes.
                     bra_size = self.bra.G[sender][receiver][0]["size"]
                     op_size = self.op.G[sender][receiver][0]["size"]
                     ket_size = self.ket.G[sender][receiver][0]["size"]
-                    # new message
+                    # Constructing the new message.
                     self.msg[sender][receiver] = self.get_new_message(
                         bra_size=bra_size,
                         op_size=op_size,
@@ -658,8 +662,10 @@ class Braket(BaseBraket):
                         rng=rng,
                         dtype=self.dtype
                     )
+
                 else:
-                    # sending node is leaf node
+                    # Sending node is leaf node; the message is the leaf
+                    # tensor stack.
                     self.msg[sender][receiver] = ctg.einsum(
                         "ij,kjl,rl->ikr",
                         self.bra.G.nodes[sender]["T"],
@@ -716,19 +722,19 @@ class Braket(BaseBraket):
         transformations that live on the edges of the braket, such as
         projections.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         for node1, node2 in self.G.edges():
-            for sender,receiver in itertools.permutations((node1, node2)):
-                if np.isnan(self._edge_T[sender][receiver]).any():
+            for sender, receiver in itertools.permutations((node1, node2)):
+                if np.isnan(self.edge_T[sender][receiver]).any():
                     # no transformation on this edge
                     continue
 
                 # applying the transformation
                 self.msg[sender][receiver] = np.einsum(
                     "ijkabc,abc->ijk",
-                    self._edge_T[sender][receiver],
+                    self.edge_T[sender][receiver],
                     self.msg[sender][receiver]
                 )
 
@@ -749,7 +755,7 @@ class Braket(BaseBraket):
 
         Parallelization using ray.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         if all(len(self.G.adj[node]) <= 1 for node in self.G.nodes):
@@ -759,15 +765,14 @@ class Braket(BaseBraket):
 
         old_msg = copy.deepcopy(self.msg)
 
-        if not parallel: # non-parallel version of the code
+        if not parallel: # Non-parallel version of the message update.
             new_msg = {node: {} for node in self.G.nodes()}
 
             for node1, node2 in self.G.edges():
-                for sender,receiver in itertools.permutations((node1, node2)):
-                    # messages in both directions
+                for sender, receiver in itertools.permutations((node1, node2)):
 
                     if len(self.G.adj[sender]) == 1:
-                        # leaf node; no action necessary
+                        # Sender is a leaf node; these are not updated.
                         new_msg[sender][receiver] = self.msg[sender][receiver]
                         continue
 
@@ -777,15 +782,15 @@ class Braket(BaseBraket):
                         sanity_check=sanity_check
                     )
 
-                    # saving the new message
+                    # Applying damping, and saving the new message.
                     new_msg_ = (msg * (1 - damping)
                                 + damping * old_msg[sender][receiver])
                     new_msg[sender][receiver] = new_msg_
 
-            # put new messages in the graph
+            # Put new messages in the graph.
             self.msg = new_msg
 
-        else: # parallel version
+        else: # Parallel version.
             if not ray.is_initialized(): ray.init()
 
             ray_refs = []
@@ -793,10 +798,9 @@ class Braket(BaseBraket):
 
             for node1, node2 in self.G.edges():
                 for sender, receiver in itertools.permutations((node1, node2)):
-                    # messages in both directions
 
                     if len(self.G.adj[sender]) == 1:
-                        # leaf node; no action necessary
+                        # Sender is a leaf node; these are not updated.
                         continue
 
                     ray_refs += [contract_tensor_msg.remote(
@@ -804,28 +808,28 @@ class Braket(BaseBraket):
                     ),]
                     msg_ids += ((sender, receiver),)
 
-            # get new messages
+            # Get new messages.
             new_msg = ray.get(ray_refs)
 
             for msg_id, msg in zip(msg_ids, new_msg):
                 sender, receiver = msg_id
-                # Calculating the new message.
+                # Applying damping, and saving the new message.
                 new_msg_ = (msg * (1 - damping)
                             + damping * self.msg[sender][receiver])
                 self.msg[sender][receiver] = new_msg_
 
-        # passing messages through the edges
+        # Passing messages through the edges.
         self.__pass_msg_through_edges(sanity_check=sanity_check)
 
         if normalize:
-            # normalize messages to unity
+            # Normalize messages to unity.
             self.normalize_messages(
                 normalize_to="unity",
                 sanity_check=sanity_check
             )
 
         eps = ()
-        # change in message norm
+        # Calculating message epsilon.
         for node1, node2 in self.G.edges():
             for sender, receiver in itertools.permutations((node1, node2)):
                 eps += (np.linalg.norm(
@@ -852,7 +856,7 @@ class Braket(BaseBraket):
         Performs a message passing iteration. Returns the change `eps`
         in maximum message norm for every iteration.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         iterator = tqdm.tqdm(
@@ -906,6 +910,8 @@ class Braket(BaseBraket):
                     iterator.close()
 
                     if self.trap_retries < self.max_trap_retries:
+                        # Re-starting BP iteration with new messages and
+                        # increased damping
                         with tqdm.tqdm.external_write_mode():
                             warnings.warn(
                                 "".join((
@@ -918,7 +924,7 @@ class Braket(BaseBraket):
                         self.trap_retries += 1
                         return self.__message_passing_iteration(
                             numiter=numiter,
-                            damping=damping + .1,
+                            damping=damping + (1 - damping) / 10,
                             real=real,
                             normalize=normalize,
                             threshold=threshold,
@@ -964,7 +970,7 @@ class Braket(BaseBraket):
         in the respective Lp-norm. It is also possible to supply
         `np.inf`.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         if normalize_to is np.inf:
@@ -977,7 +983,7 @@ class Braket(BaseBraket):
                         # divide-by-zero during cntr calculation at the end of
                         # BP. How I handle this instead is I set node.cntr = 0
                         # for zero-messages in
-                        # self.__contract_tensors_inbound_messages
+                        # self.__contract_tensors_inbound_messages.
                         continue
 
                     msg_norm = np.max(np.abs(self.msg[sender][receiver]))
@@ -991,11 +997,7 @@ class Braket(BaseBraket):
                     # Vanishing messages will be blown up by normalization,
                     # which is something we do not want.
                     if np.allclose(self.msg[sender][receiver], 0):
-                        # Why not set them to zero? Because we incur a
-                        # divide-by-zero during cntr calculation at the end of
-                        # BP. How I handle this instead is I set node.cntr = 0
-                        # for zero-messages in
-                        # self.__contract_tensors_inbound_messages
+                        # Why not set them to zero? See above.
                         continue
 
                     msg_norm = np.sum(
@@ -1011,11 +1013,7 @@ class Braket(BaseBraket):
                     # Vanishing messages will be blown up by normalization,
                     # which is something we do not want.
                     if np.allclose(self.msg[sender][receiver], 0):
-                        # Why not set them to zero? Because we incur a
-                        # divide-by-zero during cntr calculation at the end of
-                        # BP. How I handle this instead is I set node.cntr = 0
-                        # for zero-messages in
-                        # self.__contract_tensors_inbound_messages
+                        # Why not set them to zero? See above.
                         continue
 
                     msg_sum = np.sum(self.msg[sender][receiver])
@@ -1096,7 +1094,7 @@ class Braket(BaseBraket):
             return
     
         if normalize_to == "dotp":
-            # sanity check
+            # Sanity check.
             if not all(
                 "cntr" in self.G[node1][node2][0].keys()
                 for node1, node2 in self.G.edges()
@@ -1134,7 +1132,7 @@ class Braket(BaseBraket):
         Contracts the messages travelling in each direction of an edge,
         on every edge. Value is saved under the key `cntr`.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         for node1, node2 in self.G.edges():
@@ -1155,8 +1153,9 @@ class Braket(BaseBraket):
         """
         Strips node contraction values of their phases.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
+
         if not all(
             "cntr" in data.keys()
             for _, data in self.G.nodes(data=True)
@@ -1166,7 +1165,7 @@ class Braket(BaseBraket):
             )
 
         phases = ()
-        # Stripping all node contraction values from their complex phases.
+        # Stripping all node contraction values of their complex phases.
         for node, cntr in self.G.nodes(data="cntr"):
             phases += (np.angle(cntr),)
             self.G.nodes[node]["cntr"] = np.abs(cntr)
@@ -1195,7 +1194,7 @@ class Braket(BaseBraket):
         Contracts all messages into the respective nodes, and saves the
         value in each node.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         for node in self:
@@ -1221,7 +1220,7 @@ class Braket(BaseBraket):
         """
         Returns the signature of `contract_tensor_msg` as a dictionary.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check:
             assert self.intact
             assert self.G.has_node(sender) and self.G.has_node(receiver)
@@ -1247,7 +1246,7 @@ class Braket(BaseBraket):
         any edge is one, calculates the contraction value, and writes to
         `self.cntr`.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
         if self.msg is None: raise RuntimeError("No messages available.")
 
@@ -1308,7 +1307,7 @@ class Braket(BaseBraket):
         If the algorithm converges, the flag `self.converged` is set to
         `True`.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         if not (damping >= 0 and damping <= 1):
@@ -1412,6 +1411,24 @@ class Braket(BaseBraket):
 
         return eps_list
 
+    def clear_edge_T(self, sanity_check: bool = False) -> None:
+        """
+        Removes any edge transformations by inserting `np.nan`-valued
+        tensors, which are skipped during
+        `self.__pass_msg_through_edges`.
+        """
+        # Sanity check.
+        if sanity_check: assert self.intact
+
+        for node1, node2 in self.G.edges():
+            for sender, receiver in itertools.permutations((node1, node2)):
+                self.insert_edge_T(
+                    T=np.nan,
+                    sender=sender,
+                    receiver=receiver,
+                    sanity_check=sanity_check
+                )
+
     def insert_edge_T(
             self,
             T: np.ndarray,
@@ -1423,19 +1440,27 @@ class Braket(BaseBraket):
         Adds the transformation `T` to messages that are sent from
         `sender` to `receiver`.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
+
         if not self.G.has_edge(sender, receiver, 0):
             raise ValueError(
-                f"Edge ({sender},{receiver}) not present in graph."
+                f"Edge ({sender}, {receiver}) not present in graph."
             )
+
+        if np.isnan(T).any():
+            # The edge transformation contains np.nan. This designates it as a
+            # do-nothing-transformation; inserting a single np.nan to reduce
+            # memory footprint.
+            self._edge_T[sender][receiver] = np.nan
+            return
 
         vec_size = (
             self.bra.G[sender][receiver][0]["size"],
             self.op.G[sender][receiver][0]["size"],
             self.ket.G[sender][receiver][0]["size"]
         )
-        if not T.shape == 2*vec_size:
+        if not T.shape == 2 * vec_size:
             raise ValueError("".join((
                 "Transformation T as wrong shape. Expected ",
                 str(2*vec_size),
@@ -1446,8 +1471,9 @@ class Braket(BaseBraket):
 
         # Inserting T.
         if np.isnan(self.edge_T[sender][receiver]).any():
-            # No transformation on this edge so far.
+            # No transformation on this edge so far; inserting T directly.
             self._edge_T[sender][receiver] = T
+
         else:
             # Transformations are executed successively.
             self._edge_T[sender][receiver] = np.einsum(
@@ -1470,7 +1496,7 @@ class Braket(BaseBraket):
         Perturbs all messages in the braket. `d` is the magnitude of the
         perturbation relative to the unperturbed message.
         """
-        # sanity check
+        # Sanity check.
         if sanity_check: assert self.intact
 
         if self.msg == None:
@@ -1489,12 +1515,12 @@ class Braket(BaseBraket):
                     method=method,
                     rng=rng
                 )
-                # adjusting the strength of the perturbation
+                # Adjusting the strength of the perturbation.
                 delta_msg *= (norm * d / np.max(np.abs(delta_msg)))
 
                 self.msg[sender][receiver] += delta_msg
 
-        # convergence cannot be guaranteed anymore
+        # Convergence cannot be guaranteed anymore.
         self._converged = False
 
         return
@@ -1506,13 +1532,15 @@ class Braket(BaseBraket):
             **kwargs
         ) -> np.ndarray:
         """
-        Stacks the current messages and returns them as a vector that
+        Stacks all messages in `self` and returns them as a vector that
         could be passed to the closed-form of the BP iteration step.
         Intended to be used together with
         `self.get_closed_form_msg_update()`. `kwargs` are passed to
         `self.construct_initial_messages`.
         """
+        # Sanity check.
         if sanity_check: assert self.intact
+
         if new_messages: self.construct_initial_messages(
             **kwargs,
             sanity_check=sanity_check
@@ -1540,6 +1568,7 @@ class Braket(BaseBraket):
         second. The second (boolean) argument of the returned funcion is
         the sanity check.
         """
+        # Sanity check.
         if sanity_check: assert self.intact
 
         flat_braket = contract_braket_physical_indices(
@@ -1565,6 +1594,7 @@ class Braket(BaseBraket):
                         axis=(0, 1)
                     )
                     i_saved += size
+
             if not i_saved == len(msg_stack):
                 raise RuntimeError("".join((
                     "Number of elements in tensor stack does not match the ",
@@ -1777,6 +1807,7 @@ class Braket(BaseBraket):
         Messages. First key sending node, second key receiving node.
         """
 
+        # Inserting edge transformations, if given.
         if edge_T is None:
             self._edge_T: dict[int, dict[int, np.ndarray]] = {
                 sender: {
@@ -1840,22 +1871,9 @@ class ExcBraket(Braket):
         """The excitation that this object contains."""
 
 
-def check_contracted_physical_dims(
-        braket: Braket,
-        sanity_check: bool = False
-    ) -> bool:
-    """
-    Checks if `braket` contains dummy networks in `braket.op` and
-    `braket.bra`.
-    """
-    if sanity_check: assert braket.intact
-
-    for node in braket:
-        if not (np.allclose(braket.bra[node], np.ones(shape=1))
-                and np.allclose(braket.op[node], np.ones(shape=1))):
-            return False
-
-    return True
+# -----------------------------------------------------------------------------
+#                   BP convergence test
+# -----------------------------------------------------------------------------
 
 
 def __message_passthrough_factor_N(
@@ -1970,6 +1988,11 @@ def BP_convergence_test(
     return max(msg_influence_factors) < 1
 
 
+# -----------------------------------------------------------------------------
+#                   Braket contraction utilities
+# -----------------------------------------------------------------------------
+
+
 def braket_to_ctg_arguments(
         braket: Union[BaseBraket, Braket, ExcBraket],
         exclude: tuple[int] = (),
@@ -1984,12 +2007,12 @@ def braket_to_ctg_arguments(
     """
     Given a `Braket` object, assembles and returns the cotengra
     arguments `inputs`, `shapes`, `arrays` and `size_dict`. Arguments
-    are ordered by node ascending label, with bra, op and ket being
+    are ordered by ascending node label, with bra, op and ket being
     listed consecutively.
 
     Optionally, nodes can be excluded from the cotengra arguments,
     enabling partial contraction of `braket`. Nodes in `exclude` are
-    excluded. If `exclude_policy = "skip"` (default), ecluded nodes are
+    excluded. If `exclude_policy = "skip"` (default), excluded nodes are
     simply ignored. If `exclude_policy = "fill"`, the inputs of excluded
     nodes are returned and shapes and arrays are filled with
     placeholders.
@@ -1998,7 +2021,7 @@ def braket_to_ctg_arguments(
     for an introduction to how the return values represent a
     contraction.
     """
-    # sanity check
+    # Sanity check.
     if sanity_check: assert braket.intact
 
     if exclude_policy not in ("skip", "fill"):
@@ -2181,8 +2204,9 @@ def contract_braket_with_hole(
     legs. The ordering within the groups follows the leg ordering of the
     tensor at respective `hole`.
     """
-    # sanity check
+    # Sanity check.
     if sanity_check: assert braket.intact
+
     if not hole in braket:
         raise ValueError(f"Node {hole} is not contained in braket.")
 
@@ -2258,13 +2282,200 @@ def contract_braket_with_hole(
     return env
 
 
+def check_contracted_physical_dims(
+        braket: Braket,
+        sanity_check: bool = False
+    ) -> bool:
+    """
+    Checks if `braket` contains dummy networks in `braket.op` and
+    `braket.bra`.
+    """
+    # Sanity check.
+    if sanity_check: assert braket.intact
+
+    for node in braket:
+        if not (np.allclose(braket.bra[node], np.ones(shape=1))
+                and np.allclose(braket.op[node], np.ones(shape=1))):
+            return False
+
+    return True
+
+
+def contract_tensor_inbound_messages(
+        braket: Braket,
+        node: int,
+        neighbors: Iterable[int] = None,
+        sanity_check: bool = False
+    ) -> Union[float, np.ndarray]:
+    """
+    Contracts the tensor at `node` with it's incoming messages. If
+    given, only messages from nodes in `neighbors` are absorbed. By
+    default, all incoming messages are absorbed, yielding a scalar.
+    """
+    # Sanity check.
+    if sanity_check: assert braket.intact
+
+    # If neighbors is not given, we absorb all incoming messages.
+    if neighbors is None: neighbors = tuple(braket.G.adj[node])
+
+    # We use the number of virtual legs of the tensor to enumerate the edges
+    # during einsum contraction.
+    nLegs = len(braket.G.adj[node])
+
+    args = ()
+
+    for neighbor in neighbors:
+        args += (
+            braket.msg[neighbor][node],
+            (
+                # bra leg
+                braket.bra.G[node][neighbor][0]["legs"][node],
+                # operator leg
+                nLegs + braket.op.G[node][neighbor][0]["legs"][node],
+                # ket leg
+                2*nLegs + braket.ket.G[node][neighbor][0]["legs"][node],
+            )
+        )
+
+    args += (
+        # Bra tensor.
+        braket.bra.G.nodes[node]["T"],
+        tuple(range(nLegs)) + (3 * nLegs,),
+        # Operator tensor.
+        braket.op.G.nodes[node]["T"],
+        (tuple(nLegs + iLeg for iLeg in range(nLegs))
+         + (3 * nLegs, 3*nLegs + 1)),
+        # Ket tensor.
+        braket.ket.G.nodes[node]["T"],
+        tuple(2*nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs + 1,)
+    )
+
+    node_cntr = ctg.einsum(*args)
+
+    return node_cntr
+
+
+def __contract_tstack_physical_index(tstack: tuple[np.ndarray]) -> np.ndarray:
+    """
+    Contracts the physical indices in a tensor stack, and returns the
+    resulting tensor while keeping the leg ordering.
+    """
+    # Sizes of the legs that will remain afterwards.
+    bra_sizes = tuple(tstack[0].shape[:-1])
+    op_sizes = tuple(tstack[1].shape[:-2])
+    ket_sizes = tuple(tstack[2].shape[:-1])
+
+    # Sanity check.
+    if not len(tstack) == 3:
+        raise NotImplementedError("".join((
+            "Tensor stacks with more than three components are not yet ",
+            "supported."
+        )))
+    if not len(bra_sizes) == len(op_sizes) and len(op_sizes) == len(ket_sizes):
+        raise ValueError(
+            "Number of virtual legs in tensor stack components do not match."
+        )
+    if not (tstack[0].shape[-1] == tstack[1].shape[-2]
+            and tstack[1].shape[-1] == tstack[2].shape[-1]):
+        raise ValueError("Physical dimensions in tensor stack do not match.")
+
+    nLegs = len(bra_sizes)
+
+    args = (
+        # Bra tensor.
+        tstack[0],
+        tuple(3 * i for i in range(nLegs)) + (3 * nLegs,),
+        # Operator tensor.
+        tstack[1],
+        tuple(3*i + 1 for i in range(nLegs)) + (3 * nLegs, 3*nLegs + 1),
+        # Ket tensor.
+        tstack[2],
+        tuple(3*i + 2 for i in range(nLegs)) + (3*nLegs + 1,),
+    )
+    out_legs = tuple(range(3 * nLegs))
+
+    T = np.einsum(*args, out_legs, optimize=True)
+
+    # Sizes of the new legs.
+    new_sizes = tuple(
+        bra_sizes[i] * op_sizes[i] * ket_sizes[i]
+        for i in range(nLegs)
+    )
+    T = T.reshape(new_sizes)
+
+    return T
+
+
+def contract_braket_physical_indices(
+        braket: Union[BaseBraket, Braket, ExcBraket],
+        sanity_check: bool = False
+    ) -> Union[BaseBraket, Braket, ExcBraket]:
+    """
+    Contracts the physical indices at each site. Returns a new braket,
+    where the network is contained in `newbraket.ket`. Edge
+    transformations and messages are added to the returned braket, if
+    present in `braket`.
+    """
+    if sanity_check: assert braket.intact
+
+    newG = copy.deepcopy(braket.G)
+
+    # Contracting physical dimension in every tensor stack.
+    for node in braket:
+        newG.nodes[node]["T"] = __contract_tstack_physical_index(braket[node])
+
+    # Writing new sizes to the graph.
+    for node1, node2 in newG.edges():
+        leg1 = newG[node1][node2][0]["legs"][node1]
+        size = newG.nodes[node1]["T"].shape[leg1]
+        newG[node1][node2][0]["size"] = size
+
+    kwargs = {}
+    # Flattening edge transformations, if present.
+    if hasattr(braket,"edge_T"):
+        kwargs["edge_T"] = {}
+        for sender in braket.edge_T.keys():
+            kwargs["edge_T"][sender] = {}
+            for receiver, proj in braket.edge_T[sender].items():
+                size = newG[sender][receiver][0]["size"]
+                kwargs["edge_T"][sender][receiver] = (
+                    np.nan if np.isnan(proj).any()
+                    else np.expand_dims(
+                        proj.reshape(size, size),
+                        axis=(0, 1, 3, 4)
+                    )
+                )
+
+    # Flattening messages, if present.
+    if hasattr(braket,"msg"):
+        if braket.msg is not None:
+            kwargs["msg"] = {}
+            for sender in braket.msg.keys():
+                kwargs["msg"][sender] = {}
+                for receiver, msg in braket.msg[sender].items():
+                    flat_msg = np.expand_dims(msg.flatten(), axis=(0, 1))
+                    kwargs["msg"][sender][receiver] = flat_msg
+
+    newbraket = braket.__class__.Cntr(
+        G=newG, sanity_check=sanity_check, **kwargs
+    )
+    newbraket._converged = braket.converged
+
+    return newbraket
+
+
+# -----------------------------------------------------------------------------
+#                   Loop series expansion utilities
+# -----------------------------------------------------------------------------
+
+
 def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
     """
     Given a linear edge transformation `T` from a braket, splits it into
     three tensors via two SVDs. This transforms the edge transformation
     into a tensor stack that could be inserted into a braket.
     """
-    # sanity check
+    # Sanity check.
     if not (T.shape[0] == T.shape[3]
             and T.shape[1] == T.shape[4]
             and T.shape[2] == T.shape[5]):
@@ -2306,18 +2517,18 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
 
     # Re-shaping an transposing T_bra T_op and T_ket s.t. they form a tensor
     # stack.
-    T_bra = np.reshape(T_bra, newshape=(bra_size, bra_size, D_bra_op))
+    T_bra = np.reshape(T_bra, shape=(bra_size, bra_size, D_bra_op))
     T_op = np.transpose(
         np.reshape(
             T_op,
-            newshape=(D_bra_op, op_size, op_size, D_op_ket)
+            shape=(D_bra_op, op_size, op_size, D_op_ket)
         ),
         axes=(1, 2, 0, 3)
     )
     T_ket = np.transpose(
         np.reshape(
             T_ket,
-            newshape=(D_op_ket, ket_size, ket_size)
+            shape=(D_op_ket, ket_size, ket_size)
         ),
         axes=(1, 2, 0)
     )
@@ -2364,169 +2575,6 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
 
     else:
         return T_bra, T_op, T_ket
-
-
-def contract_tensor_inbound_messages(
-        braket: Braket,
-        node: int,
-        neighbors: Iterable[int] = None,
-        sanity_check: bool = False
-    ) -> Union[float, np.ndarray]:
-    """
-    Contracts the tensor at `node` with it's incoming messages. If
-    given, only messages from nodes in `neighbors` are absorbed. By
-    default, all incoming messages are absorbed, yielding a scalar.
-    """
-    # sanity check
-    if sanity_check: assert braket.intact
-
-    # If neighbors is not given, we absorb all incoming messages.
-    if neighbors is None: neighbors = tuple(braket.G.adj[node])
-
-    # We use the number of virtual legs of the tensor to enumerate the edges
-    # during einsum contraction.
-    nLegs = len(braket.G.adj[node])
-
-    args = ()
-
-    for neighbor in neighbors:
-        args += (
-            braket.msg[neighbor][node],
-            (
-                # bra leg
-                braket.bra.G[node][neighbor][0]["legs"][node],
-                # operator leg
-                nLegs + braket.op.G[node][neighbor][0]["legs"][node],
-                # ket leg
-                2*nLegs + braket.ket.G[node][neighbor][0]["legs"][node],
-            )
-        )
-
-    args += (
-        # Bra tensor.
-        braket.bra.G.nodes[node]["T"],
-        tuple(range(nLegs)) + (3 * nLegs,),
-        # Operator tensor.
-        braket.op.G.nodes[node]["T"],
-        (tuple(nLegs + iLeg for iLeg in range(nLegs))
-         + (3 * nLegs, 3*nLegs + 1)),
-        # Ket tensor.
-        braket.ket.G.nodes[node]["T"],
-        tuple(2*nLegs + iLeg for iLeg in range(nLegs)) + (3*nLegs + 1,)
-    )
-
-    node_cntr = ctg.einsum(*args)
-
-    return node_cntr
-
-
-def __contract_tstack_physical_index(tstack: tuple[np.ndarray]) -> np.ndarray:
-    """
-    Contracts the physical index in a tensor stack, and returns the
-    resulting tensor while keeping the leg ordering.
-    """
-    # Sizes of the legs that will remain after
-    bra_sizes = tuple(tstack[0].shape[:-1])
-    op_sizes = tuple(tstack[1].shape[:-2])
-    ket_sizes = tuple(tstack[2].shape[:-1])
-
-    # sanity check
-    if not len(tstack) == 3:
-        raise NotImplementedError("".join((
-            "Tensor stacks with more than three components are not yet ",
-            "supported."
-        )))
-    if not len(bra_sizes) == len(op_sizes) and len(op_sizes) == len(ket_sizes):
-        raise ValueError(
-            "Number of virtual legs in tensor stack components do not match."
-        )
-    if not (tstack[0].shape[-1] == tstack[1].shape[-2]
-            and tstack[1].shape[-1] == tstack[2].shape[-1]):
-        raise ValueError("Physical dimensions in tensor stack do not match.")
-
-    nLegs = len(bra_sizes)
-
-    args = (
-        # bra tensor
-        tstack[0],
-        tuple(3 * i for i in range(nLegs)) + (3 * nLegs,),
-        # operator tensor
-        tstack[1],
-        tuple(3*i + 1 for i in range(nLegs)) + (3 * nLegs, 3*nLegs + 1),
-        # ket tensor
-        tstack[2],
-        tuple(3*i + 2 for i in range(nLegs)) + (3*nLegs + 1,),
-    )
-    out_legs = tuple(range(3 * nLegs))
-
-    T = np.einsum(*args, out_legs, optimize=True)
-
-    # sizes of the new legs.
-    new_sizes = tuple(
-        bra_sizes[i] * op_sizes[i] * ket_sizes[i]
-        for i in range(nLegs)
-    )
-    T = T.reshape(new_sizes)
-
-    return T
-
-
-def contract_braket_physical_indices(
-        braket: Union[BaseBraket, Braket, ExcBraket],
-        sanity_check: bool = False
-    ) -> Union[BaseBraket, Braket, ExcBraket]:
-    """
-    Contracts the physical indices at each site. Returns a new braket,
-    where the network is contained in `newbraket.ket`. Edge
-    transformations and messages are added to the returned braket, if
-    present in `braket`.
-    """
-    if sanity_check: assert braket.intact
-
-    newG = copy.deepcopy(braket.G)
-
-    # Contracting physical dimension in every tensor stack.
-    for node in braket:
-        newG.nodes[node]["T"] = __contract_tstack_physical_index(braket[node])
-
-    # writing new sizes to the graph.
-    for node1, node2 in newG.edges():
-        leg1 = newG[node1][node2][0]["legs"][node1]
-        size = newG.nodes[node1]["T"].shape[leg1]
-        newG[node1][node2][0]["size"] = size
-
-    kwargs = {}
-    # Flattening edge transformations, if present.
-    if hasattr(braket,"edge_T"):
-        kwargs["edge_T"] = {}
-        for sender in braket.edge_T.keys():
-            kwargs["edge_T"][sender] = {}
-            for receiver, proj in braket.edge_T[sender].items():
-                size = newG[sender][receiver][0]["size"]
-                kwargs["edge_T"][sender][receiver] = (
-                    np.nan if np.isnan(proj).any()
-                    else np.expand_dims(
-                        proj.reshape(size, size),
-                        axis=(0, 1, 3, 4)
-                    )
-                )
-
-    # Flattening messages, if present.
-    if hasattr(braket,"msg"):
-        if braket.msg is not None:
-            kwargs["msg"] = {}
-            for sender in braket.msg.keys():
-                kwargs["msg"][sender] = {}
-                for receiver, msg in braket.msg[sender].items():
-                    flat_msg = np.expand_dims(msg.flatten(), axis=(0, 1))
-                    kwargs["msg"][sender][receiver] = flat_msg
-
-    newbraket = braket.__class__.Cntr(
-        G=newG, sanity_check=sanity_check, **kwargs
-    )
-    newbraket._converged = braket.converged
-
-    return newbraket
 
 
 def BP_excitations(
@@ -2660,8 +2708,7 @@ def assemble_excitation_brakets(
                         f"Excitations {i} and {j} are not disjoint."
                     )
 
-        # For disjoint excitations, the contribution is the product of the
-        # components.
+        # Constructing excitations brakets for all connected components.
         all_excs = sum(
             (assemble_excitation_brakets(
                 braket=braket,

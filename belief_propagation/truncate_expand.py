@@ -881,6 +881,10 @@ def loop_series_contraction(
     the maximum oder of loops that are taken into consideration; default
     is `np.inf`, where all loops are incorporated. `kwargs` are passed
     to `braket.BP`.
+
+    A braket with converged messages may be passed, in which case it's
+    messages will be used. Changes to `braket` are reversed before this
+    function returns, s.t. `braket` may be re-used.
     """
     # sanity check
     if sanity_check: assert braket.intact
@@ -970,6 +974,13 @@ def loop_series_contraction(
             T * (node_cntr[node] ** (1/3))
             for T in braket[node]
         )
+
+    # Tensor stacks manipulations have been reversed, thus we may set the
+    # converged flag again.
+    braket._converged = True
+
+    # Removing all edge transformations.
+    braket.clear_edge_T(sanity_check=sanity_check)
 
     return cntr * cntr_norm_factor
 
