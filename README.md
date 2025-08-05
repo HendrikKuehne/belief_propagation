@@ -34,9 +34,12 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
     * I should clean up my code anyways, a good guide might be the [PEP 8 style guide](https://peps.python.org/pep-0008/).
-* Parallelize using [Nvidia cuPyNumeric](https://developer.nvidia.com/cupynumeric)
-    * Installation instructions [here](https://github.com/NVIDIA/accelerated-computing-hub/blob/main/Accelerated_Python_User_Guide/notebooks_v1/Chapter_11_Distributed_Computing_cuPyNumeric.ipynb)
-    * I can't get it to use the GPUs on `sccs.homeone`; it seems to me like CUDA is not being installed correctly. The [CUDA toolkit downloads](https://developer.nvidia.com/cuda-downloads) require administrator privileges during the installation process, which I don't have. I tried [installing CUDA with conda](https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html#x86-64-conda) before installing cuPyNumeric, but that doesn't seem to work...
+* Acceleration using CUDA
+    * Faster numerics with [Nvidia cuPyNumeric](https://developer.nvidia.com/cupynumeric)
+        * Installation instructions [here](https://github.com/NVIDIA/accelerated-computing-hub/blob/main/Accelerated_Python_User_Guide/notebooks_v1/Chapter_11_Distributed_Computing_cuPyNumeric.ipynb)
+        * I can't get it to use the GPUs on `sccs.homeone`; it seems to me like CUDA is not being installed correctly. The [CUDA toolkit downloads](https://developer.nvidia.com/cuda-downloads) require administrator privileges during the installation process, which I don't have. I tried [installing CUDA with conda](https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html#x86-64-conda) before installing cuPyNumeric, but that doesn't seem to work... I would think though that there is something wrong on my end, because [the `x-wing0` node does have NVIDIA GPUs](https://gitlab.lrz.de/tum-i05/public/home-one-cluster/-/blob/master/README.md?ref_type=heads#general-information).
+    * Faster graph routines with [nx-cugraph](https://github.com/rapidsai/nx-cugraph)
+        * Tutorial [here](https://developer.nvidia.com/blog/7-drop-in-replacements-to-instantly-speed-up-your-python-data-science-workflows/#scaling_graph_analytics_with_networkx)
 * Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
@@ -74,6 +77,9 @@ This will be updated continuously, as questions come to mind.
 * What happens when we try Christian's idea of Orthogonal Belief Propagation?
     * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of PEPS networks that Arad (2021) introduces?
 * Do different gauges have a (strong) effect on BPDMRG performance?
+* BP Trapping sets
+    * I have seen the BP algorithm stagnate during imaginary time evolution, but in a very strange way: Messages oscillate s.t. the message epsilon stays constant. I have no idea where this might come from, but it seems like this behavior is not unheard of in the literature; [arXiv:2506.01779](https://arxiv.org/abs/2506.01779) talks about a thing called "trapping sets"
+    * For the moment I'll simply check for this during `braket.BP`. If it happens, I'll initialize new messages and add damping to the BP iteration.
 
 [^4]: In the code contained herein, only nodes contain values. The emphasis is here on *associate*; the $1/Z$ that we could associate with an edge is factorized, it's factors being distributed in the adjacent nodes.
 
@@ -154,6 +160,15 @@ This will be updated continuously, as questions come to mind.
     * H. C. Jiang, Z. Y. Weng, T. Xiang  
       Accurate determination of tensor network state of quantum lattice models in two dimensions  
       [Phys. Rev. Lett. 101, 090603 (2008)](https://doi.org/10.1103/PhysRevLett.101.090603) ([arXiv:0806.3719](https://arxiv.org/abs/0806.3719))
+    * Matthew Leifer, David Poulin  
+      Quantum Graphical Models and Belief Propagation  
+      [Ann. Phys. 323 1899 (2008)](https://doi.org/10.1016/j.aop.2007.10.001) ([arXiv:0708.1337](https://arxiv.org/abs/0708.1337))
+    * Tristan Müller, Thomas Alexander, Michael E. Beverland, Markus Bühler, Blake R. Johnson, Thilo Maurer, Drew Vandeth  
+      Improved belief propagation is sufficient for real-time decoding of quantum memory  
+      [arXiv:2506.01779](https://arxiv.org/abs/2506.01779)
+    * D. A. Millar, L. W. Anderson, E. Altamura, O. Wallis, M. E. Sahin, J. Crain, S. J. Thomson  
+      Imaginary Time Spectral Transforms for Excited State Preparation  
+      [arXiv:2508.00065](https://arxiv.org/abs/2508.00065)
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  
