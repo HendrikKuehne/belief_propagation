@@ -433,11 +433,13 @@ class BaseBraket:
         Overlap <`psi1`,`psi2`> of two PEPS. Returns the corresponding
         `Braket` object. `kwargs` are passed to `cls.__init__`.
         """
+        if "dtype" not in kwargs.keys():
+            kwargs["dtype"] = np.result_type(psi1.dtype, psi2.dtype)
+
         return cls(
             bra=psi1.conj(sanity_check=sanity_check),
             op=Identity(G=psi1.G, D=psi1.D, sanity_check=sanity_check),
             ket=psi2,
-            dtype=np.result_type(psi1.dtype, psi2.dtype),
             sanity_check=sanity_check,
             **kwargs
         )

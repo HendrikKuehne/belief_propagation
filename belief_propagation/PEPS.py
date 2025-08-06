@@ -372,7 +372,7 @@ class PEPS:
     def Dummy(
             cls,
             G: nx.MultiGraph,
-            dtype=np.complex128,
+            dtype: np.dtype = np.complex128,
             sanity_check: bool = False
         ) -> "PEPS":
         """
@@ -397,6 +397,7 @@ class PEPS:
             G: nx.MultiGraph,
             state: Union[np.ndarray, dict[int, np.ndarray]],
             normalize: bool = True,
+            dtype: np.dtype = None,
             sanity_check: bool = False
         ) -> "PEPS":
         """
@@ -409,15 +410,14 @@ class PEPS:
             return cls.ProductState(
                 G=G,
                 state={node: state for node in G.nodes()},
+                dtype=dtype,
                 sanity_check=sanity_check
             )
 
         if isinstance(state, dict):
-            # Trying to infer the data type.
-            dtype_set: set[np.dtype] = set()
-            for node, T in state.items():
-                dtype_set.add(T.dtype)
-            if len(dtype_set) == 1: dtype = dtype_set.pop()
+            # Infer the data type.
+            dtypes = [T.dtype for node, T in state.items()]
+            dtype = np.result_type(*dtypes) if dtype is None else dtype
 
             # sanity check
             if not nx.utils.nodes_equal(state.keys(), G.nodes()):
