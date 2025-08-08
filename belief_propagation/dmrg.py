@@ -12,7 +12,6 @@ import pickle
 import os
 import datetime
 from io import TextIOWrapper, StringIO
-import time
 
 import numpy as np
 import networkx as nx
@@ -20,12 +19,12 @@ import cotengra as ctg
 import tqdm
 import scipy.sparse as scisparse
 
+import belief_propagation.cupy_utils as cputils
 from belief_propagation.utils import (
     is_hermitian_matrix,
     is_hermitian_message,
     is_hermitian_environment,
     gen_eigval_problem,
-    rel_err,
     same_legs,
     graph_compatible,
     check_msg_intact
@@ -66,6 +65,15 @@ class _SumLocalOperator(scisparse.linalg._interface._SumLinearOperator):
         """
         return (self.__toarray_backend_agnostic(self.args[0])
                 + self.__toarray_backend_agnostic(self.args[1]))
+
+    def togpu(self) -> cputils._SumLocalOperator:
+        """
+        Initialize a new operator that lives on GPU.
+        """
+        if not cputils.CUPY_AVAILABLE: raise NotImplementedError(
+            "cupy installation could not be found."
+        )
+        return self.args[0].togpu() + self.args[1].togpu()
 
     @staticmethod
     def __toarray_backend_agnostic(
@@ -116,9 +124,10 @@ class LocalOperator(scisparse.linalg.LinearOperator):
         represents the operator.
 
         Leg ordering of the local operator: (bra virtual dimensions, bra
-        physical dimension, ket virtual dimensions, ket physical dimension).
-        The order of the virtual legs is inherited from the "legs" indices on
-        the edges; the 0th leg ends up in the first dimension.
+        physical dimension, ket virtual dimensions, ket physical
+        dimension). The order of the virtual legs is inherited from the
+        "legs" indices on the edges; the 0th leg ends up in the first
+        dimension.
         """
         mat = np.einsum(*self.args, self.out_legs_array, optimize=True)
         mat = np.reshape(mat, shape=self.shape)
@@ -180,6 +189,36 @@ class LocalHamiltonianOperator(LocalOperator):
     operator.
     """
 
+    def togpu(self) -> cputils.LocalHamiltonianOperator:
+        """
+        Initialize a new hamiltonian that lives on GPU.
+        """
+        if not cputils.CUPY_AVAILABLE: raise NotImplementedError(
+            "cupy installation could not be found."
+        )
+
+        # Assembling message data for hermitian conjugate.
+        msgdata = tuple(
+            (
+                self.args[2 * i],
+                (
+                    self.args[2 * i + 1][0],
+                    self.args[2 * i + 1][1] - self.nLegs,
+                    self.args[2 * i + 1][2] - 2 * self.nLegs
+                )
+            )
+            for i in range(self.nLegs)
+        )
+
+        # Retrieving operator.
+        W = self.args[-2]
+
+        return cputils.LocalHamiltonianOperator(
+            nLegs=self.nLegs,
+            W=self.args[-2],
+            msgdata=msgdata
+        )
+
     def _adjoint(self) -> "LocalHamiltonianOperator":
         """
         Hermitian conjugate, by conjugation of the constituent messages
@@ -207,7 +246,6 @@ class LocalHamiltonianOperator(LocalOperator):
 
         return self.__class__(
             nLegs=self.nLegs,
-            D=self.D,
             W=W_conj,
             msgdata=msgdata
         )
@@ -290,6 +328,27 @@ class LocalEnvironmentOperator(LocalOperator):
     Local environment in DMRG optimization step as matrix-free linear
     operator.
     """
+
+    def togpu(self) -> cputils.LocalEnvironmentOperator:
+        """
+        Hermitian conjugate, by conjugation of the constituent messages.
+        """
+        if not cputils.CUPY_AVAILABLE: raise NotImplementedError(
+            "cupy installation could not be found."
+        )
+
+        # Assembling message data for hermitian conjugate.
+        msgdata = tuple(
+            (
+                self.args[2 * i],
+                (self.args[2*i + 1][0], self.args[2*i + 1][1] - 2*self.nLegs))
+            for i in range(self.nLegs)
+        )
+        return cputils.LocalEnvironmentOperator(
+            nLegs=self.nLegs,
+            D=self.D,
+            msgdata=msgdata
+        )
 
     @property
     def inv(self) -> "LocalEnvironmentOperator":
@@ -669,13 +728,14 @@ class DMRG:
                 eigvals, eigvecs = gen_eigval_problem(
                     A=H,
                     B=N,
-                    force_dense=False,#True if H.shape[0] < 1500 else False,
+                    force_dense=True if H.shape[0] < 1500 else False,
+                    force_cpu=True,
                     eps=self.tikhonov_regularization_eps,
                     raise_no_convergence_err=True,
                     v0=self[node].flatten(),
                     k=1,
                     Minv=N.inv,
-                    tol=1e-3 if self.__iSweep == 0 else 1e-10,
+                    tol=1e-7 if self.__iSweep == 0 else 1e-10,
                 )
 
                 # Re-shaping statevector into site tensor.
@@ -2467,6 +2527,7 @@ def environments_direct_sum(
         )
 
     return sum_env
+
 
 if __name__ == "__main__":
     pass

@@ -50,6 +50,20 @@ import scipy.linalg as scialg
 import scipy.sparse as scisparse
 import scipy.optimize as sciopt
 import tqdm
+try:
+    import cupy as cp
+    import cupyx.scipy.sparse as cusparse
+    import cupyx.scipy.sparse.linalg as culinalg
+    CUPY_AVAILABLE = True
+
+    try:
+        n_devices = cp.cuda.runtime.getDeviceCount()
+    except:
+        # If this fails, there is no CUDA device available.
+        raise ModuleNotFoundError("No CUDA device available.")
+
+except ModuleNotFoundError:
+    CUPY_AVAILABLE = False
 
 # -----------------------------------------------------------------------------
 #                   Math
@@ -176,52 +190,47 @@ def rel_err(ref: float, approx: float) -> float:
     return np.linalg.norm(ref - approx) / np.linalg.norm(ref)
 
 
-def check_msg_psd(
-        G: nx.MultiGraph,
-        threshold: float = 1e-8,
-        verbose: bool = False
-    ) -> bool:
-    """
-    Checks whether all the messages in `G` are positive semi-definite.
-    """
-    # TODO: implement
-    raise NotImplementedError
-
-
 def cond(
         A: Union[np.ndarray, scisparse.linalg.LinearOperator],
-        p = None
+        p = None,
+        force_cpu: bool = True
     ) -> float:
     """
     Condition number of `A`. `p` determines the norm that is used; see
     [here](https://numpy.org/doc/stable/reference/generated/numpy.linalg.cond.html).
     """
-    if not isinstance(A, scisparse.linalg.LinearOperator):
+    if isinstance(A, np.ndarray):
         return np.linalg.cond(A, p=p)
+
+    # Choosing an SVD-solver.
+    if CUPY_AVAILABLE and (not force_cpu):
+        svdsolver = culinalg.svds
+    else:
+        svdsolver = scisparse.linalg.svds
 
     # kwargs for svd solver.
     kwargs = {"k": 1, "return_singular_vectors": False}
 
     if p == 2 or p is None:
         if hasattr(A, "inv"):
-            norm = scisparse.linalg.svds(A=A, which="LM", **kwargs)
-            invnorm = scisparse.linalg.svds(A=A.inv, which="LM", **kwargs)
+            norm = svdsolver(A, which="LM", **kwargs)
+            invnorm = svdsolver(A.inv, which="LM", **kwargs)
             return (norm * invnorm).item()
 
         else:
-            maxsingval = scisparse.linalg.svds(A=A, which="LM", **kwargs)
-            minsingval = scisparse.linalg.svds(A=A, which="SM", **kwargs)
+            maxsingval = svdsolver(A, which="LM", **kwargs)
+            minsingval = svdsolver(A, which="SM", **kwargs)
             return (maxsingval / minsingval).item()
 
     if p == -2:
         if hasattr(A, "inv"):
-            norm = scisparse.linalg.svds(A=A, which="SM", **kwargs)
-            invnorm = scisparse.linalg.svds(A=A.inv, which="SM", **kwargs)
+            norm = svdsolver(A, which="SM", **kwargs)
+            invnorm = svdsolver(A.inv, which="SM", **kwargs)
             return (norm * invnorm).item()
 
         else:
-            maxsingval = scisparse.linalg.svds(A=A, which="LM", **kwargs)
-            minsingval = scisparse.linalg.svds(A=A, which="SM", **kwargs)
+            maxsingval = svdsolver(A, which="LM", **kwargs)
+            minsingval = svdsolver(A, which="SM", **kwargs)
             return (minsingval / maxsingval).item()
 
     raise NotImplementedError("".join((
@@ -230,16 +239,73 @@ def cond(
     )))
 
 
-def __gen_eigval_problem_matrixfree(
+def __gen_eigval_problem_matrixfree_gpu(
         A: scisparse.linalg.LinearOperator,
         B: scisparse.linalg.LinearOperator,
         k: int = 1,
         maxcond: float = 1e6,
         eps: float = 1e-5,
         tol: float = 1e-10,
+        v0: np.ndarray = None,
+        **cusparsekwargs
+    ) -> tuple[np.ndarray, np.ndarray]:
+    # Moving A and B to the GPU.
+    if hasattr(A, "togpu") and hasattr(B, "togpu"):
+        A_gpu = A.togpu()
+        B_gpu = B.togpu()
+    else:
+        A_gpu = culinalg.aslinearoperator(A)
+        B_gpu = culinalg.aslinearoperator(B)
+
+    cond_number = cond(B_gpu, force_cpu=False)
+    # TODO At the moment, cond(B) causes CPU-snychronization by returning
+    # .item() of a gpu-array. Could this bottleneck be removed? Probably not,
+    # since I do CPU-logic by checking against maxcond.
+
+    if "Minv" in cusparsekwargs:
+        cusparsekwargs.pop("Minv")
+
+    if cond_number > maxcond:
+        with tqdm.tqdm.external_write_mode():
+            warnings.warn(
+                "".join((
+                    "Conditionn number of the environment is ",
+                    f"{cond_number:.3e}. The GPU-version of the generalized ",
+                    "eigenvalue problem solver relies on explicit inversion ",
+                    "of the environment, which is numerically unstable for ",
+                    "large condition numbers."
+                )),
+                RuntimeWarning
+            )
+        if False:
+            # B is ill-conditioned; employing Tikhonov-regularization.
+            B_gpu = B_gpu + eps * culinalg.aslinearoperator(
+                cusparse.eye(B_gpu.shape[0])
+            )
+
+    eigvals, eigvecs = culinalg.eigsh(
+        a=B_gpu.inv @ A_gpu,
+        k=k,
+        which="SA",
+        v0=cp.asarray(v0) if v0 is not None else None,
+        tol=tol,
+        **cusparsekwargs,
+    )
+
+    return cp.asnumpy(eigvals), cp.asnumpy(eigvecs)
+
+
+def __gen_eigval_problem_matrixfree_cpu(
+        A: scisparse.linalg.LinearOperator,
+        B: scisparse.linalg.LinearOperator,
+        k: int = 1,
+        maxcond: float = 1e6,
+        eps: float = 1e-5,
+        tol: float = 1e-10,
+        v0: np.ndarray = None,
         **scisparsekwargs
     ) -> tuple[np.ndarray, np.ndarray]:
-    cond_number = cond(B)
+    cond_number = cond(B, force_cpu=True)
 
     if cond_number > maxcond:
         # B is ill-conditioned; employing Tikhonov-regularization.
@@ -255,11 +321,46 @@ def __gen_eigval_problem_matrixfree(
         M=B,
         k=k,
         which="SR",
+        v0=v0,
         tol=tol,
         **scisparsekwargs,
     )
 
     return eigvals, eigvecs
+
+
+def __gen_eigval_problem_matrixfree(
+        A: scisparse.linalg.LinearOperator,
+        B: scisparse.linalg.LinearOperator,
+        k: int,
+        maxcond: float,
+        eps: float,
+        tol: float,
+        v0: np.ndarray,
+        force_cpu: bool,
+        **kwargs
+    ) -> tuple[np.ndarray, np.ndarray]:
+    if CUPY_AVAILABLE and (not force_cpu):
+        return __gen_eigval_problem_matrixfree_gpu(
+            A=A,
+            B=B,
+            k=k,
+            maxcond=maxcond,
+            eps=eps,
+            tol=tol,
+            **kwargs
+        )
+    else:
+        return __gen_eigval_problem_matrixfree_cpu(
+            A=A,
+            B=B,
+            k=k,
+            maxcond=maxcond,
+            eps=eps,
+            tol=tol,
+            v0=v0,
+            **kwargs
+        )
 
 
 def __gen_eigval_problem_dense(
@@ -289,19 +390,23 @@ def gen_eigval_problem(
         B: Union[np.ndarray, scisparse.linalg.LinearOperator],
         maxcond: float = 1e6,
         eps: float = 1e-5,
+        tol: float = 1e-10,
+        v0: np.ndarray = None,
         force_dense: bool = False,
+        force_cpu: bool = False,
         raise_no_convergence_err: bool = False,
-        **scisparsekwargs
+        **kwargs
     ) -> tuple[np.ndarray, np.ndarray]:
     """
     Solves the generalized eigenvalue problem, as defined by operators
     `A` and `B`.
 
-    If `A` and `B` are both SciPy linear operators (or a sublass
-    thereof), `scipy.sparse.linalg.eig` is called. `scisparsekwargs`
-    are passed to `scipy.sparse.linalg.eig`. If `force_dense` is true,
+    If `A` and `B` are both linear operators (or a sublass
+    thereof), `scipy.sparse.linalg.eig` is called. `kwargs`
+    are passed to matrix-free methods. If `force_dense` is true,
     `A` and `B` are contracted to matrices and the dense eigenvalue
-    problem is solved.
+    problem is solved. If cupy is available, problem is solved
+    using `cupyx.scipy.sparse.linalg.eigsh`.
 
     If `A` and `B` are matrices, `scipy.linalg.eig` is called. If the
     condition number of `B` is larger than `maxcond` the
@@ -319,7 +424,14 @@ def gen_eigval_problem(
         # method.
         try:
             return __gen_eigval_problem_matrixfree(
-                A=A, B=B, maxcond=maxcond, eps=eps, **scisparsekwargs
+                A=A,
+                B=B,
+                maxcond=maxcond,
+                eps=eps,
+                tol=tol,
+                v0=v0,
+                force_cpu=force_cpu,
+                **kwargs
             )
         except Exception as e:
             if raise_no_convergence_err: raise e

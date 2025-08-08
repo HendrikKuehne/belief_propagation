@@ -255,10 +255,10 @@ class OpLayer(tuple[OpChain]):
         with tqdm.tqdm.external_write_mode():
             warnings.warn(
                 "".join((
-                    "So far, this method simply adds operator chains. There is a ",
-                    "more elegant method: if the operator chains are disjoint, ",
-                    "they can be compressed into a PEPO with smaller bond ",
-                    "dimension. This has yet to be implemented."
+                    "So far, this method simply adds operator chains. There ",
+                    "is a more elegant method: if the operator chains are ",
+                    "disjoint, they can be compressed into a PEPO with ",
+                    "smaller bond dimension. This has yet to be implemented."
                 )),
                 FutureWarning
             )
@@ -417,9 +417,14 @@ class PEPO:
         in the last virtual dimension.
 
         This means contraction of the root node with the initial state,
-        and each leaf with the final state. It is assumed that the
-        initial state is the 0th component of the bond dimension, and
-        that the final state is the last component.
+        and each leaf with the final state (of the finite-state
+        automaton, which is the model that I use to construct PEPOs). It
+        is assumed that the initial state is the 0th component of the
+        bond dimension, and that the final state is the last component.
+
+        This method is intended to be used during the construction of
+        PEPOs (see e.g. the implementation of the TFI- and the
+        Heisenberg-model).
         """
         for node in self.G.nodes():
             if node == self.root: # root node
@@ -543,8 +548,8 @@ class PEPO:
 
         if create_using == "scipy.csr":
             # H will be constructed by summing the contributions from all
-            # operator chains. array construction is fastest using the coo
-            # format, but I'm returning csr because this is optimal for
+            # operator chains. Array construction is fastest using the coo
+            # format, but I'm returning to csr because this is optimal for
             # matrix-vector multiplication; an operation that the Lanczos
             # algorithm heavily relies on.
             chains = self.operator_chains(
