@@ -959,6 +959,17 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
 
     # Two legs in every edge's legs attribute?
     for node1, node2, key in G.edges(keys=True):
+        if "trace" not in G[node1][node2][key].keys():
+            with tqdm.tqdm.external_write_mode():
+                warnings.warn(
+                    "".join((
+                        f"Edge ({node1}, {node2}, {key}) is not defined as ",
+                        "either trace or non-trace edge."
+                    )),
+                    UserWarning
+                )
+            return False
+
         if G[node1][node2][key]["trace"]:
             # Trace edge.
             if len(G[node1][node2][key]["indices"]) != 2:
@@ -976,7 +987,9 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
             if len(G[node1][node2][key]["legs"].keys()) != 2:
                 with tqdm.tqdm.external_write_mode():
                     warnings.warn(
-                        f"Wrong number of legs in edge ({node1}, {node2}, {key}).",
+                        "".join((
+                            "Wrong number of legs in edge ",
+                            f"({node1}, {node2}, {key}).")),
                         UserWarning
                     )
                 return False
@@ -984,19 +997,19 @@ def network_intact_check(G: nx.MultiGraph) -> bool:
     # All edges in the graph accounted for?
     for node in G.nodes:
         legs = [leg for leg in range(len(G.adj[node]))]
-        for node1,node2,key in G.edges(node,keys=True):
+        for node1, node2, key in G.edges(node, keys=True):
             try:
                 if not G[node1][node2][key]["trace"]:
                     legs.remove(G[node1][node2][key]["legs"][node])
                 else:
                     # Trace edge.
-                    i1,i2 = G[node1][node2][key]["indices"]
+                    i1, i2 = G[node1][node2][key]["indices"]
                     legs.remove(i1)
                     legs.remove(i2)
             except ValueError:
                 with tqdm.tqdm.external_write_mode():
                     warnings.warn(
-                        f"Wrong leg in edge ({node1},{node2},{key})."
+                        f"Wrong leg in edge ({node1}, {node2}, {key})."
                     )
                 return False
 

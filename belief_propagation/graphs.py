@@ -3,6 +3,7 @@ Creation of various graphs.
 """
 
 __all__ = [
+    "k_wheel",
     "regular_graph",
     "bipartite_regular_graph",
     "short_loop_graph",
@@ -22,6 +23,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def k_wheel(k: int) -> nx.MultiGraph:
+    """
+    A [regular polygon](https://en.wikipedia.org/wiki/Regular_polygon)
+    with `k` edges and a node in the middle, s.t. all vertices of the
+    regular polygon are connected to the center node. Effectively a
+    wheel with `k` spokes.
+    """
+    if k == 1: raise ValueError("k = 1 is undefined.")
+
+    if k == 2: return nx.MultiGraph(incoming_graph_data=(
+        (1, 2), (0, 1), (0, 2)
+    ))
+
+    edges = [
+        (i + 1, 1 + int((i + 1) % k))
+        for i in range(k)
+    ] + [
+        (i + 1, 0) for i in range(k)
+    ]
+    return nx.MultiGraph(incoming_graph_data=edges)
+
+
 def regular_graph(
         nNodes: int,
         D: int,
@@ -35,13 +58,13 @@ def regular_graph(
     top of my head I don't know how to generate a D-regular graph, and
     it is not as important right now to look this up.
     """
-    # sanity check
+    # Sanity check.
     if nNodes < D + 1 or (nNodes * D) % 2 == 1:
         raise ValueError(
             f"There is no {D}-regular graph with {nNodes} nodes."
         )
 
-    # defining edges
+    # Defining edges.
     stubs = D * [node for node in range(nNodes)]
     edges = []
     while len(stubs) > 1:
@@ -84,8 +107,8 @@ def bipartite_regular_graph(
     (2021)](https://doi.org/10.1126/sciadv.abf1211)), which generates a
     bipartite, regular graph.
     """
-    # blue nodes' labels run from 0 to nNodes, red nodes' labels run from
-    # nNodes to 2*nNodes
+    # Blue nodes' labels run from 0 to nNodes, red nodes' labels run from
+    # nNodes to 2 * nNodes.
     blue_stubs = D * [node for node in range(nNodes)]
     red_stubs = D * [node + nNodes for node in range(nNodes)]
     edges = []
@@ -134,35 +157,35 @@ def short_loop_graph(
     (2021)](https://doi.org/10.1126/sciadv.abf1211)), which generates a
     network with few short primitive cycles.
     """
-    # sanity check
+    # Sanity check.
     if p > 1 or p < 0:
         raise ValueError("p must be a value between zero and one.")
 
-    # initial bipartite regular graph
+    # Initial bipartite regular graph.
     biG = bipartite_regular_graph(nNodes, D, verbose=verbose)
 
     edges = []
     for red_node in np.arange(nNodes, 2*nNodes):
-        # projecting onto the blue nodes
+        # Projecting onto the blue nodes.
         for blue1,blue2 in itertools.combinations(biG.adj[red_node], r=2):
             if {blue1, blue2} not in edges: edges += [{blue1, blue2},]
         
-        # removing the red node
+        # Removing the red node.
         biG.remove_node(red_node)
 
     biG.add_edges_from(edges)
 
-    # removing some of the edges randomly
+    # Removing some of the edges randomly.
     for iRemoval in range(int(p * biG.number_of_edges())):
         iEdge = np.random.randint(low=0, high=biG.number_of_edges())
         edge = list(biG.edges)[iEdge]
         biG.remove_edge(*edge)
 
-    # extracting the largest connected component
+    # Extracting the largest connected component.
     largest_cc = max(nx.connected_components(biG), key=len)
 
+    # We need to copy because this removes the freeze of the subgraph.
     return biG.subgraph(largest_cc).copy()
-    # we need to copy because this removes the freeze of the subgraph
 
 
 def loop_capped_graph(
@@ -180,12 +203,12 @@ def loop_capped_graph(
     """
     if p == 0: return tree(nNodes)
 
-    # initialization
+    # Initialization.
     iNode = 0
     clusters = []
 
     nodes = set()
-    # generating clusters
+    # Generating clusters.
     while len(nodes) < nNodes:
         cluster = [
             (iNode + i, iNode + j)
@@ -197,7 +220,7 @@ def loop_capped_graph(
         iNode += maxlength
         clusters += [cluster,]
 
-    # adding all clusters to a graph and connecting them tree-like
+    # Adding all clusters to a graph and connecting them tree-like.
     G = nx.MultiGraph()
     G.add_edges_from(clusters.pop(0))
 
@@ -208,7 +231,7 @@ def loop_capped_graph(
             )
         G.add_edges_from(cluster + [(old_docking_node, new_docking_node,)])
 
-        # do we add a new edge or simply merge an existing node and a new one?
+        # Do we add a new edge or simply merge an existing node and a new one?
         if rng.uniform() < .5:
             G = nx.contracted_edge(
                 G = G,
@@ -216,11 +239,12 @@ def loop_capped_graph(
                 self_loops = False
             )
 
-    # extracting the largest connected component
+    # Extracting the largest connected component.
     largest_cc = max(nx.connected_components(G), key=len)
 
+    # We need to copy the graph because this removes the freeze of the
+    # subgraph.
     return G.subgraph(largest_cc).copy()
-    # we need to copy the graph because this removes the freeze of the subgraph
 
 
 def global_loop(
@@ -235,7 +259,7 @@ def global_loop(
     clusters of nodes, where each cluster obeys the cycle maximum length. The clusters
     are attached to a global loop.
     """
-    # initialization
+    # Initialization.
     clusters = [[
         (i, (i+1) % global_cycle_length)
         for i in range(global_cycle_length)
@@ -244,7 +268,7 @@ def global_loop(
 
     if maxlength > 2:
         nodes = {i for i in range(global_cycle_length)}
-        # generating clusters
+        # Generating clusters.
         while len(nodes) < nNodes + global_cycle_length:
             cluster = [
                 (iNode + i, iNode + j)
@@ -259,7 +283,7 @@ def global_loop(
             iNode += maxlength
             clusters += [cluster,]
 
-        # adding all clusters to a graph and connecting them tree-like
+        # Adding all clusters to a graph and connecting them tree-like.
         G = nx.MultiGraph()
         G.add_edges_from(clusters.pop(0))
 
@@ -272,7 +296,7 @@ def global_loop(
                 ))
             G.add_edges_from(cluster + [(old_docking_node, new_docking_node),])
 
-            # do we add a new edge or simply merge the existing node and the
+            # Do we add a new edge or simply merge the existing node and the
             # new one at a node?
             if rng.uniform() < .5:
                 G = nx.contracted_edge(
@@ -281,15 +305,15 @@ def global_loop(
                     self_loops=False
                 )
 
-        # extracting the largest connected component
+        # Extracting the largest connected component.
         largest_cc = max(nx.connected_components(G), key=len)
 
         return G.subgraph(largest_cc).copy()
-        # we need to copy because this removes the freeze of the subgraph
+        # We need to copy because this removes the freeze of the subgraph.
 
     else:
         G = nx.MultiGraph(clusters[0])
-        # adding nodes in a tree-like fashion
+        # Adding nodes in a tree-like fashion.
         while G.number_of_nodes() < nNodes + global_cycle_length:
             docking_node = rng.choice(list(G.nodes()))
             G.add_edge(docking_node, G.number_of_nodes())
@@ -330,14 +354,14 @@ def hex(m: int, n:int) -> nx.MultiGraph:
         with_positions=False
     )
 
-    # removing the pos key
+    # Removing the pos key.
     for node in G.nodes():
         try:
             del G.nodes[node]["pos"]
         except KeyError:
             continue
 
-    # re-labeling nodes
+    # Re-labeling nodes.
     mapping = {label: i for i, label in enumerate(G.nodes())}
     G = nx.relabel_nodes(G, mapping)
 
@@ -354,7 +378,7 @@ def heavyhex(m: int,n: int) -> nx.MultiGraph:
 
     edges_to_add = ()
     edges_to_remove = ()
-    # adding qubits to the edges
+    # Adding qubits to the edges.
     for node1, node2 in G.edges():
         edges_to_add += ((node1, N), (N, node2))
         edges_to_remove += ((node1, node2),)
@@ -370,7 +394,7 @@ def grid(m: int, n: int) -> nx.MultiGraph:
     Creates a grid graph with `m` rows and `n` columns.
     """
     G = nx.grid_2d_graph(m=m, n=n, create_using=nx.MultiGraph)
-    # re-labeling nodes
+    # Re-labeling nodes.
     mapping = {(i, j): i * n + j for i in range(m) for j in range(n)}
     G = nx.relabel_nodes(G, mapping)
 

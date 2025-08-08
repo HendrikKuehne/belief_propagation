@@ -341,6 +341,10 @@ class PEPS:
             # Adding the tensor to this node.
             G.nodes[node]["T"] = randn(size = dim) / chi**(3/4)
 
+        if sanity_check:
+            # Checking whether the graph is intact.
+            assert network_message_check(G)
+
         return cls(G, sanity_check=sanity_check)
 
     @classmethod

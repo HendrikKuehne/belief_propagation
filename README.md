@@ -34,12 +34,19 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
     * What I should do: Construct neighborhoods by moving outward from a root node; this is closer to what Kirkley et Al do.
 * Documentation with [Sphinx documentation builder](https://docs.readthedocs.io/en/stable/intro/sphinx.html).[^3]
     * I should clean up my code anyways, a good guide might be the [PEP 8 style guide](https://peps.python.org/pep-0008/).
-* Acceleration using CUDA
+* Acceleration using GPUs and smarter implementation
     * Faster numerics with [Nvidia cuPyNumeric](https://developer.nvidia.com/cupynumeric)
         * Installation instructions [here](https://github.com/NVIDIA/accelerated-computing-hub/blob/main/Accelerated_Python_User_Guide/notebooks_v1/Chapter_11_Distributed_Computing_cuPyNumeric.ipynb)
         * I can't get it to use the GPUs on `sccs.homeone`; it seems to me like CUDA is not being installed correctly. The [CUDA toolkit downloads](https://developer.nvidia.com/cuda-downloads) require administrator privileges during the installation process, which I don't have. I tried [installing CUDA with conda](https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html#x86-64-conda) before installing cuPyNumeric, but that doesn't seem to work... I would think though that there is something wrong on my end, because [the `x-wing0` node does have NVIDIA GPUs](https://gitlab.lrz.de/tum-i05/public/home-one-cluster/-/blob/master/README.md?ref_type=heads#general-information).
     * Faster graph routines with [nx-cugraph](https://github.com/rapidsai/nx-cugraph)
         * Tutorial [here](https://developer.nvidia.com/blog/7-drop-in-replacements-to-instantly-speed-up-your-python-data-science-workflows/#scaling_graph_analytics_with_networkx)
+    * Smarter implementation of the message update
+        * Pancotti and Gray explain the implementation of the message update in Quimb in [arxiv:2306.15004](https://arxiv.org/abs/2306.15004). It is implemented [here](https://github.com/jcmgray/quimb/blob/main/quimb/tensor/belief_propagation/l2bp.py#L209), but it is difficult to understand since Quimb is very involved...
+        * See also my notes [here](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation#file-contents)
+    * Port to GPU using PyTorch? [^7]
+        * I could use PyTorch Geometric instead of NetworkX, but sparse diagonalization seems to be a problem... what about CuPy though.
+    * Sparse linear algebra using [CuPy](https://cupy.dev)
+        * A drop-in replacement for SciPy! It has a [sparse eigensolver](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.eigsh.html#cupyx.scipy.sparse.linalg.eigsh) and [linear operators](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.LinearOperator.html#cupyx.scipy.sparse.linalg.LinearOperator).
 * Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
@@ -47,6 +54,8 @@ Forked on 11th of September from Mendl, so far (11.9.2024) just for initial expl
 [^2]: `np.einsum_path` cannot contract large networks (i.e. many edges) because the alphabet with which it creates it's equations is limited to 52 characters (lower- and uppercase letters). This seems a severe limitation to me, I don't understand why that's in there; `cotengra.einsum` does not have that limitation, so I'm using that instead (dated 30.09.2024).
 
 [^3]: Refer to Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master). The file [`pytenet/doc/conf.py`](https://github.com/cmendl/pytenet/blob/master/doc/conf.py) is especially relevant.
+
+[^7]: Online ressources: [Performance tuning guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) for PyTorch. How would this play with NetworkX? [NetworkX supports different backends](https://networkx.org/documentation/stable/tutorial.html#using-networkx-backends), among which is [nx-cugraph](https://github.com/rapidsai/nx-cugraph) (see above), but they don't natively interface with PyTorch. PyTorch-Geometric has graph routines, and it seems like a [torch_geometric.data] object represents a graph. One can even initialize it [from a NetworkX graph](https://pytorch-geometric.readthedocs.io/en/stable/modules/utils.html#torch_geometric.utils.from_networkx). But this would, as it seems, require much deeper modifications than I have time for now. Using SciPy would require CPU-synchronization, but 
 
 ## Open questions
 
@@ -67,6 +76,7 @@ This will be updated continuously, as questions come to mind.
     * Which part of the algorithm breaks down when moving from trees to loopy graphs? Kirkley et Al claim that the effect of long loops is negligible, how can this be understood in terms of messages and their normalization?
 * Why are long loops negligible?
     * Many runs of the BP algorithm give exact results when only long loops are present, which is what Kirkley et Al claim in their paper; they do not give a source though.
+        * Intuitive statistical explanation, where the error in loopy BP comes from and why it might be negligible for long loops in ch. 14.4.2 of [this book](https://doi.org/10.1093/acprof:oso/9780198570837.001.0001) (drafts available [online](https://web.stanford.edu/~montanar/RESEARCH/book.html) for free)
     * :arrow_right: Loops behave like vector iterations, which is not how Kirkleys algorithm works; it is in fact detrimental to the accuracy. Vector iterations require many iterations, however, and the longer the loop the more iterations one needs to reach vector iteration territory. Long loops will (probably - this is what I expect) introduce larger errors, when one does more iterations in the BP algorithm.
     * :arrow_right: Actually not! The eigenvalue spectra of long loops tend to feature one dominant eigenvalue, while all others are neglectable in magnitude. See [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#spectra-of-a-matrix-chain) for details.[^6]
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
@@ -77,9 +87,14 @@ This will be updated continuously, as questions come to mind.
 * What happens when we try Christian's idea of Orthogonal Belief Propagation?
     * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of PEPS networks that Arad (2021) introduces?
 * Do different gauges have a (strong) effect on BPDMRG performance?
-* BP Trapping sets
+* What are BP Trapping sets?
     * I have seen the BP algorithm stagnate during imaginary time evolution, but in a very strange way: Messages oscillate s.t. the message epsilon stays constant. I have no idea where this might come from, but it seems like this behavior is not unheard of in the literature; [arXiv:2506.01779](https://arxiv.org/abs/2506.01779) talks about a thing called "trapping sets"
     * For the moment I'll simply check for this during `braket.BP`. If it happens, I'll initialize new messages and add damping to the BP iteration.
+* How many BP fixed points are there?
+    * There have been times when I thought there is only one
+    * :arrow_right: There are multiple ones, though! Check e.g. [arxiv:2306.15004](https://arxiv.org/abs/2306.15004), beginning of section III
+* What is the asymptotical complexity of the BP message update?
+    * Compute it! The *n-mode unfolding* [[arXiv:2109.00626](https://arxiv.org/abs/2109.00626)] of tensors might be helpful here.
 
 [^4]: In the code contained herein, only nodes contain values. The emphasis is here on *associate*; the $1/Z$ that we could associate with an edge is factorized, it's factors being distributed in the adjacent nodes.
 
@@ -169,6 +184,12 @@ This will be updated continuously, as questions come to mind.
     * D. A. Millar, L. W. Anderson, E. Altamura, O. Wallis, M. E. Sahin, J. Crain, S. J. Thomson  
       Imaginary Time Spectral Transforms for Excited State Preparation  
       [arXiv:2508.00065](https://arxiv.org/abs/2508.00065)
+    * Berezutskii, A., Liu, M., Acharya, A. et al.  
+      Tensor networks for quantum computing  
+      [Nat Rev Phys (2025)](https://doi.org/10.1038/s42254-025-00853-1) ([arXiv:2503.08626](https://arxiv.org/abs/2503.08626))
+    * Marc Mézard,  Andrea Montanari  
+      Information, Physics, and Computation  
+      [Oxford, 2009; online edn, Oxford Academic, 1 Sept. 2009](https://doi.org/10.1093/acprof:oso/9780198570837.001.0001) ([drafts](https://web.stanford.edu/~montanar/RESEARCH/book.html))
 * Contraction of large tensor networks
     * Johnnie J., G. Kin-Lic Chan  
       Hyperoptimized Approximate Contraction of Tensor Networks with Arbitrary Geometry  
