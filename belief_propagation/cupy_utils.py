@@ -47,9 +47,7 @@ class _SumLocalOperator(
                 + self.__toarray_backend_agnostic(self.args[1]))
 
     @staticmethod
-    def __toarray_backend_agnostic(
-        A: culinalg.LinearOperator
-    ) -> np.ndarray:
+    def __toarray_backend_agnostic(A) -> np.ndarray:
         """
         Provides a method to get the dense matrix of linear operators,
         independently of whether they are in fact `LocalOperator`
@@ -64,10 +62,7 @@ class _SumLocalOperator(
             # multiplying it with the identity matrix.
             return A.matmat(cp.eye(A.shape[0]))
 
-    def __add__(
-            self,
-            B: culinalg.LinearOperator
-        ) -> "_SumLocalOperator":
+    def __add__(self, B) -> "_SumLocalOperator":
         return self.__class__(self, B)
 
     def __init__(self, A: "LocalOperator", B: "LocalOperator"):
@@ -82,7 +77,7 @@ class LocalOperator(
     contraction, on GPU.
     """
 
-    def toarray(self) -> cp.ndarray:
+    def toarray(self):
         """
         Contracts the tensor network and returns the matrix that
         represents the operator.
@@ -98,7 +93,7 @@ class LocalOperator(
 
         return mat
 
-    def _matvec(self, vec: cp.ndarray) -> cp.ndarray:
+    def _matvec(self, vec):
         """
         Matrix-free action of `self` on a vector.
         """
@@ -124,10 +119,10 @@ class LocalOperator(
 
         return res_vec.flatten()
 
-    def __add__(self, B: culinalg.LinearOperator) -> _SumLocalOperator:
+    def __add__(self, B) -> _SumLocalOperator:
         return _SumLocalOperator(A=self, B=B)
 
-    def __init__(self, nLegs: int, dtype: cp.dtype, shape: tuple[int]):
+    def __init__(self, nLegs: int, dtype: np.dtype, shape: tuple[int]):
         self.nLegs: int = nLegs
         """Number of constituent messages."""
 
@@ -187,8 +182,8 @@ class LocalHamiltonianOperator(LocalOperator):
     def __init__(
             self,
             nLegs: int,
-            W: Union[cp.ndarray, np.ndarray],
-            msgdata: tuple[tuple[Union[cp.ndarray, np.ndarray], tuple[int]]]
+            W,
+            msgdata
         ) -> None:
         """
         Initializing the local Hamiltonian operator involves collecting
@@ -292,7 +287,7 @@ class LocalEnvironmentOperator(LocalOperator):
             self,
             nLegs: int,
             D: int,
-            msgdata: tuple[tuple[Union[cp.ndarray, np.ndarray], tuple[int]]]
+            msgdata
         ) -> None:
         """
         Initializing the local Hamiltonian operator involves collecting

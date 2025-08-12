@@ -383,8 +383,10 @@ class PEPO:
     Writing down a PEPO on an arbitrary graph `G` can be achieved by
     finding a spanning tree of `G`. The flow of finite state automaton
     information is then defined by the tree: The origin is at the root,
-    and it terminates at the leaves. This method is similar to what is
-    presented in [SciPost Phys. Core 7, 036
+    and it terminates at the leaves. This method is inspired by
+    [J. Phys. A: Math. Theor. 50 223001
+    (2017)](https://doi.org/10.1088/1751-8121/aa6dc3). See also
+    [SciPost Phys. Core 7, 036
     (2024)](https://doi.org/10.21468/SciPostPhysCore.7.2.036).
 
     Every node in the graph has one inbound leg, passive legs, and
@@ -699,6 +701,7 @@ class PEPO:
             chi: Union[int, Iterable[int]],
             N_pas: int,
             N_out: int,
+            decay_op: np.ndarray = None,
         ) -> np.ndarray:
         """
         Returns the minimum tensor for PEPO at node `node`, that is, a
@@ -709,7 +712,9 @@ class PEPO:
         the outgoing legs.
 
         If a tuple of integers is passed as `chi`, the contents
-        determine the bond dimension for every leg.        
+        determine the bond dimension for every leg. If `decay_op` is
+        given, this operator is added to the decay from (finite
+        automaton) particle state to vacuum state.
         """
         # sanity check
         assert N_pas >= 0
@@ -722,6 +727,7 @@ class PEPO:
                 chi=tuple(chi for _ in range(1 + N_pas + N_out)),
                 N_pas=N_pas,
                 N_out=N_out,
+                decay_op=decay_op,
             )
 
         if hasattr(chi, "__iter__"):
@@ -739,7 +745,7 @@ class PEPO:
                 dtype=self.dtype
             )
 
-            # particle index
+            # Particle index.
             for i_out in range(N_out):
                 index = list(
                     chi_ - 1
@@ -751,7 +757,7 @@ class PEPO:
                 index[1 + N_pas + i_out] = 0
                 T[tuple(index)] = self.I(node)
 
-            # vacuum index
+            # Vacuum index.
             index = tuple(
                 chi_ - 1
                 for chi_ in chi
@@ -760,9 +766,94 @@ class PEPO:
             )
             T[index] = self.I(node)
 
+            if decay_op is not None:
+                # Adding particle-vacuum decay operator.
+                index = ((0,)
+                         + tuple(-1 for _ in range(N_pas + N_out))
+                         + (slice(self.D[node]), slice(self.D[node])))
+                T[index] = decay_op
+
             return T
 
         raise ValueError("chi must be an integer or an iterable of ints.")
+
+    def add_twosite_operator(
+            self,
+            node1: int,
+            node2: int,
+            ch_idx: int,
+            first_decay_op: np.ndarray,
+            second_decay_op: np.ndarray,
+        ) -> None:
+        """
+        Adds a two-site operator to channel `ch_idx` on the edge
+        `(node1, node2)`. `first_decay_op` is the operator of the first
+        particle decay, `second_decay_op` is the second decay.
+        
+        Note: This means that both decay stages (of the finite state
+        automaton) are added to this edge, NOT that an operator
+        `first_decay_op * second_decay_op` is added to the Hamiltonian!
+        """
+        # Why is the construction of the PEPO this convoluted? Why do I not
+        # assemble the tensors in `__ising_PEPO_tensor_without_coupling`,
+        # re-shape them according to the tree structure, and insert them into
+        # the PEPO? The code would be much more intelligible. The problem is
+        # that I want only one ising coupling per edge. Since my graph might
+        # have any structure, there's no way to know where to add coupling in a
+        # graph-agnostic way. Put another way, I have to take the graph (and
+        # thus the tree) into account to avoid adding double the coupling to
+        # some edges. The edges that are affected by this are edges that are
+        # not contained in the tree.
+
+        # Sanity check.
+        vacuum_idx = self.G[node1][node2][0]["size"] - 1
+        if ch_idx == 0 or ch_idx == vacuum_idx:
+            raise ValueError(
+                "".join((
+                    f"Received channel index {ch_idx}. Channel index cannot ",
+                    "be the particle index or the vacuum index."
+                ))
+            )
+
+        if node1 in self.tree.succ[node2]:
+            # node1 is downstream from node2.
+            child = node1
+            parent = node2
+        else:
+            # node2 is downstream from node1, or the edge is not contained in
+            # the tree (in which case the order does not matter).
+            child = node2
+            parent = node1
+
+        # First particle decay stage at this edge; at parent node.
+        if parent != self.root:
+            grandparent = tuple(_ for _ in self.tree.pred[parent].keys())[0]
+            index = tuple(
+                0 if i == self.G[grandparent][parent][0]["legs"][parent]
+                else ch_idx if i == self.G[parent][child][0]["legs"][parent]
+                else vacuum_idx
+                for i in range(self[parent].ndim - 2)
+            ) + (slice(2), slice(2))
+        else:
+            # The incoming leg of the root node is a boundary leg, and thus
+            # located just before the physical legs. This is why this case
+            # distinction is necessary.
+            index = tuple(
+                ch_idx if i == self.G[parent][child][0]["legs"][parent]
+                else vacuum_idx
+                for i in range(self[parent].ndim - 3)
+            ) + (0, slice(2), slice(2))
+        self[parent][index] = first_decay_op
+
+        # Second particle decay stage at this edge; at child node.
+        index = tuple(
+            ch_idx if i == self.G[parent][child][0]["legs"][child]
+            else vacuum_idx
+            for i in range(self[child].ndim - 2)
+        ) + (slice(2), slice(2))
+        self[child][index] = second_decay_op
+
+        return
 
     def operator_chains(
             self,
@@ -1449,8 +1540,8 @@ class PEPO:
                 T.ndim == self.G.nodes[node]["T"].ndim
                 or T.ndim == len(self.G.adj[node]) + 2
             ):
-                # first checks against previous tensor, second checks against
-                # number of legs that are necessary in the given graph
+                # First checks against previous tensor, second checks against
+                # number of legs that are necessary in the given graph.
                 raise ValueError(
                     "Attempting to set site tensor with wrong number of legs."
                 )
@@ -1704,7 +1795,7 @@ class PEPO:
             # Permute dimensions of lhs to make both PEPOs compatible.
             lhs._permute_virtual_dimensions(rhs.G)
 
-        res = PEPO(dtype=np.common_type(lhs.dtype, rhs.dtype))
+        res = PEPO(dtype=np.result_type(lhs.dtype, rhs.dtype))
         res.root = lhs.root
         res.tree = lhs.tree
 
