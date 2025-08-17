@@ -3,7 +3,7 @@ Random stuff that is useful here or there.
 """
 
 __all__ = [
-    # mathematics
+    # Mathematics.
     "crandn",
     "delta_tensor",
     "multi_kron",
@@ -16,25 +16,25 @@ __all__ = [
     "entropy",
     "fidelity",
     "suzuki_recursion_coefficients",
-    # hermiticity
+    # Hermiticity.
     "is_hermitian_matrix",
     "is_hermitian_message",
     "is_hermitian_environment",
-    # graphs
+    # Graphs.
     "write_exp_bonddim_to_graph",
     "divide_graph",
     "write_callable_bonddim_to_graph",
     "cycle_cutnumber_ranking",
     "cycle_length_ranking",
-    # operator chains and operator layers
+    # Operator chains and operator layers.
     "is_disjoint_layer",
     "get_disjoint_subsets_from_opchains",
-    # sanity checks and diagnosis
+    # Sanity checks and diagnosis.
     "network_intact_check",
     "network_message_check",
     "same_legs",
     "graph_compatible",
-    # runtime routines
+    # Miscellanous.
     "dtau_to_nSteps",
 ]
 

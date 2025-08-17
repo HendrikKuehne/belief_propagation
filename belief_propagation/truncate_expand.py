@@ -684,7 +684,9 @@ def QR_gauging(
     bond dimensions. Thus this method may result in compression.
 
     Function signature includes `kwargs` for compatibility reasons in
-    the gauging functions of the DMRG-classes.
+    the gauging functions of the DMRG-classes. Inspired be tree gauge
+    from [Phys. Rev. X 14, 011009
+    (2024)](https://doi.org/10.1103/PhysRevX.14.011009).
     """
     if sanity_check: assert psi.intact
 
