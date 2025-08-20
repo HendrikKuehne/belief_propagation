@@ -15,6 +15,8 @@ belief_propagation.egg-info/
 *.tar.gz
 *.pickle
 data/
+doc/imgs/
+doc/plots/
 *.xyz
 datasets/
 

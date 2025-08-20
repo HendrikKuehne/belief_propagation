@@ -39,7 +39,7 @@ Currently, two algorithms for ground state search are implemented and equipped w
 
 ## BP-DMRG
 
-The BP-DMRG algorithm is in many respects a standard implementation of DMRG. Standard implementations in one dimension rely on the site-canonical form of a MPS, however, which is not available for PEPOs.[^1] This is where BP comes in: in absence of a canonical form, the left- and right block in the local Hamiltonian need to be obtained through partial contraction of the expectation value $\braket{\psi|H|\psi}$. This is very computationally intensive to do exactly for each local update, but contraction through BP is very cheap. Thus, this implementation of DMRG forms the local Hamiltonian from messages. Note also that since there is no canonical form available, the local update requires us to solve a generalized eigenvalue problem.
+The BP-DMRG algorithm is in many respects a standard implementation of DMRG. Standard implementations in one dimension rely on the site-canonical form of a MPS, however, which is not available for PEPOs.[^1] This is where BP comes in: in absence of a canonical form, the left- and right block in the local Hamiltonian need to be obtained through partial contraction of the expectation value $\braket{\psi|H|\psi}$. This is computationally intensive to do exactly for each local update, but contraction through BP is cheap. Thus, this implementation of DMRG forms the local Hamiltonian from messages. Note also that since there is no canonical form available, the local update requires us to solve a generalized eigenvalue problem.
 
 The algorithm, for every sweep, thus proceeds as follows (in pseudocode):
 
@@ -83,11 +83,7 @@ Consider the following code snippet:
 
     # Instantiating a DMRG object. The state is here supplied through the bond
     # dimension.
-    dmrg = DMRG(
-        oplist=(TFI_pos, TFI_neg),
-        chi=3,
-        bond_dim_strategy="uniform"
-    )
+    dmrg = DMRG(oplist=(TFI_pos, TFI_neg), chi=3,)
 
     dmrg.run(nSweeps=3, numiter=500)
 ```
@@ -110,7 +106,10 @@ Consider the following code snippet:
     from belief_propagation.graphs import hex
     from belief_propagation.hamiltonians import Heisenberg
     from belief_propagation.time_evolution import operator_exponential
-    from belief_propagation.truncate_expand import L2BP_compression, loop_series_contraction
+    from belief_propagation.truncate_expand import (
+        L2BP_compression,
+        loop_series_contraction
+    )
 
     # Defining the geometry of this problem: A hexagonal graph with four cells.
     G = hex(2, 2)

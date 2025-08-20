@@ -144,7 +144,7 @@ class OpChain(dict[int, np.ndarray]):
             return False
 
         if self.G is None:
-            # The subsequent tests require the graph, and can this not be done.
+            # The subsequent tests require the graph, and can thus not be done.
             return True
 
         # Are all nodes of the chain contained in the graph?
@@ -281,14 +281,14 @@ class OpLayer(tuple[OpChain]):
 
     @property
     def disjoint(self) -> bool:
-        """Returns `True` if the constituent operator chains are disjoint."""
-        site_occupations = {}
+        """
+        Returns `True` if the constituent operator chains are disjoint.
+        """
+        occupied_sites = []
         for chain in self:
             for node in chain.keys():
-                if node not in site_occupations.keys():
-                    site_occupations[node] = 1
-                else:
-                    return False
+                if node in occupied_sites: return False
+                occupied_sites.append(node)
 
         return True
 
@@ -332,6 +332,7 @@ class OpLayer(tuple[OpChain]):
         """
         if not isinstance(layer, self.__class__):
             raise ValueError("Value for layer is not OpChain instance.")
+
         if (self.G is not None) and (layer.G is not None):
             if not graph_compatible(self.G, layer.G):
                 raise ValueError("Layer graphs are incompatible.")
@@ -349,7 +350,7 @@ class OpLayer(tuple[OpChain]):
         ) -> "OpLayer":
         """Creation of a new operator layer."""
         # The arguments G and sanity_check are included here for compatibility
-        # with the initialization.
+        # with initialization.
         return super().__new__(cls, iterable)
 
     def __init__(

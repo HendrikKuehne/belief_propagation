@@ -74,12 +74,20 @@ This will be updated continuously, as questions come to mind.
     * I have seen the BP algorithm stagnate during imaginary time evolution, but in a very strange way: Messages oscillate s.t. the message epsilon stays constant. I have no idea where this might come from, but it seems like this behavior is not unheard of in the literature; [arXiv:2506.01779](https://arxiv.org/abs/2506.01779) talks about a thing called "trapping sets"
     * For the moment I'll simply check for this during `braket.BP`. If it happens, I'll initialize new messages and add damping to the BP iteration.
 * How many BP fixed points are there?
-    * There have been times when I thought there is only one
-    * :arrow_right: There are multiple ones, though! Check e.g. [arxiv:2306.15004](https://arxiv.org/abs/2306.15004), beginning of section III
+    * There have been times when I thought there is only one, and it seemed like numerical simulations supported that.
+    * :arrow_right: The literature says otherwise!?! Check e.g. [arxiv:2306.15004](https://arxiv.org/abs/2306.15004), beginning of section III.
+    * So what's going on? Is it due to my message initialization? It seems conceivable that there are multiple BP fixed points, but my message initialization makes me land in one of them every time.
+    * In what would different fixed points even differ? In messages only, or in the contraction value too?
 * What is the asymptotical complexity of the BP message update?
-    * Compute it! The *n-mode unfolding* [[arXiv:2109.00626](https://arxiv.org/abs/2109.00626)] of tensors might be helpful here.
+    * Compute it! The *n-mode unfolding* ([arXiv:2109.00626](https://arxiv.org/abs/2109.00626)) of tensors might be helpful here.
 * How effective is QR-gauging?
     * I use a breadth-first search in [`belief_propagation.truncate_expand.QR_gauging`](https://github.com/HendrikKuehne/belief_propagation/blob/f40f9b761bc665018958d690a467f2e5b18ea266/belief_propagation/truncate_expand.py#L668), because this ensures that the edges that will be cut are far removed from the orthogonality center.[^9] This should make the approximate orthogonalization more accurate, and would (if the graph were actually a tree) cause the messages to evaluate to identity. In my code, this would translate to the local environment being (approximately)[^8] the identity! Is that what actually happens?
+* Can I, somehow, accelerate the BP-iteration during DMRG?
+    * One thought that I had was to re-use the old messages, but that does not seem to work; indeed (how I remeber it), BP does not converge at all when I do that. This might be due to the fact that there is (I think) only one BP fixed point.
+    * Low priority; the bottleneck in DMRG, time-wise, is the generalized eigenvalue problem.
+* Why does BP not converge on some states' $\braket{\psi|\psi}$?
+    * This happens often for states that were obtained using loop series DMRG, but also after SU-TEBD. The crucial question is: Is this a property of the TFI ground states, or an artefact of the methods I use? If the former were true, that would be bith interesting and a blow to my whole work here.
+    * Do TFI ground states / non-converging states have some weird topological properties?
 
 [^4]: In the code contained herein, only nodes contain values. The emphasis is here on *associate*; the $1/Z$ that we could associate with an edge is factorized, it's factors being distributed in the adjacent nodes.
 

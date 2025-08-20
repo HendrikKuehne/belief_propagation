@@ -630,7 +630,7 @@ def feynman_cut(
 
         return res_objs
 
-    if isinstance(obj,Braket):
+    if isinstance(obj, Braket):
         # Cutting an edge is defined as cutting the respective edge in the
         # constituent bra, operator, and ket.
         bra_cuts = feynman_cut(
@@ -977,7 +977,7 @@ def loop_series_contraction(
             for T in braket[node]
         )
 
-    # Tensor stacks manipulations have been reversed, thus we may set the
+    # Tensor stack manipulations have been reversed, thus we may set the
     # converged flag again.
     braket._converged = True
 

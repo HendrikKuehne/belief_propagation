@@ -15,7 +15,6 @@
     * This necessitates handling the tree traversal; so far (5th of February), I had to disable the tree traversal tests in `PEPO.intact`, since the way I implemented summation of PEPOs is not compatible with the check I had so far. I don't think this would be hard to implement, it just requires some bookkeeping.
   * **ToDo** Check `PEPO.hermitian`; it somehow fails for the square Ising model, calculated using `PEPO.__matmul__`.
     * The reason is, probably, that factors `1j` get mixed up (wander from one virtual index to another). I suspect this because the sanity check still works, i.e. every local operator is still proportional to a Pauli matrix. Is there a simple, concise way to test if a PEPO is hermitian in this case?
-  * **ToDo** Complete implementation of `hamiltonians.operator_layer`
   * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues. Tested against Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master).
 * **`PEPS.py`** PEPS on arbitrary graphs.
   * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
@@ -28,9 +27,12 @@
     * This would be a massive overhaul, requiring changes in many different files, but there could be cases where it would be useful to have the messages factorized.
     * :x: No! If I don't contract the physical dimensions, the bond dimensions in message tensor stacks would become huge during a message passing iteration.
 * **`dmrg.py`** DMRG on arbitrary graphs.
-  * **ToDo** Optimize local updates; Lanczos algorithm? (In python implemented, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/))
+  * :white_check_mark: Optimize local updates; Lanczos algorithm?[^3]
+    * This is advantageous not because of speed, but because of memory constraints. For even moderate bond dimensions, the local update has to be done matrix-free.
   * **ToDo** Normalize states after DMRG algorithm.
   * **ToDo** I tried implementations of `dmrg.loop_series_environments` that modified the given braket in-place, but these modifications propagated back to `LoopSeriesDMRG._psi`, which meant the DMRG algorithm did not work. I tried using deep copies in `dmrg.LoopSeriesDMRG.brakets`, but that also prevented DMRG from working correctly - what is going on?
     * I thought that my implementation of DMRG consisted of [pure functions](https://en.wikipedia.org/wiki/Pure_function), although this was not actually the case. What I want is for the functions outside of the classes `DMRG` / `LoopSeriesDMRG` to be pure functions, but it seems that there are many subtle dependencies I am not yet (6. April 2025) aware of.
 
 [^2]: This other tree should be called `coupling_tree`, in contrast to the existing tree (`automaton_tree`, in the following). The automaton tree is contained in the coupling tree. This also necessitates a re-interpretation of inbound, passive and outbound legs: Inbound legs are upstream in the automaton tree, outbond legs are downstream in the coupling tree. Passive legs are upstream in the coupling tree, but are not contained in the automaton tree. Coupling goes out of every node along all outbound edges. This does not lead to double coupling along some edges because the coupling tree is directed; coupling flows downstream in the coupling tree.
+
+[^3]: Available in Python, for example, in the [`pylanczos` package](https://pypi.org/project/pylanczos/). Or in SciPy, actually.
