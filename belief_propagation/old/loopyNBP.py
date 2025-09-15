@@ -10,6 +10,9 @@ __all__ = [
     "plot_neighborhoods",
 ]
 
+from typing import Union
+
+import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -122,25 +125,30 @@ def neighborhood(
 def construct_neighborhoods(
         G: nx.MultiGraph,
         r: int = 0,
-        method: int = None,
+        method: str = "loopy",
+        rng: np.random.Generator = np.random.default_rng(),
         sanity_check: bool = False
     ) -> tuple:
     """
     Constructs neighborhoods in the graph `G` with connectivity `r`.
     `G` is modified in-place.
 
-    The argument `method` denotes the method that is used to contruct
+    The argument `method` denotes the method that is used to construct
     the neighborhoods. These methods only differ in the order in which
     the neighborhoods are created, i.e. the order in which nodes from
     the graph are chosen as root nodes. The default case (`method =
-    None`) is a heuristic; the nodes are sorted based on the number of
+    loopy`) is a heuristic; the nodes are sorted based on the number of
     adjacent nodes. In case a single node of the graph is given as
     argument, neighborhoods are created starting at this node and moving
     outwards.
     """
-    if method in G.nodes():
-        # TODO: construct neighborhoods by moving outwards from this node.
-        pass
+
+    # TODO the "kirkley" method does not work too well - sometimes, small loops
+    # remain outside of any neighborhood. I think this is due to the fact that
+    # the focus of Kirkley et Al (https://doi.org/10.1126/sciadv.abf1211) is on
+    # neighborhoods that contain edges (they allow nodes to be contained in
+    # multiple neighborhoods), while my focus lies on nodes (in my scenario,
+    # edges may be left inbetween neighborhoods without any association).
 
     # The choice of neighborhoods should ensure that as many loops as possible
     # are contained within the neighborhoods. This version of the code achieves
@@ -154,25 +162,76 @@ def construct_neighborhoods(
     for node in G.nodes():
         G.nodes[node]["neighborhood"] = None
 
-    # Sorting the nodes based on the number of neighbors.
-    sorted_node_list = sorted(
-        G.nodes(),
-        key=lambda node: len(G.adj[node]),
-        reverse=True
-    )
+    if method == "loopy" or method == "kirkley":
+        # Sorting nodes based on the number of neighbors; construction of
+        # neighborhoods begins at the node with the highest degree.
+        sorted_node_list = sorted(
+            G.nodes(),
+            key=lambda node: len(G.adj[node]),
+            reverse=True
+        )
+    elif method in G:
+        # Construction of neighborhoods begins at the specified node, and
+        # moving outwards afterwards.
+        sorted_node_list = [method,]
+        method = "kirkley"
+    else:
+        raise ValueError("".join(("Method ", str(method), " udefined.")))
 
     neighborhood_list = ()
+
+    def next_node() -> Union[None, int]:
+        """
+        Helper function that returns the next node to construct a
+        neighborhood around. Depends on the `method` argument and the
+        nodes that have been encountered already. Should return `None`
+        once the entire graph has been visited.
+        """
+        if method == "loopy":
+            # Removing nodes from the sorted node list that are already
+            # contained in neighborhoods.
+            for (edges, nodes) in neighborhood_list:
+                for node in nodes:
+                    try: sorted_node_list.remove(node)
+                    except ValueError: pass
+
+            if len(sorted_node_list) == 0: return None
+            return sorted_node_list[0]
+
+        if method == "kirkley":
+            if len(neighborhood_list) == 0:
+                # Initial value: Node with the highest degree.
+                return sorted_node_list[0]
+
+            seen_nodes = set().union(*[
+                set(nodes) for (edges, nodes) in neighborhood_list
+            ])
+            seen_and_adj_nodes = set().union(*[
+                set(G.adj[node]) for node in seen_nodes
+            ])
+            adj_nodes = seen_and_adj_nodes - seen_nodes
+
+            if len(adj_nodes) == 0: return None
+            return rng.choice(list(adj_nodes), size=1).item()
+
+        raise ValueError("".join(("Method ", str(method), " udefined.")))
+
     # Constructing neighborhoods until we have exhausted all nodes.
-    while len(sorted_node_list) > 0:
-        edges, nodes = neighborhood(G,sorted_node_list[0], r, sanity_check)
+    next = next_node()
+    while next is not None:
+        edges, nodes = neighborhood(
+            G=G,
+            rootnode=next,
+            r=r,
+            sanity_check=sanity_check
+        )
 
         # Marking the nodes as belonging to a neighborhood.
-        for node in nodes: G.nodes[node]["neighborhood"] = sorted_node_list[0]
-
-        # Discarding the nodes we found.
-        for node in nodes: sorted_node_list.remove(node)
+        for node in nodes: G.nodes[node]["neighborhood"] = next
 
         neighborhood_list += ((edges, nodes),)
+
+        next = next_node()
 
     return neighborhood_list
 
@@ -279,21 +338,48 @@ def contract_neighborhood(
 # -------------------------------------------------------------------------------
 
 
-def plot_neighborhoods(G: nx.MultiGraph, neighborhood_list: tuple) -> None:
+def plot_neighborhoods(
+        G: nx.MultiGraph,
+        neighborhood_list: tuple,
+        pos: dict = None,
+        ax: mpl.axes = None,
+        show: bool = True,
+        draw_labels: bool = False,
+        **kwargs
+    ) -> None:
     """
-    Plot `G` along with it's neighborhood decomposition.
+    Plot `G` along with it's neighborhood decomposition. Graph is drawn
+    according to `pos`, if given (see the [networkx documentation](https://networkx.org/documentation/stable/reference/drawing.html#module-networkx.drawing.layout)
+    for details). Figure is shown if `show` is `True`. If `draw_graph`
+    is true, an additional figure is constructed and the original graph
+    drawn inside it. `kwargs` are passed to plotting functions of
+    networkx.
     """
-    pos = nx.spring_layout(G)
+    if pos is None: pos = nx.spring_layout(G)
 
-    all_edges = [(node1, node2) for node1, node2 in G.edges()]
+    # Colormap from which neighborhood colors are drawn.
+    cmap = mpl.colormaps["viridis"]
+
+    # Grab the current axis, if none are supplied.
+    if ax is None: ax = plt.gca()
+
     # Drawing all edges in gray first.
-    nx.draw_networkx_edges(G, pos, all_edges, edge_color="tab:gray")
+    all_edges = [(node1, node2) for node1, node2 in G.edges()]
+    nx.draw_networkx_edges(
+        G=G,
+        pos=pos,
+        edgelist=all_edges,
+        edge_color="tab:gray",
+        ax=ax,
+        **kwargs
+    )
 
     n_different_colors = sum([
         1 if len(neighborhood_tuple[1]) > 1 else 0
         for neighborhood_tuple in neighborhood_list]
     )
 
+    # Drawing every enighborhood with a different color.
     iColor = 0
     for neighborhood_tuple in neighborhood_list:
         edges,nodes = neighborhood_tuple
@@ -302,11 +388,13 @@ def plot_neighborhoods(G: nx.MultiGraph, neighborhood_list: tuple) -> None:
             G,
             pos,
             edges,
-            width=3,
+            width=2,
             edge_color=[iColor for edge in edges],
-            edge_cmap=mpl.colormaps["plasma"],
+            edge_cmap=cmap,
             edge_vmin=0,
-            edge_vmax=n_different_colors-1
+            edge_vmax=n_different_colors-1,
+            ax=ax,
+            **kwargs
         )
 
         # Drawing nodes within the neigborhood.
@@ -317,21 +405,31 @@ def plot_neighborhoods(G: nx.MultiGraph, neighborhood_list: tuple) -> None:
             pos,
             nodes,
             node_color=node_color,
-            cmap=mpl.colormaps["plasma"],
+            cmap=cmap,
             vmin=0,
-            vmax=n_different_colors-1
+            vmax=n_different_colors-1,
+            ax=ax,
+            **kwargs
         )
         if len(nodes) > 1: iColor += 1
 
-    # Extracting labels for the nodes.
-    node_labels = {}
-    for node, label in G.nodes(data="neighborhood"):
-        node_labels[node] = "R" if label == node else ""
-    nx.draw_networkx_labels(G, pos, node_labels, font_color="whitesmoke")
+    if draw_labels:
+        # Extracting labels for the nodes.
+        node_labels = {}
+        for node, label in G.nodes(data="neighborhood"):
+            node_labels[node] = r"$R$" if label == node else ""
+        nx.draw_networkx_labels(
+            G=G,
+            pos=pos,
+            labels=node_labels,
+            font_color="whitesmoke",
+            ax=ax,
+        )
 
     plt.tight_layout()
-    plt.axis("off")
-    plt.show()
+    ax.axis("off")
+
+    if show: plt.show()
 
 
 if __name__ == "__main__":

@@ -945,7 +945,10 @@ def cycle_length_ranking(G: nx.Graph,noisy: bool = True) -> list[tuple[int]]:
 
 def network_intact_check(G: nx.MultiGraph) -> bool:
     """
-    Checks if the given tensor network `G` is intact.
+    Checks if the given tensor network `G` is intact:
+    * Is the graph connected?
+    * Are there legs defined for all edges?
+    * Do the legs define the tensor network correctly?
     """
     # This library only works with nx.MultiGraph objects.
     if not isinstance(G, nx.MultiGraph):
@@ -1095,13 +1098,26 @@ def graph_compatible(
     in `G1` is contained in `G2` and, if present, if the physical
     dimensions match.
     """
-    # sanity check
+    # Sanity check.
     if sanity_check:
         assert network_message_check(G1)
         assert network_message_check(G2)
 
-    # Do nodes and edges match?
-    if not nx.utils.nodes_equal(G1.nodes(), G2.nodes()): return False
+    # Do nodes match?
+    nodes1 = list(G1.nodes())
+    nodes2 = list(G1.nodes())
+    while len(nodes1) > 0:
+        node = nodes1.pop()
+        try:
+            nodes2.remove(node)
+        except ValueError:
+            # node is not contained in G2.
+            return False
+    if len(nodes2) > 0:
+        # There are more nodes in G2 than in G1.
+        return False
+
+    # Do edges match?
     if not nx.utils.edges_equal(G1.edges(), G2.edges()): return False
 
     # Do the physical dimensions match?

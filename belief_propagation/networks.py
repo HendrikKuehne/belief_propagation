@@ -85,10 +85,12 @@ def expose_edge(
 #                   Network creation
 # -----------------------------------------------------------------------------
 
+
 def construct_network(
         G: nx.MultiGraph,
         chi: int = None,
         rng: np.random.Generator = np.random.default_rng(),
+        positive: bool = False,
         real: bool = False,
         psd: bool = True,
         tensors: bool = False
@@ -97,36 +99,78 @@ def construct_network(
     Constructs a tensor network with bond dimension `chi`, where the
     topology is taken from the graph `G`. The graph `G` is manipulated
     in-place. Tensors are only added if `tensors=True` (default:
-    `True`). If tensors were added, returns the tensors in a dictionary
+    `False`). If tensors were added, returns the tensors in a dictionary
     where the nodes are keys, and the tensors are the values.
+
+    The arguments `positive`, `real`, and `psd` control tensor
+    initialization.
+    * If `positive` is `True`, tensors are drawn from a uniform
+    distribution over [0, 1].
+    * If `positive` is `False`, tensors are drawn from a normal
+    distribution, and contain either real or complex numbers (controlled
+    by the `real` argument).
+    * If `psd`, tensors are constructed to be positive-semidefinite
+    (method inspired by [Cao and Vontobel, 2017 IEEE
+    ITW](https://doi.org/10.1109/ITW.2017.8277985)).
     """
-    # sanity check
+    # TODO accept graph argument for chi, s.t. edge sized can be
+    # specified for each edge individually. The code can basically be
+    # copied from L2BP compression.
+
+    # Sanity check.
     if tensors and chi is None:
         raise ValueError("No virtual bond dimension given.")
 
-    # random number generation
-    if real:
-        randn = lambda size: rng.standard_normal(size)
-    else:
-        randn = lambda size: crandn(size,rng)
+    if positive and psd:
+        #with tqdm.tqdm.external_write_mode():
+        #    warnings.warn(
+        #        "".join((
+        #            "Options positive=True and psd=True are incompatible. ",
+        #            "Defaulting to positive."
+        #        )),
+        #        UserWarning
+        #    )
+        pass#psd = False
 
-    for edge in G.edges:
-        # each edge has a "legs" key, whose value is itself a dictionary. The
+    if positive and (not real):
+        #with tqdm.tqdm.external_write_mode():
+        #    warnings.warn(
+        #        "".join((
+        #            "Options positive=True and real=False are incompatible. ",
+        #            "Defaulting to positive."
+        #        )),
+        #        UserWarning
+        #    )
+        pass#real = True
+
+    # Random number generation.
+    if positive:
+        rand = lambda size: rng.uniform(low=0, high=1, size=size)
+    elif real:
+        rand = lambda size: rng.standard_normal(size=size)
+    else:
+        rand = lambda size: crandn(size=size, rng=rng)
+
+    for node1, node2, key in G.edges(keys=True):
+        if node1 == node2: raise ValueError("Graph contains a self-loop.")
+        if key != 0: raise ValueError("graph contains double edges.")
+
+        # Each edge has a "legs" key, whose value is itself a dictionary. The
         # keys are the labels of the adjacent nodes, and their values are the
-        # indices of the tensor legs this edge connects
-        G[edge[0]][edge[1]][0]["legs"] = {}
-        # each ede has a "trace" key, which is true if this edge corresponds to
-        # the trace of a tensor (i.e. if this edge connects a node to itself)
-        G[edge[0]][edge[1]][0]["trace"] = False
-        # each edge has an "indices" key, which holds the legs that the
+        # indices of the tensor legs this edge connects.
+        G[node1][node2][0]["legs"] = {}
+        # Each ede has a "trace" key, which is true if this edge corresponds to
+        # a trace over a tensor (i.e. if this edge connects a node to itself).
+        G[node1][node2][0]["trace"] = False
+        # Each edge has an "indices" key, which holds the legs that the
         # adjacent tensors are summed over as a set (only used for edges that
-        # represent a trace)
-        G[edge[0]][edge[1]][0]["indices"] = None
+        # represent a trace).
+        G[node1][node2][0]["indices"] = None
 
     tensor_list = {}
 
     for node in G.nodes:
-        # adding to the adjacent edges which index they correspond to
+        # Adding to the adjacent edges which index they correspond to.
         stumps = list(range(len(G.adj[node])))
         for neighbor in G.adj[node]:
             stump = rng.choice(stumps)
@@ -137,28 +181,37 @@ def construct_network(
 
         nLegs = len(G.adj[node])
         dim = nLegs * [chi]
-        # constructing a new tensor
-        if psd:
+
+        # Constructing a new tensor.
+
+        if positive:
+            T = rand(size=dim)
+
+            # Saving the physical tensor.
+            tensor_list[node] = T
+
+        elif psd:
             h = int(np.sqrt(chi))
             if not h**2 == chi:
                 raise ValueError("if psd=True, chi must have an integer root.")
-            s = randn(size = nLegs * [h,] + [chi,])
+
+            s = rand(size = nLegs * [h,] + [chi,])
             T = np.einsum(
                 s, [2*i for i in range(nLegs)] + [2*nLegs,],
                 s.conj(), [2*i+1 for i in range(nLegs)] + [2*nLegs,],
                 np.arange(2*nLegs)
             ).reshape(dim) / chi**(3/4)
 
-            # saving the physical tensor
+            # Saving the physical tensor.
             tensor_list[node] = s
 
         else:
-            T = randn(size=dim) / chi**(3/4)
+            T = rand(size=dim) / chi**(3/4)
 
-            # saving the physical tensor
+            # Saving the physical tensor.
             tensor_list[node] = T
 
-        # adding the tensor to this node
+        # Adding the tensor to this node.
         G.nodes[node]["T"] = T
 
     return tensor_list if tensors else None
