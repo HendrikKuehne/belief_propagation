@@ -904,7 +904,7 @@ def loop_series_contraction(
     if not braket.converged:
         braket.BP(**kwargs, sanity_check=sanity_check, verbose=verbose)
 
-    # Inserting projectors in the edges.
+    # Inserting projectors on the edges.
     for node1, node2 in braket.G.edges():
         insert_excitation(
             braket=braket,
@@ -933,7 +933,7 @@ def loop_series_contraction(
     if max_order == 0:
         # The function BP_excitations internally calculates all excitations
         # before returning only the ones that the user asked for. if max_order
-        # zero, we do not need to incur this overhead.
+        # is zero, we do not need to incur this overhead.
         excitations = ()
 
     elif excitations is None:

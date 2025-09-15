@@ -1,10 +1,10 @@
 # Belief propagation for tensor network contraction
 
-The code contained herein uses Belief Propagation (BP )as a subroutine in ground state search, and implements many PEPS and PEPO routines around that. The goal is to facilitate ground state search on systems with arbitrary geometries. The typical workflow is as follows: Given a geometry of a system (i.e. a graph that represents coupling between spins), one creates a Hamiltonian and passes it to the desired algorithm.
+The code contained herein uses Belief Propagation (BP) as a subroutine in ground state search, and implements many PEPS and PEPO routines around that. The goal is to facilitate ground state search on systems with arbitrary geometries. The typical workflow is as follows: Given a geometry of a system (i.e. a graph that represents coupling between spins), one creates a Hamiltonian and passes it to the desired algorithm.
 
-# Basic usage of BP within this module
+## Basic usage of BP within this module
 
-The centerpiece of this module's contents is the implementation of BP. Considering that, in the context of Quantum Information and classical simulation, BP is defined on what is known as "double-edged factor graphs" (see [here](https://doi.org/10.1109/ITW.2017.8277985)), the central objects on which one can run BP using this module are norms $\braket{\psi|\psi}$ and expectation values $\braket{\psi|O|\psi}$. These are instances of the `Braket` class, and running BP is as easy as calling `Braket.BP()`.
+The centerpiece of this module's contents is the implementation of BP. In the context of Quantum Information and classical simulation, BP is defined on what is known as "double-edged factor graphs" (see [here](https://doi.org/10.1109/ITW.2017.8277985)). The central objects on which one can run BP using this module are norms $\braket{\psi|\psi}$ and expectation values $\braket{\psi|O|\psi}$. These are instances of the `Braket` class, and running BP is as easy as calling `Braket.BP()`.
 
 Consider the following example:
 
@@ -16,7 +16,7 @@ Consider the following example:
     # Defining the geometry of this problem: A heavyhex-graph with four cells.
     G = heavyhex(2, 2)
 
-    # Constructing a quantum state, and it's norm.
+    # Constructing a quantum state, and its norm.
     psi = PEPS.init_random(G=G, D=2, chi=3)
     braket = Braket.Overlap(psi, psi)
 
@@ -30,38 +30,23 @@ Consider the following example:
 
 This code constructs a random quantum state $\ket{\psi}$ on a heavyhex-graph with four cells, and subsequently constructs the norm $\braket{\psi|\psi}$. Calling `Braket.BP` runs the Belief Propagation iteration on $\braket{\psi|\psi}$ for `numiter` message updates (or until the desired convergence threshold is reached). The fixed-point messages are contained in the `Braket.msg` attribute. `Braket.BP` calculates the BP contraction value, and saves it under `Braket.cntr`. `Braket` objects also admit exact contraction.
 
-# Ground state search
+## Ground state search
 
 Currently, two algorithms for ground state search are implemented and equipped with BP subroutines:
 
 * DMRG, and
 * imaginary time evolution.
 
-## BP-DMRG
+### BP-DMRG
 
 The BP-DMRG algorithm is in many respects a standard implementation of DMRG. Standard implementations in one dimension rely on the site-canonical form of a MPS, however, which is not available for PEPOs.[^1] This is where BP comes in: in absence of a canonical form, the left- and right block in the local Hamiltonian need to be obtained through partial contraction of the expectation value $\braket{\psi|H|\psi}$. This is computationally intensive to do exactly for each local update, but contraction through BP is cheap. Thus, this implementation of DMRG forms the local Hamiltonian from messages. Note also that since there is no canonical form available, the local update requires us to solve a generalized eigenvalue problem.
 
-The algorithm, for every sweep, thus proceeds as follows (in pseudocode):
+One sweep of BP-DMRG, thus proceeds as follows (for every node):
 
-```
-    for node in psi:
-        psi = QR_gauging(psi)
-        # gauging ensures numerical stability.
-
-        Braket.Expval(H_pos, psi).BP()
-        Braket.Expval(H_neg, psi).BP()
-        Braket.Overlap(psi, psi).BP()
-        # Obtaining messages.
-
-        localH = assemble_local_hamiltonian()
-        localN = assemble_local_environment()
-        # Necessary objects for the local update.
-
-        T = solve_gen_eigval_problem(localH, localN)
-        # Solving the generalized eigenvalue problem yields the new site tensor.
-
-        psi[node] = T
-```
+* QR-gauging, with node $i$ as orthogonality center.
+* BP iterations on $\braket{\psi|H^{(\pm)}|\psi}$ and $\braket{\psi|\psi}$, to obtain fixed-point messages.
+* Assemble local Hamiltonian $H_i^{(\pm)} = \mathrm{Tr}\left(W_i^{(\pm)}\prod_{j\in\partial i}m_{j\rightarrow i}^{(\pm)}\right)$ and local environment $N_i = \mathrm{Tr}\left(1_{D\times D}\prod_{j\in\partial i}m_{j\rightarrow i}\right)$.
+* Solve the generalized eigenvalue problem $(H^{(+)}+H^{(-)})\ket{\psi_i}=\lambda N_i\ket{\psi_i}$ to obtain the new PEPS tensor $\psi_i$ on this site.
 
 What does this look like in practice? All the above functionality is captured in the `run()` function of the `DMRG` class. The instantiation of one such object requires two things:
 
@@ -90,9 +75,9 @@ Consider the following code snippet:
 
 The invocation of `dmrg.run()` runs the DMRG algorithm with three sweeps. Every BP iteration will run for a maximum of 500 message updates, but will stop early if a pre-determined accuracy is reached (by default: $10^{-10}$). The final state is then contained in `dmrg.psi`.
 
-## Imaginary time evolution
+### Imaginary time evolution
 
-The implementation of imaginary time evolution itself is the standard one; the state $\ket{\psi}$ is evolved by applying $e^{-\Delta\tau H}$ to it. Here as well the implementation is independent of the system geometry; $\ket{\psi}$ and $e^{-\Delta\tau H}$ are instances of the `PEPS` and `PEPO` classes, respectively, and may be defined on any graph. Applying an operator to a state follows familiar notation; $e^{-\Delta\tau H}\ket{\psi}$ is calculated through `psi = H_exp @ psi`.
+The implementation of imaginary time evolution itself is the standard one; the state $\ket{\psi}$ is evolved by applying $e^{-\Delta\tau H}$ to it. Here as well the implementation is independent of the system geometry; $\ket{\psi}$ and $e^{-\Delta\tau H}$ are instances of the `PEPS` and `PEPO` classes, respectively, and may be defined on any graph. Applying an operator to a state follows familiar notation; $e^{-\Delta\tau H}\ket{\psi}$ is calculated through the line `psi = H_exp @ psi`.
 
 BP enters the picture in two subroutines, that are necessary to make imaginary time evolution viable on classical hardware: compression and contraction.
 

@@ -59,10 +59,10 @@ def loopyNBP_routine(
     neighborhood_list = loopyNBP.construct_neighborhoods(G, r)
 
     for neighborhood in neighborhood_list:
-        edges,nodes = neighborhood
-        loopyNBP.contract_neighborhood(G, nodes, True)
+        edges, nodes = neighborhood
+        loopyNBP.contract_neighborhood(G=G, nodes=nodes, sanity_check=True)
 
-    return BP_routine(G, num_iter=num_iter)
+    return BP_routine(G=G, num_iter=num_iter)
 
 
 def loopyNBP_feynman_routine(

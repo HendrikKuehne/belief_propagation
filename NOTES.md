@@ -1,8 +1,12 @@
 ## ToDo
 
-* Implement Belief Propagation algorithm from Kirkley, 2021 ([Sci. Adv. 7, eabf1211 (2021)](https://doi.org/10.1126/sciadv.abf1211))
+* Implement basic Belief Propagation algorithm.
     * :white_check_mark: Expand the algorithm to work on arbitary graphs.
     * :white_check_mark: Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
+    * Improve convergence using [DIIS](https://en.m.wikipedia.org/wiki/DIIS). [^10]
+    * Add functionality to enable different message update schedules.
+        * Tree re-parameterization
+        * Residual Belief Propagation ([Elidan et Al, UAI 06 Proceedings, 165-173](https://dl.acm.org/doi/10.5555/3020419.3020440))
 * :white_check_mark: Check if Bethe Free Energy is real if `psd=False` (eq. A12 in [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073) ([arXiv:2008.04433](https://arxiv.org/abs/2008.04433))).
     * All data points with `psd=True` have (approximately) negative Bethe Free Energy!
 * Improve contraction accuracy by treating short loops using Kirkley and long loops using Feynman Contraction.[^1]
@@ -31,14 +35,7 @@
     * Sparse linear algebra using [CuPy](https://cupy.dev)
         * A drop-in replacement for SciPy! It has a [sparse eigensolver](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.eigsh.html#cupyx.scipy.sparse.linalg.eigsh) and [linear operators](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.LinearOperator.html#cupyx.scipy.sparse.linalg.LinearOperator).
 * Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
-
-[^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
-
-[^2]: `np.einsum_path` cannot contract large networks (i.e. many edges) because the alphabet with which it creates it's equations is limited to 52 characters (lower- and uppercase letters). This seems a severe limitation to me, I don't understand why that's in there; `cotengra.einsum` does not have that limitation, so I'm using that instead (dated 30.09.2024).
-
-[^3]: Refer to Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master). The file [`pytenet/doc/conf.py`](https://github.com/cmendl/pytenet/blob/master/doc/conf.py) is especially relevant.
-
-[^7]: Online ressources: [Performance tuning guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) for PyTorch. How would this play with NetworkX? [NetworkX supports different backends](https://networkx.org/documentation/stable/tutorial.html#using-networkx-backends), among which is [nx-cugraph](https://github.com/rapidsai/nx-cugraph) (see above), but they don't natively interface with PyTorch. PyTorch-Geometric has graph routines, and it seems like a [`torch_geometric.Data`](https://pytorch-geometric.readthedocs.io/en/stable/generated/torch_geometric.data.Data.html) object represents a graph. One can even initialize it [from a NetworkX graph](https://pytorch-geometric.readthedocs.io/en/stable/modules/utils.html#torch_geometric.utils.from_networkx). But this would, as it seems, require much deeper modifications than I have time for now. Using SciPy would require CPU-synchronization, anyways - this is a little more subtle.
+* For large transverse fields $g$, the ground state of the TFI approaches the product state $\ket{-}^{\otimes N}$. BP is exact on product states - so is BPDMRG (close to) exact in the limit of large $g$?
 
 ## Open questions
 
@@ -88,6 +85,14 @@ This will be updated continuously, as questions come to mind.
 * Why does BP not converge on some states' $\braket{\psi|\psi}$?
     * This happens often for states that were obtained using loop series DMRG, but also after SU-TEBD. The crucial question is: Is this a property of the TFI ground states, or an artefact of the methods I use? If the former were true, that would be bith interesting and a blow to my whole work here.
     * Do TFI ground states / non-converging states have some weird topological properties?
+* BP performs significantly worse at the TFI critical point $g\approx 1$ (see DMRG numerical results); what is up with that?
+    * "The onset of long-range correlations, typical of the occurrence of a phase transition, leads generically to poor performance of BP." (p. 291 in [Information, Physics and Computation (Koller, 2009)](https://doi.org/10.1093/acprof:oso/9780198570837.001.0001)).
+
+[^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
+
+[^2]: `np.einsum_path` cannot contract large networks (i.e. many edges) because the alphabet with which it creates it's equations is limited to 52 characters (lower- and uppercase letters). This seems a severe limitation to me, I don't understand why that's in there; `cotengra.einsum` does not have that limitation, so I'm using that instead (dated 30.09.2024).
+
+[^3]: Refer to Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master). The file [`pytenet/doc/conf.py`](https://github.com/cmendl/pytenet/blob/master/doc/conf.py) is especially relevant.
 
 [^4]: In the code contained herein, only nodes contain values. The emphasis is here on *associate*; the $1/Z$ that we could associate with an edge is factorized, it's factors being distributed in the adjacent nodes.
 
@@ -95,9 +100,13 @@ This will be updated continuously, as questions come to mind.
 
 [^6]: This was, independently, also found by [Cao, Vontobel, 2017](10.1109/ITW.2017.8277985).
 
+[^7]: Online ressources: [Performance tuning guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) for PyTorch. How would this play with NetworkX? [NetworkX supports different backends](https://networkx.org/documentation/stable/tutorial.html#using-networkx-backends), among which is [nx-cugraph](https://github.com/rapidsai/nx-cugraph) (see above), but they don't natively interface with PyTorch. PyTorch-Geometric has graph routines, and it seems like a [`torch_geometric.Data`](https://pytorch-geometric.readthedocs.io/en/stable/generated/torch_geometric.data.Data.html) object represents a graph. One can even initialize it [from a NetworkX graph](https://pytorch-geometric.readthedocs.io/en/stable/modules/utils.html#torch_geometric.utils.from_networkx). But this would, as it seems, require much deeper modifications than I have time for now. Using SciPy would require CPU-synchronization, anyways - this is a little more subtle.
+
 [^8]: Approximately, since - of course - my graphs are not actually trees.
 
 [^9]: This is of course only a heuristic. I took inspiration from [Phys. Rev. X 14, 011009 (2024)](https://doi.org/10.1103/PhysRevX.14.011009) for this method, and the authors go into much more detail on the construction of gauging trees in appendix A.
+
+[^10]: This is implemented in Quimb; see [quimb.tensor.belief_propagation.bp_common.BeliefPropagationCommon.run](https://quimb.readthedocs.io/en/latest/autoapi/quimb/tensor/belief_propagation/bp_common/index.html#quimb.tensor.belief_propagation.bp_common.BeliefPropagationCommon.run). The method is a direct implementation of [Chem. Phys. Let. 73(2): 393-398 (1980)](https://doi.org/10.1016/0009-2614(80)80396-4) (available also in [PySCF](https://pyscf.org/pyscf_api_docs/pyscf.lib.html#pyscf.lib.diis.DIIS)).
 
 ## References
 

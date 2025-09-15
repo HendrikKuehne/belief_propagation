@@ -113,7 +113,6 @@ class BaseBraket:
             size_dict: dict[str, int],
             target_width: int = 5,
             parallel: bool = False,
-            verbose: bool = False,
             **kwargs
         ) -> float:
         """
@@ -703,7 +702,7 @@ class Braket(BaseBraket):
                 f"Edge ({sender}, {receiver}) not present in graph."
             )
 
-        # The outcoming message on one edge is the result of absorbing all
+        # The outgoing message on one edge is the result of absorbing all
         # incoming messages on all other edges into the tensor stack.
         neighbors = tuple(
             node 
@@ -1567,8 +1566,8 @@ class Braket(BaseBraket):
         returns the new message stack. `**kwargs` are passed to
         `self.BP`. The messages in the message stack are assumed to be
         ordered by ascending node value in sender first, receiver
-        second. The second (boolean) argument of the returned funcion is
-        the sanity check.
+        second. The second (boolean) argument of the returned function
+        toggles the sanity check.
         """
         # Sanity check.
         if sanity_check: assert self.intact
@@ -1752,6 +1751,11 @@ class Braket(BaseBraket):
                     msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
 
                 return msg
+
+            if method == "uniform":
+                # Uniform distribution over all message entries.
+                n_elems = bra_size * op_size * ket_size
+                return np.ones(shape=(bra_size, op_size, ket_size)) / n_elems
 
             if method == "zero-normal":
                 # Positive-semidefinite, hermitian, sums to zero.
@@ -1951,7 +1955,10 @@ def BP_convergence_test(
     """
     Test whether BP converges to a unique fixed point on the given
     network, irrespective of given messages. Taken from
-    [IEEE Trans.Inf.Theory 53, 12, 2007](https://doi.org/10.1109/TIT.2007.909166).
+    [IEEE Trans.Inf.Theory 53, 12,
+    2007](https://doi.org/10.1109/TIT.2007.909166). See also
+    [this book](https://mitpress.mit.edu/9780262013192/probabilistic-graphical-models/),
+    chapter 11.3.4.
     """
     raise NotImplementedError("Does not yet work!")
 
@@ -2203,8 +2210,8 @@ def contract_braket_with_hole(
     legs. It's legs come in three groups: First the bra legs, followed
     by the operator legs, and finally the ket legs. Each group contains
     `len(adj[hole])` legs, leading to the total of `3 * len(adj[hole])`
-    legs. The ordering within the groups follows the leg ordering of the
-    tensor at respective `hole`.
+    legs. The leg ordering within the groups follows the leg ordering of
+    the tensor at `hole`.
     """
     # Sanity check.
     if sanity_check: assert braket.intact
@@ -2579,6 +2586,78 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
         return T_bra, T_op, T_ket
 
 
+def __BP_excitations_holefree(
+        G: nx.MultiGraph,
+        max_order: int = np.inf,
+        sanity_check: bool = False
+    ) -> tuple[nx.MultiGraph]:
+    """
+    Given the graph `G`, returns the excitations from
+    [arXiv:2409.03108](https://arxiv.org/abs/2409.03108) up to order
+    `max_order`. The order of an excitation is the number of edges that
+    are excited.
+    """
+    raise NotImplementedError("".join((
+        "Does not work yet!!! This method fails to account for excitations ",
+        "in which loops are connected tree-wise. This happens e.g. on ",
+        "hex(3, 1) graphs."
+    )))
+
+    # TODO fix this. The whole impetus for writing this method was to find a
+    # way of constructing excitations that is more efficient than finding the
+    # operator chains of a PEPO.
+
+    def nodes_to_graph(nodes: list[int]) -> nx.MultiGraph:
+        edges = tuple(
+            (nodes[i], nodes[(i+1) % len(nodes)])
+            for i in range(len(nodes))
+        )
+        return nx.MultiGraph(incoming_graph_data=edges)
+
+    def exc_contained(exc: nx.MultiGraph, exclist: list[nx.MultiGraph]) -> bool:
+        """
+        Returns `True` if the excitation `exc` is contained in the list.
+        Assumes that `exc_list` is sorted by excitation weight.
+        """
+        i = 0
+        while i < len(exclist):
+            if exclist[i].number_of_edges() < exc.number_of_edges():
+                i += 1
+                continue
+
+            if exclist[i].number_of_edges() > exc.number_of_edges():
+                return False
+
+            if graph_compatible(exc, exclist[i]):
+                return True
+
+            i += 1
+
+        return False
+
+    # Finding the cycle basis.
+    loops = nx.simple_cycles(G=G)
+    loops = tuple(nodes_to_graph(loop) for loop in loops)
+    excitations = []
+
+    # Excitations are all distinct combinations of the loops, where
+    # "combination" refers to the simple union of the edges.
+    for r in range(1, len(loops) + 1):
+        for r_loops in itertools.combinations(loops, r=r):
+            exc = nx.compose_all(r_loops)
+
+            # Have we seen this excitation before?
+            if exc_contained(exc, excitations): continue
+
+            excitations.append(exc)
+            excitations = sorted(
+                excitations,
+                key=lambda G: G.number_of_edges()
+            )
+
+    return tuple(excitations)
+
+
 def BP_excitations(
         G: nx.MultiGraph,
         max_order: int = np.inf,
@@ -2597,6 +2676,11 @@ def BP_excitations(
     Thus, this method returns excitations with which the environment
     at all nodes in `holes` can be calculated.
     """
+
+    # TODO I'm finding the excitations by inserting appropriate tensors in the
+    # nodes of the TN and finding non-vanishing operator chains. This is very
+    # inefficient! I know already that the excitations simply correspond to all
+    # the loopy subgraphs; I should searhc for them using nx.simply_cycles.
 
     if nx.is_tree(G): return ()
 
@@ -2631,7 +2715,7 @@ def BP_excitations(
             # is considered excited, if it is unit-valued.
             for leg in range(nLegs):
                 # A unit-valued edge is considered to be excited. This means
-                # configuration with one adjacent, unit-valued edge represent
+                # configurations with one adjacent, unit-valued edge represent
                 # dangling excitations.
                 idx = (tuple(1 if i == leg else 0 for i in range(nLegs))
                        + (slice(2), slice(2)))
@@ -2665,6 +2749,15 @@ def BP_excitations(
             for edge, idx in virt_idx.items()
             if idx == 1
         )),)
+
+    if len(excitations) == 0:
+        raise RuntimeError("".join((
+            "I have encountered graphs where this function does not seem to",
+            "work! This happened on graphs that where generated by combining",
+            "belief_propagation.graphs.min_girth_graph and",
+            "belief_propagation.graphs.composed_cluster_graph; it seems to ",
+            "work perfectly well on hexagonal graphs, however. Sort this out!"
+        )))
 
     return excitations
 
@@ -2723,6 +2816,13 @@ def assemble_excitation_brakets(
         )
 
         return all_excs
+
+    # Checking if the excitation is contained in the braket graph.
+    if not all(
+        braket.G.has_edge(node1, node2)
+        for node1, node2 in excitation.edges()
+    ):
+        raise ValueError("Excitation is not contained in braket graph.")
 
     # How will this work under the hood? We truncate the network. All edges
     # that are not contained in the excitation will be removed, and new edges

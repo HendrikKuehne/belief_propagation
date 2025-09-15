@@ -1,16 +1,16 @@
 
-# ignore Python temporary and compiled files
+# Ignore Python temporary and compiled files.
 __pycache__
 *.pyc
 
-# ignoring python package files and dirs
+# Ignoring python package files and dirs.
 *.pth
 belief_propagation.egg-info/
 
 # inore generated Jupyter files
 *.ipynb_checkpoints/
 
-# ignore compressed files, pickles and datasets
+# Ignore compressed files, pickles and datasets.
 *.zip
 *.tar.gz
 *.pickle
@@ -27,7 +27,7 @@ datasets/
 .vscode/
 *.code-workspace
 
-# ignore Latex temporary files
+# Ignore Latex temporary files.
 *.aux
 *.bbl
 *.bcf
@@ -42,6 +42,7 @@ datasets/
 *.synctex
 *.fdb_latexmk
 
-# ignore test files
+# ignore test files and code for plots.
 test.*
 test/
+plotting_code/

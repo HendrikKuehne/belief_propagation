@@ -879,7 +879,8 @@ class PEPO:
         if sanity_check: assert self.intact
 
         # Why a recursion? For large graphs, simply iterating through all
-        # indices to find valid chains might take prohibitively long.
+        # indices to find valid chains might take prohibitively (because
+        # exponentially) long.
 
         operator_chains: list[dict[int, tuple[int]]] = []
         operator_chain_virtidx: list[dict[frozenset[int], int]] = []

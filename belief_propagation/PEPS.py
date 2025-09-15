@@ -67,7 +67,7 @@ class PEPS:
 
     def conj(self, sanity_check: bool = False):
         """
-        bra to this state's ket: All site tensors are conjugated.
+        bra to this state's ket: All PEPS tensors are conjugated.
         """
         if sanity_check: assert self.intact
 
@@ -360,11 +360,11 @@ class PEPS:
         """
         newG = cls.prepare_graph(G, keep_legs=True, D=1)
 
-        # appending a dummy physical dimension with size one to the tensors
+        # Appending a dummy physical dimension with size one to the tensors.
         for node in G.nodes:
             newG.nodes[node]["T"] = np.expand_dims(G.nodes[node]["T"], axis=-1)
 
-        # adding sizes to the edges
+        # Adding sizes to the edges.
         for node1, node2 in G.edges():
             leg = G[node1][node2][0]["legs"][node1]
             size = newG.nodes[node1]["T"].shape[leg]
@@ -723,6 +723,11 @@ class PEPS:
         """
         Initialisation from a graph that contains site tensors.
         """
+        if sanity_check:
+            if not network_message_check(G=G): raise ValueError(
+                "Graph does not represent a valid tensor network."
+            )
+
         # Inferring physical dimension and data type.
         dtype_list: list[np.dtype] = []
         for node, T in G.nodes(data="T"):
@@ -734,12 +739,6 @@ class PEPS:
 
         # Inferring edge sizes.
         for node1, node2, data in G.edges(data=True):
-            if "legs" not in data.keys():
-                raise ValueError("".join((
-                    f"Edge ({node1}, {node2}) in graph does not contain leg ",
-                    "ordering."
-                )))
-
             if "size" in data.keys(): continue
 
             leg1 = data["legs"][node1]
