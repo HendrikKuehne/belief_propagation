@@ -294,6 +294,14 @@ class PEPS:
             node: self.G.nodes[node]["D"]
             for node in self
         }
+    
+    @property
+    def chi(self) -> dict[frozenset[int], int]:
+        """Virtual bond dimension on every edge."""
+        return {
+            frozenset((node1, node2)): size
+            for node1, node2, size in self.G.edges(data="size")
+        }
 
     @classmethod
     def init_random(

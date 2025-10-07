@@ -41,11 +41,11 @@ Currently, two algorithms for ground state search are implemented and equipped w
 
 The BP-DMRG algorithm is in many respects a standard implementation of DMRG. Standard implementations in one dimension rely on the site-canonical form of a MPS, however, which is not available for PEPOs.[^1] This is where BP comes in: in absence of a canonical form, the left- and right block in the local Hamiltonian need to be obtained through partial contraction of the expectation value $\braket{\psi|H|\psi}$. This is computationally intensive to do exactly for each local update, but contraction through BP is cheap. Thus, this implementation of DMRG forms the local Hamiltonian from messages. Note also that since there is no canonical form available, the local update requires us to solve a generalized eigenvalue problem.
 
-One sweep of BP-DMRG, thus proceeds as follows (for every node):
+One sweep of BP-DMRG thus proceeds as follows (for every node):
 
 * QR-gauging, with node $i$ as orthogonality center.
 * BP iterations on $\braket{\psi|H^{(\pm)}|\psi}$ and $\braket{\psi|\psi}$, to obtain fixed-point messages.
-* Assemble local Hamiltonian $H_i^{(\pm)} = \mathrm{Tr}\left(W_i^{(\pm)}\prod_{j\in\partial i}m_{j\rightarrow i}^{(\pm)}\right)$ and local environment $N_i = \mathrm{Tr}\left(1_{D\times D}\prod_{j\in\partial i}m_{j\rightarrow i}\right)$.
+* Assemble local Hamiltonian $H_i^{(\pm)} = \mathrm{Tr}\left(W_i^{(\pm)}\prod_{j\in\partial i}m_{j\rightarrow i}^{(\pm)}\right)$ and local environment $N_i = \mathrm{Tr}\left(I_{D\times D}\prod_{j\in\partial i}m_{j\rightarrow i}\right)$.
 * Solve the generalized eigenvalue problem $(H^{(+)}+H^{(-)})\ket{\psi_i}=\lambda N_i\ket{\psi_i}$ to obtain the new PEPS tensor $\psi_i$ on this site.
 
 What does this look like in practice? All the above functionality is captured in the `run()` function of the `DMRG` class. The instantiation of one such object requires two things:
@@ -151,4 +151,4 @@ This code first defines the Heisenberg model Hamiltonian and an initial state wi
 [^1]: Exceptions exist, e.g. in two dimensions (see e.g. [arXiv:2507.08080](https://arxiv.org/abs/2507.08080)).
 
 [^2]: To be more precise, BP only converges on graphs that preserve the positive- or negative-semidefiniteness of the messages. If the graph represents the tensor network that is $\braket{\psi|O|\psi}$, this is only the case if
-$O$ is positive- or negative-semidefinite. The origin of this behavior lies in he fact that BP was originally used to marginalize over probability distributions.
+$O$ is positive- or negative-semidefinite. The origin of this behavior lies in he fact that BP was originally designed to marginalize over probability distributions.

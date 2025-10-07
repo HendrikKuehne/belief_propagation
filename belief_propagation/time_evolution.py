@@ -171,8 +171,8 @@ def get_brick_wall_layers(
     Decomposes a PEPO into multiple layers based on the brick wall
     layout. This is accomplished by decomposing the PEPO into operator
     chains, and choosing (spatially) disjoint subsets. Returns the
-    oerator layers in correct trotterization order, multiplied with the
-    factor `t`.
+    operator layers in correct trotterization order, each multiplied
+    with the factor `t`.
     """
     # sanity check
     if sanity_check: assert op.intact
@@ -214,10 +214,10 @@ def operator_exponential(
         sanity_check: bool = False
     ) -> Union[PEPO, tuple[PEPO]]:
     """
-    Time evolution operator from trotterization. If `contract=True`,
-    multiple layers are multiplied together afterwards.
+    Operator exponential `exp(op * t)`, using trotterization. If
+    `contract=True`, multiple layers are multiplied together afterwards.
 
-    Layers are returned in notational order, i.e. the returned tuple
+    Layers are returned in order of iteration, i.e. the returned tuple
     `(O1, O2, ..., On)` is applied to a quantum state like
     `|out> = On * ... * O2 * O1 * |in>`.
     """

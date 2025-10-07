@@ -44,6 +44,9 @@ class OpChain(dict[int, np.ndarray]):
     operator acts on a different site in the system. These serve as
     important bulding blocks of many-body Hamiltonians; many such
     Hamiltonians are sums of operator chains.
+
+    Subclass of `dict`; nodes of the underlying graph are keys, and
+    operators are values.
     """
 
     def toarray(self, create_using: str = "numpy", sanity_check: bool = False):
@@ -223,7 +226,7 @@ class OpChain(dict[int, np.ndarray]):
 class OpLayer(tuple[OpChain]):
     """
     Tuple of `OpChain` objects. Represents a collection of operator
-    chains.
+    chains, which - added together - gives an observable.
     """
 
     def toarray(
@@ -646,12 +649,13 @@ class PEPO:
 
         return newPEPO
 
-    def view_site(self,node: int):
+    def view_site(self, node: int):
         """
         Prints all components of the tensor at node `node`.
         """
-        # sanity check
-        assert node in self
+        # Sanity check.
+        if not node in self:
+            raise ValueError(f"Node {node} is not contained in the graph.")
 
         legs_in = tuple(
             self.G[node][neighbor][0]["legs"][node]
@@ -1366,13 +1370,21 @@ class PEPO:
         """Physical dimension at every node."""
         return {node: self.G.nodes[node]["D"] for node in self}
 
+    @property
+    def chi(self) -> dict[frozenset[int], int]:
+        """Virtual bond dimension on every edge."""
+        return {
+            frozenset((node1, node2)): size
+            for node1, node2, size in self.G.edges(data="size")
+        }
+
     @staticmethod
     def view_tensor(T: np.ndarray):
         """
         Prints all extractable information from PEPO tensor `T`.
         """
         D = T.shape[-1]
-        # sanity check
+        # Sanity check.
         for i in range(T.ndim - 2, T.ndim):
             if not T.shape[i] == D:
                 raise ValueError("".join((
@@ -1380,7 +1392,7 @@ class PEPO:
                     f"got {T.shape[i]}."
                 )))
 
-        # printing cellular automaton components
+        # Printing cellular automaton components.
         for virtual_index in itertools.product(*[
             range(T.shape[i])
             for i in range(T.ndim - 2)
@@ -1410,31 +1422,37 @@ class PEPO:
         To be used in `__init__` of subclasses of `PEPO`: `G` is the
         graph from which the operator inherits it's underlying graph.
         """
-        # shallow copy of G
+        # Shallow copy of G.
         newG = nx.MultiGraph(G.edges())
 
-        # adding additional information to every edge
-        for node1, node2 in newG.edges(keys=False):
+        # Will we need to define a new leg ordering?
+        new_legs = False
+
+        # Information on the edges.
+        for node1, node2, data in G.edges(keys=False, data=True):
+            if "legs" not in data.keys(): new_legs = True
+
             newG[node1][node2][0]["trace"] = False
             newG[node1][node2][0]["indices"] = None
-            newG[node1][node2][0]["legs"] = {}
+            newG[node1][node2][0]["legs"] = {} if new_legs else data["legs"]
 
-        for node in newG.nodes:
-            # adding to the adjacent edges which index they correspond to
-            for i, neighbor in enumerate(newG.adj[node]):
-                newG[node][neighbor][0]["legs"][node] = i
+        if new_legs:
+            for node in newG.nodes:
+                # Adding to the adjacent edges which index they correspond to.
+                for i, neighbor in enumerate(newG.adj[node]):
+                    newG[node][neighbor][0]["legs"][node] = i
 
         if chi is not None:
             if not np.isinf(chi):
                 if not np.isclose(int(chi), chi):
                     raise ValueError("Size must be an integer.")
 
-                # writing size chi to each edge
+                # Writing size chi to each edge.
                 for node1, node2 in newG.edges(keys=False):
                     newG[node1][node2][0]["size"] = int(chi)
 
             else:
-                # writing size chi to each edge
+                # Writing size chi to each edge.
                 for node1, node2 in newG.edges(keys=False):
                     newG[node1][node2][0]["size"] = chi
 
@@ -1919,7 +1937,7 @@ class PEPO:
         self.check_tree: bool = True
         """Are the tree traversal checks in `self.intact` enabled?"""
         # TODO: I don't like that I have to disable the tree traversal checks
-        # somtimes; maybe find a workaround?
+        # sometimes; maybe find a workaround?
 
         return
 
@@ -2059,7 +2077,7 @@ def all_edges_present(
     if sanity_check: assert network_message_check(G)
 
     if node is not None:
-        # checking if al edges adjacent to node are present
+        # Checking if al edges adjacent to node are present.
         if sanity_check:
             if not G.has_node(node):
                 raise ValueError(f"Node {node} not contained in graph G.")
@@ -2069,7 +2087,7 @@ def all_edges_present(
             for neighbor in G.adj[node]
         )
 
-    # checking if all edges are present
+    # Checking if all edges are present.
     return nx.utils.edges_equal(
         G.edges(),
         [tuple(edge) for edge in edges_to_indices.keys()]

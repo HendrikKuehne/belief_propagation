@@ -35,7 +35,10 @@
     * Sparse linear algebra using [CuPy](https://cupy.dev)
         * A drop-in replacement for SciPy! It has a [sparse eigensolver](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.eigsh.html#cupyx.scipy.sparse.linalg.eigsh) and [linear operators](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.LinearOperator.html#cupyx.scipy.sparse.linalg.LinearOperator).
 * Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
-* For large transverse fields $g$, the ground state of the TFI approaches the product state $\ket{-}^{\otimes N}$. BP is exact on product states - so is BPDMRG (close to) exact in the limit of large $g$?
+* Go through all the code and fix the names of classes, arguments, attributes, and so on; many of them are confusingly named (`PEPS` $\rightarrow$ `TPS`, `BP_excitations` $\rightarrow$ `LSE_configurations`, and so on)
+* More elegant implementation of Loop Series Contraction
+  * Put more functionality for configurations into a single class.
+  * I feel like the workarounds necessary for leaving the `Braket` object unchanged are a bit ugly; maybe re-think the implementation.
 
 ## Open questions
 
@@ -58,7 +61,7 @@ This will be updated continuously, as questions come to mind.
     * Many runs of the BP algorithm give exact results when only long loops are present, which is what Kirkley et Al claim in their paper; they do not give a source though.
         * Intuitive statistical explanation, where the error in loopy BP comes from and why it might be negligible for long loops in ch. 14.4.2 of [this book](https://doi.org/10.1093/acprof:oso/9780198570837.001.0001) (drafts available [online](https://web.stanford.edu/~montanar/RESEARCH/book.html) for free)
     * :arrow_right: Loops behave like vector iterations, which is not how Kirkleys algorithm works; it is in fact detrimental to the accuracy. Vector iterations require many iterations, however, and the longer the loop the more iterations one needs to reach vector iteration territory. Long loops will (probably - this is what I expect) introduce larger errors, when one does more iterations in the BP algorithm.
-    * :arrow_right: Actually not! The eigenvalue spectra of long loops tend to feature one dominant eigenvalue, while all others are neglectable in magnitude. See [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#spectra-of-a-matrix-chain) for details.[^6]
+    * :arrow_right: Actually not! The eigenvalue spectra of long loops tend to feature one dominant eigenvalue, while all others are neglectable in magnitude.[^6]
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
 * What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
@@ -67,8 +70,10 @@ This will be updated continuously, as questions come to mind.
 * What happens when we try Christian's idea of Orthogonal Belief Propagation?
     * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of PEPS networks that Arad (2021) introduces?
 * Do different gauges have a (strong) effect on BPDMRG performance?
+  * :arrow_right: Yes! The QR-gauge drastically improves the conditioning of the generalized eigenvalue problem.
 * What are BP Trapping sets?
-    * I have seen the BP algorithm stagnate during imaginary time evolution, but in a very strange way: Messages oscillate s.t. the message epsilon stays constant. I have no idea where this might come from, but it seems like this behavior is not unheard of in the literature; [arXiv:2506.01779](https://arxiv.org/abs/2506.01779) talks about a thing called "trapping sets"
+    * I have seen the BP algorithm stagnate during imaginary time evolution, but in a very strange way: Messages oscillate s.t. the message epsilon stays constant. I have no idea where this might come from, but it seems like this behavior is not unheard of in the literature; [arXiv:2506.01779](https://arxiv.org/abs/2506.01779) talks about a thing called "trapping sets".
+        * Refer also to [IEEE Comm. Let., vol. 28, no. 3, pp. 444-448 (2024)](https://doi.org/10.1109/LCOMM.2024.3356312): "Enhanced Message-Passing Decoding of Degenerate Quantum Codes Utilizing Trapping Set Dynamics"
     * For the moment I'll simply check for this during `braket.BP`. If it happens, I'll initialize new messages and add damping to the BP iteration.
 * How many BP fixed points are there?
     * There have been times when I thought there is only one, and it seemed like numerical simulations supported that.
@@ -79,6 +84,7 @@ This will be updated continuously, as questions come to mind.
     * Compute it! The *n-mode unfolding* ([arXiv:2109.00626](https://arxiv.org/abs/2109.00626)) of tensors might be helpful here.
 * How effective is QR-gauging?
     * I use a breadth-first search in [`belief_propagation.truncate_expand.QR_gauging`](https://github.com/HendrikKuehne/belief_propagation/blob/f40f9b761bc665018958d690a467f2e5b18ea266/belief_propagation/truncate_expand.py#L668), because this ensures that the edges that will be cut are far removed from the orthogonality center.[^9] This should make the approximate orthogonalization more accurate, and would (if the graph were actually a tree) cause the messages to evaluate to identity. In my code, this would translate to the local environment being (approximately)[^8] the identity! Is that what actually happens?
+    * :arrow_right: More or less! QR-gauging does move the environments noticeably closer to the identity, but they are not close to the identity in an absolute sense.
 * Can I, somehow, accelerate the BP-iteration during DMRG?
     * One thought that I had was to re-use the old messages, but that does not seem to work; indeed (how I remeber it), BP does not converge at all when I do that. This might be due to the fact that there is (I think) only one BP fixed point.
     * Low priority; the bottleneck in DMRG, time-wise, is the generalized eigenvalue problem.
@@ -87,6 +93,7 @@ This will be updated continuously, as questions come to mind.
     * Do TFI ground states / non-converging states have some weird topological properties?
 * BP performs significantly worse at the TFI critical point $g\approx 1$ (see DMRG numerical results); what is up with that?
     * "The onset of long-range correlations, typical of the occurrence of a phase transition, leads generically to poor performance of BP." (p. 291 in [Information, Physics and Computation (Koller, 2009)](https://doi.org/10.1093/acprof:oso/9780198570837.001.0001)).
+* For large transverse fields $g$, the ground state of the TFI approaches the product state $\ket{-}^{\otimes N}$. BP is exact on product states - so is BPDMRG (close to) exact in the limit of large $g$?
 
 [^1]: Feynman contraction refers to contracting over an edgenot by summing over it and merging the tensors, but instead by inserting a resolution of the identity and summing over the different terms that arise. See [Huang et Al, 2022](https://arxiv.org/abs/2005.06787), Section three; and [Girolamo, 2023](https://mediatum.ub.tum.de/1747499).
 
@@ -98,7 +105,7 @@ This will be updated continuously, as questions come to mind.
 
 [^5]: I can imagine this going two ways: Either we add projectors to the edges, always projecting out the part that is collinear to the previous messages; or we directly project out the previous messages from the tensors that are adjacent to that edge.
 
-[^6]: This was, independently, also found by [Cao, Vontobel, 2017](10.1109/ITW.2017.8277985).
+[^6]: This was, independently, also found by [Cao, Vontobel, 2017]([10.1109/ITW.2017.8277985](https://doi.org/10.1109/ITW.2017.8277985)).
 
 [^7]: Online ressources: [Performance tuning guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) for PyTorch. How would this play with NetworkX? [NetworkX supports different backends](https://networkx.org/documentation/stable/tutorial.html#using-networkx-backends), among which is [nx-cugraph](https://github.com/rapidsai/nx-cugraph) (see above), but they don't natively interface with PyTorch. PyTorch-Geometric has graph routines, and it seems like a [`torch_geometric.Data`](https://pytorch-geometric.readthedocs.io/en/stable/generated/torch_geometric.data.Data.html) object represents a graph. One can even initialize it [from a NetworkX graph](https://pytorch-geometric.readthedocs.io/en/stable/modules/utils.html#torch_geometric.utils.from_networkx). But this would, as it seems, require much deeper modifications than I have time for now. Using SciPy would require CPU-synchronization, anyways - this is a little more subtle.
 

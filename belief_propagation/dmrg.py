@@ -426,7 +426,7 @@ class LocalEnvironmentOperator(LocalOperator):
                 (datum[1][0], 2*nLegs + datum[1][1])
             )
 
-            # Compiling vector re-shape data.
+            # Gathering vector re-shape data.
             self.in_shape_vec[datum[1][1]] = datum[0].shape[-1]
 
         self.in_shape_vec = tuple(self.in_shape_vec + [self.D,])
@@ -443,9 +443,8 @@ class LocalEnvironmentOperator(LocalOperator):
 
 # -----------------------------------------------------------------------------
 #                   DMRG classes.
-#                   TODO: It would be nice, prospectively, if
-#                   LoopSeriesDMRG inherited from DMRG.
-#                   should not be too difficult.
+#                   TODO: It would be nice, prospectively, if LoopSeriesDMRG
+#                   inherited from DMRG. Should not be too difficult.
 # -----------------------------------------------------------------------------
 
 
@@ -602,7 +601,7 @@ class DMRG:
 
         return N
 
-    def __BP(self, sanity_check: bool = False, **kwargs) -> None:
+    def BP(self, sanity_check: bool = False, **kwargs) -> None:
         """
         BP iteration on the overlap and all expvals. Messages on the
         complete operator are formed.
@@ -678,7 +677,13 @@ class DMRG:
 
         return
 
-    def __sweep(self, gauge: bool, sanity_check: bool, **kwargs) -> float:
+    def __sweep(
+            self,
+            gauge: bool,
+            verbose: bool,
+            sanity_check: bool,
+            **kwargs
+        ) -> float:
         """
         Local update at all sites. `kwargs` are passed to `Braket.BP`.
         Returns the change in energy after the sweep.
@@ -701,7 +706,8 @@ class DMRG:
         for iNode, node in tqdm.tqdm(
             enumerate(self),
             desc=f"sweep {self.__iSweep}",
-            total=self.nsites
+            total=self.nsites,
+            disable=not verbose,
         ):
             if gauge:
                 # Gauging for increased numerical stability.
@@ -711,7 +717,7 @@ class DMRG:
                 )
 
             # Calculating environments and previous energy.
-            self.__BP(sanity_check=sanity_check, **kwargs)
+            self.BP(verbose=verbose, sanity_check=sanity_check, **kwargs)
             if iNode == 0: Eprev = self.E0
 
             H = self.__assemble_localH(node, sanity_check=sanity_check)
@@ -754,7 +760,8 @@ class DMRG:
                 pass
 
         # Calculating new environments, for calculation of energy after sweep.
-        self.__BP(
+        self.BP(
+            verbose=verbose,
             sanity_check=sanity_check,
             iterator_desc_prefix="".join((
                 iterator_desc_prefix,
@@ -770,9 +777,9 @@ class DMRG:
     def run(
             self,
             nSweeps: int = None,
-            verbose: bool = False,
             gauge: bool = True,
             compress: bool = True,
+            verbose: bool = False,
             sanity_check: bool = False,
             **kwargs
         ) -> tuple[float]:
@@ -795,7 +802,10 @@ class DMRG:
         for iSweep in iterator:
             self.__iSweep = iSweep
             eps = self.__sweep(
-                gauge=gauge, sanity_check=sanity_check, **kwargs
+                gauge=gauge,
+                verbose=verbose,
+                sanity_check=sanity_check,
+                **kwargs
             )
             iterator.set_postfix_str(f"eps = {eps:.3e}")
             eps_list += (eps,)
@@ -925,7 +935,7 @@ class DMRG:
         return self.overlap.ket
 
     @psi.setter
-    def psi(self, newket:PEPS) -> None:
+    def psi(self, newket: PEPS) -> None:
         """
         Changing the state of the system requires inserting a new PEPS
         in all `Braket` objects. Convergence markers will be set to
@@ -1080,8 +1090,8 @@ class DMRG:
             (
                 f"DMRG problem on {self.nsites} sites.",
                 "\nKet: " + str(self.overlap.ket) + "\nHamiltonians: "
-            ) + (
-                "".join(("\n",str(expval.op)))
+            ) + tuple(
+                "".join(("\n", str(expval.op)))
                 for expval in self.expvals
             ) + (
                 "\nMessages are ",
@@ -1141,9 +1151,10 @@ class DMRG:
         # If not given, initial state is chosen randomly.
         if psi_init is None:
             psi_init = PEPS.init_random(
-                G=op.G,
+                G=oplist[0].G,
                 D=oplist[0].D,
                 chi=chi,
+                keep_legs=True,
                 dtype=self.dtype,
                 **kwargs
             )

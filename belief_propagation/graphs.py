@@ -8,6 +8,7 @@ __all__ = [
     "hex",
     "heavyhex",
     "grid",
+    "heavygrid",
     "line",
     "loop",
     "regular_graph",
@@ -21,6 +22,7 @@ __all__ = [
 
 import itertools
 import warnings
+from typing import Callable, Any
 
 import networkx as nx
 import matplotlib as mpl
@@ -80,36 +82,65 @@ def hex(m: int, n:int) -> nx.MultiGraph:
     return G
 
 
-def heavyhex(m: int,n: int) -> nx.MultiGraph:
+def heavy_graph_decorator(
+        smallgraph: Callable[[Any], nx.MultiGraph]
+    ) -> Callable[[Any], nx.MultiGraph]:
+    """
+    Decorator for turning any graph into its heavy version. Inspired by
+    the heavy-hexagonal graph from [Phys. Rev. X 10, 011022
+    (2020)](https://doi.org/10.1103/PhysRevX.10.011022).
+    """
+    def make_heavy(*args, **kwargs) -> nx.MultiGraph:
+        G = smallgraph(*args, **kwargs)
+        if not isinstance(G, nx.MultiGraph): raise ValueError(
+            "Function didi not return MultiGraph."
+        )
+
+        N = G.number_of_nodes()
+        edges_to_add = ()
+        edges_to_remove = ()
+
+        # Adding sites on the edges.
+        for node1, node2 in G.edges():
+            edges_to_add += ((node1, N), (N, node2))
+            edges_to_remove += ((node1, node2),)
+            N += 1
+
+        G.add_edges_from(edges_to_add)
+        G.remove_edges_from(edges_to_remove)
+
+        return G
+
+    return make_heavy
+
+
+@heavy_graph_decorator
+def heavyhex(m: int, n: int) -> nx.MultiGraph:
     """
     Heavy-hex graph, as defined in [Phys. Rev. X 10, 011022
     (2020)](https://doi.org/10.1103/PhysRevX.10.011022).
     """
     G = hex(m=m, n=n)
-    N = G.number_of_nodes()
-
-    edges_to_add = ()
-    edges_to_remove = ()
-    # Adding qubits to the edges.
-    for node1, node2 in G.edges():
-        edges_to_add += ((node1, N), (N, node2))
-        edges_to_remove += ((node1, node2),)
-        N += 1
-    G.add_edges_from(edges_to_add)
-    G.remove_edges_from(edges_to_remove)
-
     return G
 
 
 def grid(m: int, n: int) -> nx.MultiGraph:
     """
-    Creates a grid graph with `m` rows and `n` columns.
+    Rectangular grid with `m x n` unit cells.
     """
-    G = nx.grid_2d_graph(m=m, n=n, create_using=nx.MultiGraph)
+    G = nx.grid_2d_graph(m=m+1, n=n+1, create_using=nx.MultiGraph)
     # Re-labeling nodes.
-    mapping = {(i, j): i * n + j for i in range(m) for j in range(n)}
-    G = nx.relabel_nodes(G, mapping)
+    G = nx.relabel_nodes(
+        G=G,
+        mapping={node: i for i, node in enumerate(G.nodes)}
+    )
 
+    return G
+
+
+@heavy_graph_decorator
+def heavygrid(m: int, n: int) -> nx.MultiGraph:
+    G = grid(m=m, n=n)
     return G
 
 

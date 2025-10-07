@@ -602,7 +602,7 @@ class Braket(BaseBraket):
     Code for Belief Propagation.
     """
 
-    check_trap: bool = True
+    check_trap: bool = False
     """Whether to check if BP is stuck in a trapping set."""
     trap_threshold: float = 1e-11
     """
@@ -626,7 +626,7 @@ class Braket(BaseBraket):
             self,
             real: bool = False,
             normalize: bool = True,
-            msg_init: str = "normal",
+            msg_init: str = "psd",
             sanity_check: bool = False,
             rng: np.random.Generator = np.random.default_rng(),
             **kwargs
@@ -945,7 +945,6 @@ class Braket(BaseBraket):
                             )
                         return eps_list
 
-
         return eps_list
 
     def normalize_messages(
@@ -1078,7 +1077,7 @@ class Braket(BaseBraket):
                             "".join((
                                 "Complex normalization factor in node ",
                                 f"{node}; messages might not be hermitian ",
-                                "after normaliation."
+                                "after normalization."
                             )),
                             RuntimeWarning
                         )
@@ -1273,7 +1272,7 @@ class Braket(BaseBraket):
             threshold: float = 1e-10,
             parallel: bool = False,
             new_messages: bool = True,
-            msg_init: str = "normal",
+            msg_init: str = "psd",
             verbose: bool = False,
             sanity_check: bool = False,
             **kwargs
@@ -1690,7 +1689,7 @@ class Braket(BaseBraket):
             op_size: int,
             ket_size: int,
             real: bool = False,
-            method: str = "normal",
+            method: str = "psd",
             rng: np.random.Generator = np.random.default_rng(),
             dtype: np.dtype = None,
         ) -> np.ndarray:
@@ -1698,10 +1697,11 @@ class Braket(BaseBraket):
         Generates a new message with shape
         `(bra_size, op_size, ket_size)`. Available methods if
         `bra_size == ket_size`:
-        * `normal`: Positive-semidefinite and hermitian.
-        * `unitary`: Positive-semidefinite and unitary.
-        * `unitary_neg`: Negative-semidefinite and unitary.
-        * `zero-normal`: Positive-semidefinite, hermitian, sums to zero.
+        * `psd`, `nsd`: Positive-semidefinite / negative-semidefinite
+        and hermitian.
+        * `herm` / `antiherm`: Hermitian / anti-hermitian.
+        * `uniform`: Uniform distribution; sums to one.
+        * `zero-normal`: Hermitian, sums to zero.
         * `randn`: Random message from normal distribution.
 
         If bra- and ket-sizes are different, completely random messages
@@ -1726,16 +1726,8 @@ class Braket(BaseBraket):
         if bra_size == ket_size:
             msg = np.zeros(shape=(bra_size, op_size, ket_size), dtype=dtype)
 
-            if method == "normal":
-                # Positive-semidefinite and hermitian.
-                for i in range(op_size):
-                    A = randn(size=(bra_size, bra_size))
-                    msg[:,i,:] = A.T.conj() @ A
-
-                return msg
-
-            if method == "unitary":
-                # Positive-semidefinite and unitary.
+            if method == "psd":
+                # Positive-semidefinite.
                 for i in range(op_size):
                     eigvals = rng.uniform(low=0, high=1, size=bra_size)
                     U = matrixgen(bra_size)
@@ -1743,10 +1735,28 @@ class Braket(BaseBraket):
 
                 return msg
 
-            if method == "unitary_neg":
-                # Negative-semidefinite and unitary.
+            if method == "nsd":
+                # Negative-semidefinite.
                 for i in range(op_size):
                     eigvals = rng.uniform(low=-1, high=0, size=bra_size)
+                    U = matrixgen(bra_size)
+                    msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
+
+                return msg
+
+            if method == "herm":
+                # Hermitian messages.
+                for i in range(op_size):
+                    eigvals = rng.uniform(low=-1, high=1, size=bra_size)
+                    U = matrixgen(bra_size)
+                    msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
+
+                return msg
+
+            if method == "antiherm":
+                # Anti-hermitian messages.
+                for i in range(op_size):
+                    eigvals = 1j * rng.uniform(low=-1, high=1, size=bra_size)
                     U = matrixgen(bra_size)
                     msg[:,i,:] = U.conj().T @ np.diag(eigvals) @ U
 
@@ -1757,14 +1767,14 @@ class Braket(BaseBraket):
                 n_elems = bra_size * op_size * ket_size
                 return np.ones(shape=(bra_size, op_size, ket_size)) / n_elems
 
-            if method == "zero-normal":
+            if method == "zerosum":
                 # Positive-semidefinite, hermitian, sums to zero.
                 msg = Braket.get_new_message(
                     bra_size=bra_size,
                     op_size=op_size,
                     ket_size=ket_size,
                     real=real,
-                    method="normal",
+                    method="psd",
                     rng=rng
                 )
                 return msg - np.sum(msg)

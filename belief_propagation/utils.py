@@ -61,7 +61,6 @@ try:
     except:
         # If this fails, there is no CUDA device available.
         raise ModuleNotFoundError("No CUDA device available.")
-
 except ModuleNotFoundError:
     CUPY_AVAILABLE = False
 
@@ -1142,12 +1141,8 @@ def check_msg_intact(
     * Checking if `msg` contains only finite values (non-infinite and
     non-nan). Only checked if `check_finite = True` (default).
     """
-    if not target_shape[0] == target_shape[2]:
-        raise ValueError("".join((
-            "Target shape must have the form (bra_size, op_size, ket_size), ",
-            "where bra_size = ket_size."
-        )))
 
+    # Does the message have the correct shape?
     if not msg.shape == target_shape:
         with tqdm.tqdm.external_write_mode():
             warnings.warn(
@@ -1163,6 +1158,7 @@ def check_msg_intact(
             )
         return False
 
+    # Does it contain non-finite values?
     if not np.isfinite(msg).all():
         with tqdm.tqdm.external_write_mode():
             warnings.warn(

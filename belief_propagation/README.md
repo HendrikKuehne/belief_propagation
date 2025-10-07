@@ -15,6 +15,7 @@
     * This necessitates handling the tree traversal; so far (5th of February), I had to disable the tree traversal tests in `PEPO.intact`, since the way I implemented summation of PEPOs is not compatible with the check I had so far. I don't think this would be hard to implement, it just requires some bookkeeping.
   * **ToDo** Check `PEPO.hermitian`; it somehow fails for the square Ising model, calculated using `PEPO.__matmul__`.
     * The reason is, probably, that factors `1j` get mixed up (wander from one virtual index to another). I suspect this because the sanity check still works, i.e. every local operator is still proportional to a Pauli matrix. Is there a simple, concise way to test if a PEPO is hermitian in this case?
+  * **ToDo** Unify implementation of `PEPS` and `PEPO` classes; some sanity checks and properties like `D` and `chi` could probably be merged into a base class, from which both `PEPS` and `PEPO` would inherit.
   * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues. Tested against Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master).
 * **`PEPS.py`** PEPS on arbitrary graphs.
   * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
