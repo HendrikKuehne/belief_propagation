@@ -1104,7 +1104,7 @@ def graph_compatible(
 
     # Do nodes match?
     nodes1 = list(G1.nodes())
-    nodes2 = list(G1.nodes())
+    nodes2 = list(G2.nodes())
     while len(nodes1) > 0:
         node = nodes1.pop()
         try:

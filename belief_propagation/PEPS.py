@@ -29,7 +29,11 @@ class PEPS:
 
     def toarray(self, sanity_check: bool = False) -> np.ndarray:
         """
-        Contracts the MPS using `ctg.einsum`.
+        Contracts the PEPS using `ctg.einsum`.
+
+        The order of the physical dimensions is inherited from the
+        graph labels of the nodes: the nodes are sorted in ascending
+        order.
         """
         if sanity_check: assert self.intact
 
@@ -50,7 +54,7 @@ class PEPS:
             T = self[node]
             args += (T,)
 
-            # The first legs are thy virtual bond dimensions, the last leg is
+            # The first legs are the virtual bond dimensions, the last leg is
             # the physical dimension.
             legs = [None for i in range(T.ndim-1)] + [N,]
 
@@ -327,7 +331,7 @@ class PEPS:
         if real:
             randn = lambda size: rng.standard_normal(size)
         else:
-            randn = lambda size: crandn(size, rng)
+            randn = lambda size: crandn(size, rng=rng)
 
         G = cls.prepare_graph(G, D=D, keep_legs=keep_legs)
 

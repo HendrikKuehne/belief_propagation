@@ -205,7 +205,7 @@ class OpChain(dict[int, np.ndarray]):
 
     def __init__(
             self,
-            chain = dict(),
+            chain: dict[int, np.ndarray] = dict(),
             G: nx.MultiGraph = None,
             sanity_check: bool = False,
             **kwargs
@@ -459,7 +459,8 @@ class PEPO:
         the network. Works for small PEPOs only.
 
         The order of the physical dimensions is inherited from the
-        labels of the nodes: the nodes are sorted in ascending order.        
+        graph labels of the nodes: the nodes are sorted in ascending
+        order.        
         """
 
         if create_using == "numpy":
@@ -1048,6 +1049,23 @@ class PEPO:
 
         return
 
+    def tr(self, sanity_check: bool = False) -> nx.MultiGraph:
+        """
+        Returns a tensor network that evaluates to the trace of the
+        operator. This is done by connecting physical legs of site
+        tensors, and contracting, s.t. only the virtual legs remain.
+        """
+        trace_tn = copy.deepcopy(self.G)
+
+        for node in self:
+            out_legs = np.arange(len(trace_tn.adj[node]) + 2)
+            out_legs[-1] = out_legs[-2]
+            trace_tn.nodes[node]["T"] = np.einsum(
+                self[node], out_legs
+            )
+
+        return trace_tn
+
     def _canonical_to_correct_legs(
             self,
             T: np.ndarray,
@@ -1623,7 +1641,7 @@ class PEPO:
 
             # Returns newPEPO, where newPEPO = self @ psi.
 
-            # sanity checks
+            # Sanity check.
             if not graph_compatible(self.G, psi.G, sanity_check=True):
                 raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
 
@@ -1682,7 +1700,7 @@ class PEPO:
             # The action of self on psi is computed, and the new PEPS is
             # returned. It will inherit the leg ordering from psi.
 
-            # sanity checks
+            # Sanity check.
             if not graph_compatible(self.G, psi.G, sanity_check=True):
                 raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
 
@@ -1731,7 +1749,7 @@ class PEPO:
             return newPEPS
 
         if isinstance(psi, np.ndarray):
-            # sanity check
+            # Sanity check.
             if not psi.ndim == 1: raise ValueError("psi must be a vector.")
             total_D = np.prod(tuple(self.D.values()))
             if not psi.shape[0] == total_D:
@@ -1741,21 +1759,21 @@ class PEPO:
                     f"{psi.shape[0]}."
                 )))
 
-            # re-shaping. Order of sites will be determined by ascending order
+            # Re-shaping. Order of sites will be determined by ascending order
             # of node labels.
             psi = np.reshape(
                 psi,
                 shape=[self.D[node] for node in sorted(self)]
             )
 
-            # enumerating the edges in the graph
+            # Enumerating the edges in the graph.
             for i, nodes in enumerate(self.G.edges()):
                 node1, node2 = nodes
                 self.G[node1][node2][0]["label"] = i
 
             args = ()
             N_edges = self.G.number_of_edges()
-            # assembling einsum arguments for the operator
+            # Assembling einsum arguments for the operator.
             for i, nodeT in enumerate(self.G.nodes(data="T")):
                 node, T = nodeT
                 legs = ([None for _ in range(T.ndim - 2)]
@@ -1767,7 +1785,7 @@ class PEPO:
                     legs[self.G[node][neighbor][0]["legs"][node]] = edge_label
                 args += (T, tuple(legs),)
 
-            # einsum arguments for the state
+            # Einsum arguments for the state.
             args += (
                 psi,
                 tuple(

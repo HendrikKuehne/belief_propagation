@@ -13,7 +13,7 @@ Consider the following example:
     from belief_propagation.braket import Braket
     from belief_propagation.PEPS import PEPS
 
-    # Defining the geometry of this problem: A heavyhex-graph with four cells.
+    # Defining the geometry of this problem: a heavyhex-graph with four cells.
     G = heavyhex(2, 2)
 
     # Constructing a quantum state, and its norm.
@@ -46,7 +46,7 @@ One sweep of BP-DMRG thus proceeds as follows (for every node):
 * QR-gauging, with node $i$ as orthogonality center.
 * BP iterations on $\braket{\psi|H^{(\pm)}|\psi}$ and $\braket{\psi|\psi}$, to obtain fixed-point messages.
 * Assemble local Hamiltonian $H_i^{(\pm)} = \mathrm{Tr}\left(W_i^{(\pm)}\prod_{j\in\partial i}m_{j\rightarrow i}^{(\pm)}\right)$ and local environment $N_i = \mathrm{Tr}\left(I_{D\times D}\prod_{j\in\partial i}m_{j\rightarrow i}\right)$.
-* Solve the generalized eigenvalue problem $(H^{(+)}+H^{(-)})\ket{\psi_i}=\lambda N_i\ket{\psi_i}$ to obtain the new PEPS tensor $\psi_i$ on this site.
+* Solve the generalized eigenvalue problem $\left(H^{(+)}+H^{(-)}\right)\ket{\psi_i}=\lambda N_i\ket{\psi_i}$ to obtain the new PEPS tensor $\psi_i$ on this site.
 
 What does this look like in practice? All the above functionality is captured in the `run()` function of the `DMRG` class. The instantiation of one such object requires two things:
 

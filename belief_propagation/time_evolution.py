@@ -476,7 +476,7 @@ def simple_update_TEBD(
     integer, or a `nx.MultiGraph`, in which case the `"size"` argument
     on the edges determines the bond dimension on that edge.
 
-    If `singval_threshold is None`, the Numpy machine epsilon for the
+    If `singval_threshold` is `None`, the Numpy machine epsilon for the
     respective data type will be used.
 
     Normalizes the state every `normalize_every` steps, if given. Method

@@ -795,8 +795,7 @@ def random_bond_gauging(
     * `ortho`: Inserting random orthogonal matrices.
     * `unitary`: Inserting random unitary matrices (fallback).
     * `invert`: Inserting random invertible matrices. Internally relies
-    on [diagonally dominant
-    matrices](https://en.wikipedia.org/wiki/Diagonally_dominant_matrix)
+    on [diagonally dominant matrices](https://en.wikipedia.org/wiki/Diagonally_dominant_matrix)
     (see also [this post](https://stackoverflow.com/a/73427048)).
     """
     if sanity_check: assert psi.intact

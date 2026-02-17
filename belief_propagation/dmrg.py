@@ -1123,7 +1123,7 @@ class DMRG:
         Initialisation of a `DMRG` object, where the state has bond
         dimension `chi`. The initial state is chosen randomly, if it is
         not given. `kwargs` are passed to `PEPS.init_random`.
-        
+
         For `oplist = (H1, H2, ...)`, this object runs single-site DMRG
         on the Hamiltonian `H = H1 + H2 + ...`.
         """

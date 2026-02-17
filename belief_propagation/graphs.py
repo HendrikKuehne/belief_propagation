@@ -37,10 +37,12 @@ import numpy as np
 
 def tree(
         N: int,
+        max_D: int = np.inf,
         rng: np.random.Generator = np.random.default_rng()
     ) -> nx.MultiGraph:
     """
-    Generates a tree by appending nodes at random to the tree.
+    Generates a tree by appending nodes at random to the tree. Enforces
+    the ceiling `max_D` on the degree of nodes.
     """
     not_connected = [i for i in range(1, N)]
     connected = [0]
@@ -49,10 +51,13 @@ def tree(
 
     while len(not_connected) > 0:
         node = rng.choice(not_connected)
-        neighbor = rng.choice(connected)
-        G.add_edge(node,neighbor)
-        connected += [node,]
-        not_connected.remove(node)
+        anchor = rng.choice(connected)
+
+        if G.degree[anchor] < max_D:
+            # Maximum node degree is kept; node may be added.
+            G.add_edge(node, anchor)
+            connected.append(node)
+            not_connected.remove(node)
 
     return G
 
@@ -78,6 +83,20 @@ def hex(m: int, n:int) -> nx.MultiGraph:
     # Re-labeling nodes.
     mapping = {label: i for i, label in enumerate(G.nodes())}
     G = nx.relabel_nodes(G, mapping)
+
+    return G
+
+
+def grid(m: int, n: int) -> nx.MultiGraph:
+    """
+    Rectangular grid with `m x n` unit cells.
+    """
+    G = nx.grid_2d_graph(m=m+1, n=n+1, create_using=nx.MultiGraph)
+    # Re-labeling nodes.
+    G = nx.relabel_nodes(
+        G=G,
+        mapping={node: i for i, node in enumerate(G.nodes)}
+    )
 
     return G
 
@@ -121,20 +140,6 @@ def heavyhex(m: int, n: int) -> nx.MultiGraph:
     (2020)](https://doi.org/10.1103/PhysRevX.10.011022).
     """
     G = hex(m=m, n=n)
-    return G
-
-
-def grid(m: int, n: int) -> nx.MultiGraph:
-    """
-    Rectangular grid with `m x n` unit cells.
-    """
-    G = nx.grid_2d_graph(m=m+1, n=n+1, create_using=nx.MultiGraph)
-    # Re-labeling nodes.
-    G = nx.relabel_nodes(
-        G=G,
-        mapping={node: i for i, node in enumerate(G.nodes)}
-    )
-
     return G
 
 
@@ -297,6 +302,7 @@ def min_girth_graph(
         max_D: int = np.inf,
         rng: np.random.Generator = np.random.default_rng(),
         G_init: nx.MultiGraph = None,
+        raise_noneadded_err: bool = False,
     ) -> nx.MultiGraph:
     """
     Generates a graph with minimum loop length `g` and `N` nodes. This
@@ -304,10 +310,13 @@ def min_girth_graph(
     they do not create a loop, or (II) if they create a loop that is
     longer than or equal to `g`. At most `max_edges` are added (default:
     all possible edges are added). The edge `(u, v)` is only added, if
-    none of the nodes exceeds degree `max_D`.
+    through adding it none of the adjacent nodes exceeds degree `max_D`.
 
     An initial graph can be given, in which case edges are added to it
     according to the procedure described above. Returns a copy.
+
+    If no edges were added, a warning is issued or an error raised,
+    based on the value of `raise_noneadded_err`.
     """
 
     if G_init is None:
@@ -340,11 +349,19 @@ def min_girth_graph(
                 v_found = True
                 break
 
-        if not v_found and (len(G.adj[u]) < max_D) and (len(G.adj[v]) < max_D):
+        if not v_found and (G.degree[u] < max_D) and (G.degree[v] < max_D):
             G.add_edge(u, v)
             nodes_added += 1
 
         if nodes_added == max_edges: break
+
+    if nodes_added == 0:
+        msg = "".join((
+            "The given parameters prevented any edge from being added to the ",
+            "graph."
+        ))
+        if raise_noneadded_err: raise RuntimeError(msg)
+        else: warnings.warn(msg, RuntimeWarning)
 
     # Extracting the largest connected component.
     largest_cc = max(nx.connected_components(G), key=len)
