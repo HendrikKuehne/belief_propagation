@@ -12,6 +12,7 @@ import numpy as np
 import networkx as nx
 import cotengra as ctg
 import tqdm
+import itertools
 
 from belief_propagation.utils import (
     network_message_check,
@@ -95,6 +96,37 @@ class PEPS:
             val[neighbor] = self.G[node][neighbor][0]["legs"]
 
         return val
+
+    def view_site(self, node: int):
+        """
+        Prints all components of the tensor at node `node`.
+        """
+        # Sanity check.
+        if not node in self:
+            raise ValueError(f"Node {node} is not contained in the graph.")
+
+        legs = tuple(
+            self.G[node][neighbor][0]["legs"][node]
+            for neighbor in self.G.adj[node]
+        )
+
+        with tqdm.tqdm.external_write_mode():
+            print("".join((
+                f"Displaying node {node}:" + "\n    ",
+                f"Physical dimension {self.D[node]}," + "\n    ",
+                f"{len(self.G.adj[node])} virtual legs."
+            )))
+        for virtual_index in itertools.product(*[
+            range(self[node].shape[i])
+            for i in range(self[node].ndim - 1)
+        ]):
+            index = virtual_index + (slice(self.D[node]),)
+
+            if not np.allclose(self.G.nodes[node]["T"][index], 0):
+                with tqdm.tqdm.external_write_mode():
+                    print(index[:-1], ":\n" ,self[node][index], "\n")
+
+        return
 
     def enlarge_bond_dimensions(
             self,

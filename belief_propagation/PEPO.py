@@ -1055,6 +1055,9 @@ class PEPO:
         operator. This is done by connecting physical legs of site
         tensors, and contracting, s.t. only the virtual legs remain.
         """
+        # Sanity checks.
+        if sanity_check: assert self.intact
+
         trace_tn = copy.deepcopy(self.G)
 
         for node in self:
@@ -1902,6 +1905,13 @@ class PEPO:
         return self.G.has_node(node)
 
     def __eq__(self, rhs: "PEPO") -> bool:
+        """
+        Two PEPOs are considered equal if they contain the same local
+        tensors on the same graph. Different leg orderings are accounted
+        for. Keep in mind that this notion of equality is not invariant
+        with respect to the gauge freedom of the virtual bond
+        dimensions!
+        """
         warnings.warn(
             "".join((
                 "This did not work as I expected (on 7th of May). What you ", 
@@ -1910,13 +1920,6 @@ class PEPO:
             )),
             UserWarning
         )
-        """
-        Two PEPOs are considered equal if they contain the same local
-        tensors on the same graph. Different leg orderings are accounted
-        for. Keep in mind that this notion of equality is not invariant
-        with respect to the gauge freedom of the virtual bond
-        dimensions!
-        """
         # Do self and rhs live on the same graphs?
         if not graph_compatible(self.G, rhs.G): return False
 
