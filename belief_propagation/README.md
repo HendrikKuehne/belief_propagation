@@ -9,7 +9,7 @@
 
 # File contents
 
-* **`PEPO.py`** Projector-entangled Pair Operators on arbitary graphs, where the Tensor Network structure is inherited from the main module (see [this file](https://github.com/HendrikKuehne/belief_propagation/blob/main/belief_propagation/README.md) for an introduction).
+* **`PEPO.py`** Projector-entangled Pair Operators on arbitrary graphs, where the Tensor Network structure is inherited from the main module (see [this file](https://github.com/HendrikKuehne/belief_propagation/blob/main/belief_propagation/README.md) for an introduction).
   * **ToDo**: Overhaul PEPO initialisation. The current method defines site tensors without site-to-site coupling, then reshapes them such that the leg ordering is correct with respect to the graph. Site-to-site coupling is added afterwards. This, then, is very illegibile since I need to keep track of the leg ordering and since case distinctions are necessary. This could be done more elegantly by defining a tree along which coupling flows[^2]. The goal would be to define the site tensors without having to refer to the leg ordering of the graph, and re-shape afterwards.
   * **ToDo** Complete implementation of `PEPO.__add__`.
     * This necessitates handling the tree traversal; so far (5th of February), I had to disable the tree traversal tests in `PEPO.intact`, since the way I implemented summation of PEPOs is not compatible with the check I had so far. I don't think this would be hard to implement, it just requires some bookkeeping.
@@ -20,7 +20,7 @@
 * **`PEPS.py`** PEPS on arbitrary graphs.
   * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
 * **`braket.py`** Stacks of combinations of PEPS and PEPO on arbitrary graphs.
-  * **ToDo** Accelerate the mesage update somehow
+  * **ToDo** Accelerate the message update somehow
     * Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
     * Pancotti & Gray stack all the tensors and the messages s.t. the BP algorithm becomes a vector iteration ([arxiv:2306.15004](https://arxiv.org/abs/2306.15004))
     * :arrows_counterclockwise: parallelize using [Ray](https://docs.ray.io/en/latest/ray-overview/getting-started.html) - What I have done so far is actually slower than the straightforward implementation. The overhead seems to be too large, maybe I should think this through a little more thoroughly.

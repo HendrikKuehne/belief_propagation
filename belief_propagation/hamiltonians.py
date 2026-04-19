@@ -18,7 +18,7 @@ from belief_propagation.PEPO import PEPO, PauliPEPO
 
 class TFI(PauliPEPO):
     """
-    Travsverse Field Ising model: `J * sz * sz + g * sx`.
+    Transverse Field Ising model: `J * sz * sz + g * sx`.
     """
 
     def __init__(
@@ -30,7 +30,7 @@ class TFI(PauliPEPO):
             sanity_check: bool = False
         ) -> None:
         """
-        Travsverse Field Ising model `J * sz * sz + g * sx` PEPO on
+        Transverse Field Ising model `J * sz * sz + g * sx` PEPO on
         graph `G`, with coupling `J` and external field `h`.
 
         Ordering of legs in the PEPO virtual dimensions is inherited
@@ -314,7 +314,7 @@ class Heisenberg(PauliPEPO):
             sanity_check: bool = False
         ):
         """
-        Travsverse Field Ising model PEPO on graph `G`, with couplings
+        Transverse Field Ising model PEPO on graph `G`, with couplings
         `Jx`, `Jy`, `Jz`, and external field `g`.
 
         Ordering of legs in the PEPO virtual dimensions is inherited

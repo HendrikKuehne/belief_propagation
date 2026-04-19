@@ -159,7 +159,7 @@ def construct_network(
         # keys are the labels of the adjacent nodes, and their values are the
         # indices of the tensor legs this edge connects.
         G[node1][node2][0]["legs"] = {}
-        # Each ede has a "trace" key, which is true if this edge corresponds to
+        # Each edge has a "trace" key, which is true if this edge corresponds to
         # a trace over a tensor (i.e. if this edge connects a node to itself).
         G[node1][node2][0]["trace"] = False
         # Each edge has an "indices" key, which holds the legs that the
@@ -229,7 +229,7 @@ def delta_network(G: nx.MultiGraph,chi: int) -> None:
         # keys are the labels of the adjacent nodes, and their values are the
         # indices of the tensor legs this edge connects
         G[edge[0]][edge[1]][0]["legs"] = {}
-        # each ede has a "trace" key, which is true if this edge corresponds to
+        # each edge has a "trace" key, which is true if this edge corresponds to
         # the trace of a tensor (i.e. if this edge connects a node to itself)
         G[edge[0]][edge[1]][0]["trace"] = False
         # each edge has an "indices" key, which holds the legs that the

@@ -42,7 +42,7 @@ class OpChain(dict[int, np.ndarray]):
     """
     An operator chain is a tensor product of operators, s.t. every
     operator acts on a different site in the system. These serve as
-    important bulding blocks of many-body Hamiltonians; many such
+    important building blocks of many-body Hamiltonians; many such
     Hamiltonians are sums of operator chains.
 
     Subclass of `dict`; nodes of the underlying graph are keys, and

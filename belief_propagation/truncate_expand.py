@@ -172,9 +172,9 @@ def insert_excitation(
     [arXiv:2409.03108](https://arxiv.org/abs/2409.03108).
     """
     # sanity check
-    bra_size = braket.bra.G[node1][node2][0]["size"]
-    op_size = braket.op.G[node1][node2][0]["size"]
-    ket_size = braket.ket.G[node1][node2][0]["size"]
+    bra_size = braket.bra.chi[frozenset((node1, node2))]
+    op_size = braket.op.chi[frozenset((node1, node2))]
+    ket_size = braket.ket.chi[frozenset((node1, node2))]
     vec_size = (bra_size, op_size, ket_size)
     if not msg12.shape == vec_size:
         raise ValueError("".join((
@@ -315,7 +315,7 @@ def L2BP_compression(
     The minimum magnitude of singular values (determined by
     `singval_threshold`) and the maximum bond dimension (determined by
     `max_bond_dim`) are combined using a logical and. The minimum size
-    takes precedent over the maximum size.
+    takes precedence over the maximum size.
     """
     if sanity_check: assert psi.intact
 
@@ -868,6 +868,43 @@ def random_bond_gauging(
 # -----------------------------------------------------------------------------
 
 
+def __check_LSE_projectors(braket: Braket, sanity_check: bool = False) -> bool:
+    """
+    Given a Braket with converged messages and LSE projectors, this
+    function checks whether the projectors do indeed project the
+    edges onto the BP excited subspaces. This corresponds to verifying
+    that the messages are orthogonal to the projector images.
+    """
+    if not braket.converged:
+        raise RuntimeError("".join((
+            "Braket messages are not converged. Projectors should not ",
+            "be checked against non-converged messages."
+        )))
+
+    for node1, node2 in braket.G.edges():
+        for sender, receiver in itertools.permutations((node1, node2)):
+            if np.isnan(braket.edge_T[sender][receiver]).any():
+                # no transformation on this edge
+                continue
+
+            # The message sent from sender to receiver is subject to the
+            # transformation braket._edge_T[sender][receiver]. This
+            # function will thus test if this message is projected to
+            # zero through the respective projector.
+            res_from_proj = np.einsum(
+                "ijkmlp,mlp->ijk",
+                braket.edge_T[sender][receiver],
+                braket.msg[sender][receiver],
+            )
+            if not np.allclose(res_from_proj, 0, rtol=0, atol=1e-9):
+                # Message has not been projected to zero.
+                return False
+                with tqdm.tqdm.external_write_mode():
+                    print(f"Msg. {sender} -> {receiver}: Msg. norm after projection = {np.linalg.norm(np.flatten(braket.msg[sender][receiver]))}")
+
+    return True
+
+
 def loop_series_contraction(
         braket: Braket,
         excitations: tuple[nx.MultiGraph] = None,
@@ -912,6 +949,13 @@ def loop_series_contraction(
             skip_BP=True, # Skipping BP because we already executed it above.
             sanity_check=sanity_check
         )
+
+    if sanity_check:
+        if not __check_LSE_projectors(braket=braket, sanity_check=sanity_check):
+            raise RuntimeError("".join((
+                "Loop Series Expansion: Projectors on BP excited states ",
+                "are not orthogonal to fixed point messages."
+            )))
 
     # The total contraction value of the braket is factored out, s.t. the
     # calculation of higher-order contributions becomes easier.
@@ -964,10 +1008,11 @@ def loop_series_contraction(
             excitation=excitation,
             sanity_check=sanity_check
         )
-        cntr += np.prod(tuple(
+        exc_cntr = np.prod(tuple(
             braket_.contract(sanity_check=sanity_check)
             for braket_ in exc_brakets
         ))
+        cntr += exc_cntr
 
     # Undoing BP vacuum contribution, so that the braket remains unchanged.
     for node in braket:

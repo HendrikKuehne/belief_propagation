@@ -41,7 +41,7 @@ $$
     \prod_x\text{cntr}_x = Z^NZ^{1-N} = Z,
 $$
 
-i.e. BP is exact on trees. Note that the association of values to edges is not explicit in the algorithm. In actuality, each value $1/Z$ is broken up into factors that are contained in the nodes adjacent to the resoective edge.
+i.e. BP is exact on trees. Note that the association of values to edges is not explicit in the algorithm. In actuality, each value $1/Z$ is broken up into factors that are contained in the nodes adjacent to the respective edge.
 
 Since BP works differently, it also gives decent results on graphs with loops. MP cannot handle loops:
 

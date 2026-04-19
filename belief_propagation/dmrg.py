@@ -265,7 +265,7 @@ class LocalHamiltonianOperator(LocalOperator):
         * `D`: Physical dimension.
         * `W`: Hamiltonian PEPO tensor.
         * `msgdata`: Message data. One tuple for each incoming message,
-        which consists of the mesage itself, and the legs
+        which consists of the message itself, and the legs
         (`(bra_leg, op_leg, ket_leg)`). These legs are the legs of the
         respective node, i.e. they denote which leg of the site tensor
         the respective message leg connects to.
@@ -389,7 +389,7 @@ class LocalEnvironmentOperator(LocalOperator):
         * `nLegs`: Number of neighbors in the graph.
         * `D`: Physical dimension.
         * `msgdata`: Message data. One tuple for each incoming message,
-        which consists of the mesage itself and the legs
+        which consists of the message itself and the legs
         (`(bra_leg, ket_leg)`).
         """
         # Sanity checks.

@@ -212,7 +212,7 @@ class BaseBraket:
     def get_network(self, sanity_check: bool = False) -> nx.MultiGraph:
         """
         Contracts all physical dimensions in `self`, and returns the
-        resulting tenwor network, contained in a graph.
+        resulting tensor network, contained in a graph.
         """
         if not check_contracted_physical_dims(
             braket=self, sanity_check=sanity_check
@@ -2495,6 +2495,17 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
     into a tensor stack that could be inserted into a braket.
     """
     # Sanity check.
+    if np.isnan(T).any():
+        raise ValueError("".join((
+            "Edge transformation T contains NaN. np.nan is the filler value ",
+            "for edge transformations; are you sure that T has been taken ",
+            "from an edge, to which a transformation has been assigned?"
+        )))
+    if not T.ndim == 6:
+        raise ValueError("".join((
+            "Edge transformations must have six dimensions (expected ",
+            "dimensions: (bra_out, op_out, ket_out, bra_in, op_in, ket_in)."
+        )))
     if not (T.shape[0] == T.shape[3]
             and T.shape[1] == T.shape[4]
             and T.shape[2] == T.shape[5]):
@@ -2503,6 +2514,18 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
     bra_size = T.shape[0]
     op_size = T.shape[1]
     ket_size = T.shape[2]
+
+    if bra_size == 1 and op_size == 1:
+        # The edge transformation contains dummy dimensions in bra and
+        # operator. The braket was likely constructed using Braket.Cntr().
+        # This case needs to be handled separately, because dummy dimensions
+        # break the SVDs.
+        return (
+            np.ones(shape=(1, 1, 1)), # bra
+            np.ones(shape=(1, 1, 1, 1)), # op
+            T[0, 0, :, 0, 0, :, np.newaxis], # ket
+        )
+
 
     # Transposing T, s.t. the in- and out legs of each layer are consecutive.
     T_ = np.transpose(T, axes=(0, 3, 1, 4, 2, 5))
@@ -2534,7 +2557,7 @@ def edge_transf_to_tensor_stack(T: np.ndarray) -> tuple[np.ndarray]:
     T_bra = np.einsum("ij,j->ij", U, np.sqrt(singvals))
     T_op = np.einsum("i,ij->ij", np.sqrt(singvals), Vh)
 
-    # Re-shaping an transposing T_bra T_op and T_ket s.t. they form a tensor
+    # Re-shaping and transposing T_bra T_op and T_ket s.t. they form a tensor
     # stack.
     T_bra = np.reshape(T_bra, shape=(bra_size, bra_size, D_bra_op))
     T_op = np.transpose(
@@ -2856,6 +2879,7 @@ def assemble_excitation_brakets(
         G.remove_edges_from(non_excitation_edges.edges())
         G.remove_nodes_from(non_excitation_nodes)
 
+    # Inserting messages as nodes, replacing dangling edges.
     for node in excitation_nodes:
         non_contained_neighbors = set(braket.G.adj[node]) - set(G_op.adj[node])
         # Inserting messages as new sites in the graph.
@@ -2871,19 +2895,30 @@ def assemble_excitation_brakets(
             # inserted into the operator graph, and it's dimensions will be
             # permuted s.t. the operator leg is the first leg.
             op_T = np.transpose(braket.msg[neighbor][node], axes=(1, 0, 2))
+            bra_chi = braket.bra.chi[frozenset((node, neighbor))]
+            ket_chi = braket.ket.chi[frozenset((node, neighbor))]
+
+            # Zero-padding op_T to ensure that physical dimensions will match.
+            # This is important to ensure that brakets, which have been created
+            # using Braket.Cntr(), are amenable to Loop Series Expansion (they
+            # contain dummies in Ket and operator, meaning physical dimension
+            # mismatches could occur).
+            D_larger = max(op_T.shape[-2], op_T.shape[-1])
+            op_T_padded = np.zeros_like(op_T, shape=(op_T.shape[0], D_larger, D_larger))
+            op_T_padded[:, :op_T.shape[-2], :op_T.shape[-1]] = op_T
 
             # Inserting a new node that contains the respective message.
             G_op.add_node(
                 node_for_adding=next_node_label,
-                T=op_T
+                T=op_T_padded,
             )
             G_bra.add_node(
                 node_for_adding=next_node_label,
-                T=np.eye(op_T.shape[-2])
+                T=np.eye(bra_chi, op_T_padded.shape[-2])
             )
             G_ket.add_node(
                 node_for_adding=next_node_label,
-                T=np.eye(op_T.shape[-1])
+                T=np.eye(ket_chi, op_T_padded.shape[-1])
             )
 
             # Connecting the node to the excitation graph.
@@ -2903,7 +2938,7 @@ def assemble_excitation_brakets(
     # Inserting projectors as nodes on the excited edges.
     for node1, node2 in excitation.edges():
         # Label of the node we will add.
-        next_node_label = max(node_ for node_ in G) + 1
+        next_node_label = max(_ for _ in G) + 1
 
         Tstack = edge_transf_to_tensor_stack(braket.edge_T[node1][node2])
 

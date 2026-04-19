@@ -1124,6 +1124,10 @@ def graph_compatible(
         and all("D" in data for _, data in G2.nodes(data=True))):
         for node in G1:
             if G1.nodes[node]["D"] != G2.nodes[node]["D"]:
+                warnings.warn("".join((
+                    f"Physical dimension mismatch in node {node}: ",
+                    f"{G1.nodes[node]['D']} != {G2.nodes[node]['D']}."
+                )))
                 return False
 
     return True

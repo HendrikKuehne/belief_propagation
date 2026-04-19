@@ -1,7 +1,7 @@
 ## ToDo
 
 * Implement basic Belief Propagation algorithm.
-    * :white_check_mark: Expand the algorithm to work on arbitary graphs.
+    * :white_check_mark: Expand the algorithm to work on arbitrary graphs.
     * :white_check_mark: Implement `block_bp` for `nx.MultiGraph` grids. This necessitates code that merges parallel edges in a tensor network.
     * Improve convergence using [DIIS](https://en.m.wikipedia.org/wiki/DIIS). [^10]
     * Add functionality to enable different message update schedules.
@@ -13,7 +13,7 @@
     * :white_check_mark: Maybe contract small neighborhoods directly and use Feynman contraction to treat edges with large bond dimensions?
 * Optimize exact contraction of tensor networks.
     * :white_check_mark: Exact contraction using a  `cotengra.HyperOptimizer` object
-      * Implemented in `belief_proagation.sandwich_BP.braket.Braket.__contract_ctg_hyperopt()`, but the overhead is really big; I only use this when intermediate tensors might become too big.
+      * Implemented in `belief_propagation.sandwich_BP.braket.Braket.__contract_ctg_hyperopt()`, but the overhead is really big; I only use this when intermediate tensors might become too big.
     * :white_check_mark: Contraction using `np.einsum` and `np.einsum_path`.[^2]
     * :white_check_mark: Contraction using `cotengra.einsum` with objectives from [`cotengra.scoring`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/scoring/index.html), or [`cotengra.array_contract`](https://cotengra.readthedocs.io/en/latest/autoapi/cotengra/index.html#cotengra.array_contract).
 * Come up with a better way to construct neighborhoods; it seems like graphs created using `belief_propagation.graphs.short_loop_graph` still contain many short loops after `belief_propagation.loopyNBP.construct_neighborhoods` is used to contract neighborhoods.
@@ -63,7 +63,7 @@ This will be updated continuously, as questions come to mind.
     * :arrow_right: Loops behave like vector iterations, which is not how Kirkleys algorithm works; it is in fact detrimental to the accuracy. Vector iterations require many iterations, however, and the longer the loop the more iterations one needs to reach vector iteration territory. Long loops will (probably - this is what I expect) introduce larger errors, when one does more iterations in the BP algorithm.
     * :arrow_right: Actually not! The eigenvalue spectra of long loops tend to feature one dominant eigenvalue, while all others are neglectable in magnitude.[^6]
 * Why do we normalize by dividing by $\chi^{3/4}$ in `construct_network`?
-* What does Christian mean when he refers to the second method of constracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
+* What does Christian mean when he refers to the second method of contracting the TN (`block_bp`) as "approximate contraction based on modified belief propagation"? That method is exact.
     * :arrow_right: This method is based on the "Block Belief Propagation" algorithm (Arad, 2023: [Phys. Rev. B 108, 125111 (2023)](https://doi.org/10.1103/PhysRevB.108.125111)), which is not exact in general.
     * :arrow_right: The relative error improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#tn_vs_pq_3x3_baselinepdf)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly? That is the physical argument - in terms of graphs, we are treating many small loops exactly which could otherwise have introduced inaccuracies.
 * Some iterations of the Belief Propagation algorithm take many orders of magnitude longer than others; do these still converge?
@@ -107,7 +107,7 @@ This will be updated continuously, as questions come to mind.
 
 [^6]: This was, independently, also found by [Cao, Vontobel, 2017]([10.1109/ITW.2017.8277985](https://doi.org/10.1109/ITW.2017.8277985)).
 
-[^7]: Online ressources: [Performance tuning guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) for PyTorch. How would this play with NetworkX? [NetworkX supports different backends](https://networkx.org/documentation/stable/tutorial.html#using-networkx-backends), among which is [nx-cugraph](https://github.com/rapidsai/nx-cugraph) (see above), but they don't natively interface with PyTorch. PyTorch-Geometric has graph routines, and it seems like a [`torch_geometric.Data`](https://pytorch-geometric.readthedocs.io/en/stable/generated/torch_geometric.data.Data.html) object represents a graph. One can even initialize it [from a NetworkX graph](https://pytorch-geometric.readthedocs.io/en/stable/modules/utils.html#torch_geometric.utils.from_networkx). But this would, as it seems, require much deeper modifications than I have time for now. Using SciPy would require CPU-synchronization, anyways - this is a little more subtle.
+[^7]: Online resources: [Performance tuning guide](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) for PyTorch. How would this play with NetworkX? [NetworkX supports different backends](https://networkx.org/documentation/stable/tutorial.html#using-networkx-backends), among which is [nx-cugraph](https://github.com/rapidsai/nx-cugraph) (see above), but they don't natively interface with PyTorch. PyTorch-Geometric has graph routines, and it seems like a [`torch_geometric.Data`](https://pytorch-geometric.readthedocs.io/en/stable/generated/torch_geometric.data.Data.html) object represents a graph. One can even initialize it [from a NetworkX graph](https://pytorch-geometric.readthedocs.io/en/stable/modules/utils.html#torch_geometric.utils.from_networkx). But this would, as it seems, require much deeper modifications than I have time for now. Using SciPy would require CPU-synchronization, anyways - this is a little more subtle.
 
 [^8]: Approximately, since - of course - my graphs are not actually trees.
 
