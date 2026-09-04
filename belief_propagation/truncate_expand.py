@@ -1,5 +1,5 @@
 """
-Functions for manipulation of PEPS, PEPO and Braket, with the goal of...
+Functions for manipulation of TNS, TNO and Braket, with the goal of...
 * cutting / truncating edges in the graphs.
 * series expansion of brakets.
 """
@@ -32,8 +32,8 @@ from belief_propagation.braket import (
     BP_excitations,
     assemble_excitation_brakets
 )
-from belief_propagation.PEPO import PEPO
-from belief_propagation.PEPS import PEPS
+from belief_propagation.TNO import TNO
+from belief_propagation.TNS import TNS
 from belief_propagation.networks import expose_edge
 from belief_propagation.utils import graph_compatible
 
@@ -289,7 +289,7 @@ def QR_bottleneck(
 
 
 def L2BP_compression(
-        psi: PEPS,
+        psi: TNS,
         overlap: Braket = None,
         singval_threshold: float = 1e-10,
         min_bond_dim: Union[int, nx.MultiGraph] = 1,
@@ -298,7 +298,7 @@ def L2BP_compression(
         verbose: bool = False,
         sanity_check: bool = False,
         **kwargs
-    ) -> Union[PEPS, tuple[PEPS ,dict[frozenset, np.ndarray]]]:
+    ) -> Union[TNS, tuple[TNS ,dict[frozenset, np.ndarray]]]:
     """
     L2BP compression from [Sci. Adv. 10, eadk4321
     (2024)](https://doi.org/10.1126/sciadv.adk4321). Singular values
@@ -321,11 +321,11 @@ def L2BP_compression(
 
     # Preparing target edge sizes.
     if not isinstance(min_bond_dim, nx.MultiGraph):
-        min_bond_dim = PEPO.prepare_graph(
+        min_bond_dim = TNO.prepare_graph(
             G=psi.G, chi=min_bond_dim, sanity_check=sanity_check
         )
     if not isinstance(max_bond_dim, nx.MultiGraph):
-        max_bond_dim = PEPO.prepare_graph(
+        max_bond_dim = TNO.prepare_graph(
             G=psi.G, chi=max_bond_dim, sanity_check=sanity_check
         )
 
@@ -544,11 +544,11 @@ def L2BP_compression(
 
 
 def feynman_cut(
-        obj: Union[PEPS, PEPO, Braket],
+        obj: Union[TNS, TNO, Braket],
         node1: int,
         node2: int,
         sanity_check: bool = False
-    ) -> Union[tuple[PEPS], tuple[PEPO], tuple[Braket]]:
+    ) -> Union[tuple[TNS], tuple[TNO], tuple[Braket]]:
     """
     Cuts the edge `(node1, node2)` in `obj`, and returns all resulting
     objects.
@@ -557,7 +557,7 @@ def feynman_cut(
     assert obj.G.has_edge(node1, node2, 0)
     if sanity_check: assert obj.intact
 
-    if isinstance(obj, PEPS):
+    if isinstance(obj, TNS):
         oldG = copy.deepcopy(obj. G)
 
         # Exposing the edge for easier access.
@@ -587,11 +587,11 @@ def feynman_cut(
             newG.nodes[node2]["T"] = oldG.nodes[node2]["T"][idx2(i)]
 
             # Saving the new state.
-            res_objs += (PEPS(G=newG, sanity_check=sanity_check),)
+            res_objs += (TNS(G=newG, sanity_check=sanity_check),)
 
         return res_objs
 
-    if isinstance(obj, PEPO):
+    if isinstance(obj, TNO):
         oldG = copy.deepcopy(obj.G)
 
         # Exposing the edge for easier access.
@@ -621,7 +621,7 @@ def feynman_cut(
             newG.nodes[node2]["T"] = oldG.nodes[node2]["T"][idx2(i)]
 
             # Saving the new operator.
-            res_objs += (PEPO.from_graphs(
+            res_objs += (TNO.from_graphs(
                 G=newG,
                 tree=obj.tree,
                 check_tree=False,
@@ -661,18 +661,18 @@ def feynman_cut(
 
 
 # -----------------------------------------------------------------------------
-#                   Gauging PEPS
+#                   Gauging TNS
 # -----------------------------------------------------------------------------
 
 
 def QR_gauging(
-        psi: PEPS,
+        psi: TNS,
         tree: nx.DiGraph = None,
         ortho_center: int = None,
         nodes: tuple[int] = None,
         sanity_check: bool = False,
         **kwargs
-    ) -> PEPS:
+    ) -> TNS:
     """
     Gauging of a state using QR decompositions. The root node of `tree`
     is the orthogonality center; if given, `ortho_center` will be the
@@ -784,11 +784,11 @@ def QR_gauging(
 
 
 def random_bond_gauging(
-        psi: PEPS,
+        psi: TNS,
         method: str = "unitary",
         sanity_check: bool = False,
         rng: np.random.Generator = np.random.default_rng()
-    ) -> PEPS:
+    ) -> TNS:
     """
     Gauging of a state by inserting matrices on the virtual bonds. Three
     variants are implemented:

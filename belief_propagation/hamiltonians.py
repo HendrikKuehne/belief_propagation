@@ -1,5 +1,5 @@
 """
-Example hamiltonians as PEPOs.
+Example hamiltonians as TNOs.
 """
 
 __all__ = [
@@ -13,10 +13,10 @@ import numpy as np
 import networkx as nx
 
 from belief_propagation.utils import multi_kron
-from belief_propagation.PEPO import PEPO, PauliPEPO
+from belief_propagation.TNO import TNO, PauliTNO
 
 
-class TFI(PauliPEPO):
+class TFI(PauliTNO):
     """
     Transverse Field Ising model: `J * sz * sz + g * sx`.
     """
@@ -30,16 +30,16 @@ class TFI(PauliPEPO):
             sanity_check: bool = False
         ) -> None:
         """
-        Transverse Field Ising model `J * sz * sz + g * sx` PEPO on
+        Transverse Field Ising model `J * sz * sz + g * sx` TNO on
         graph `G`, with coupling `J` and external field `h`.
 
-        Ordering of legs in the PEPO virtual dimensions is inherited
-        from `G`. The last two dimensions of every PEPO tensor are the
+        Ordering of legs in the TNO virtual dimensions is inherited
+        from `G`. The last two dimensions of every TNO tensor are the
         physical dimensions.
         """
         super().__init__(dtype=dtype)
 
-        self.G = PEPO.prepare_graph(
+        self.G = TNO.prepare_graph(
             G=G,
             chi=3,
             D=2,
@@ -56,7 +56,7 @@ class TFI(PauliPEPO):
         # Depth-first search tree.
         self.tree = nx.dfs_tree(G, self.root)
 
-        # Adding PEPO tensors (without coupling).
+        # Adding TNO tensors (without coupling).
         for node in self:
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
@@ -66,7 +66,7 @@ class TFI(PauliPEPO):
                 # Node is a leaf.
                 N_out = 1
 
-            # PEPO tensor, where the first dimension is the incoming leg, the
+            # TNO tensor, where the first dimension is the incoming leg, the
             # passive legs and the outgoing legs follow, and the last two
             # dimensions are the physical legs
             T = self.traversal_tensor(
@@ -82,7 +82,7 @@ class TFI(PauliPEPO):
                 # the virtual dimensions and the physical dimensions.
                 T = np.moveaxis(T, 0, -3)
 
-            # Re-shaping PEPO tensor to match the graph leg ordering
+            # Re-shaping TNO tensor to match the graph leg ordering
             T = self._canonical_to_correct_legs(T=T, node=node)
 
             self[node] = T
@@ -111,9 +111,9 @@ class TFI(PauliPEPO):
             g: float = 0,
             dtype: np.dtype = np.complex128,
             sanity_check: bool = False
-        ) -> tuple[PEPO, PEPO]:
+        ) -> tuple[TNO, TNO]:
         """
-        Constructs two PEPOs, where one contains the positive-semidefinite
+        Constructs two TNOs, where one contains the positive-semidefinite
         part of the TFI and the other contains the negative-semidefinite
         part.
         """
@@ -128,11 +128,11 @@ class TFI(PauliPEPO):
         Z_pos = np.array([[1, 0], [0, 0]])
         Z_neg = np.array([[0, 0], [0, -1]])
 
-        pos_op = PEPO(dtype=dtype)
-        neg_op = PEPO(dtype=dtype)
-        # Why not PauliPEPO? Because pos_op and neg_op will contain operators
+        pos_op = TNO(dtype=dtype)
+        neg_op = TNO(dtype=dtype)
+        # Why not PauliTNO? Because pos_op and neg_op will contain operators
         # that are not pauli matrices (e.g. projectors), so the sanity check of
-        # PauliPEPO would not work.
+        # PauliTNO would not work.
 
         chi = 4
         """
@@ -140,7 +140,7 @@ class TFI(PauliPEPO):
         decay states, and 3 is the vacuum state.
         """
 
-        G = PEPO.prepare_graph(G=G, chi=chi, D=2, sanity_check=sanity_check)
+        G = TNO.prepare_graph(G=G, chi=chi, D=2, sanity_check=sanity_check)
         pos_op.G = copy.deepcopy(G)
         neg_op.G = copy.deepcopy(G)
 
@@ -160,7 +160,7 @@ class TFI(PauliPEPO):
         pos_op.tree = copy.deepcopy(tree)
         neg_op.tree = copy.deepcopy(tree)
 
-        # Adding PEPO tensors (without coupling).
+        # Adding TNO tensors (without coupling).
         for node in G.nodes():
             N_in = len(tree.pred[node])
             N_out = len(tree.succ[node])
@@ -170,7 +170,7 @@ class TFI(PauliPEPO):
                 # Node is a leaf.
                 N_out = 1
 
-            # PEPO tensors, where the first dimension is the incoming leg, the
+            # TNO tensors, where the first dimension is the incoming leg, the
             # passive legs and the outgoing legs follow, and the last two
             # dimensions are the physical legs.
             pos_T = pos_op.traversal_tensor(
@@ -194,7 +194,7 @@ class TFI(PauliPEPO):
                 pos_T = np.moveaxis(pos_T, 0, -3)
                 neg_T = np.moveaxis(neg_T, 0, -3)
 
-            # Re-shaping PEPO tensor to match the graph leg ordering.
+            # Re-shaping TNO tensor to match the graph leg ordering.
             pos_op[node] = pos_op._canonical_to_correct_legs(
                 T=pos_T, node=node
             )
@@ -264,16 +264,16 @@ class TFI(PauliPEPO):
 
         # Transverse field.
         for i in range(N):
-            ops = tuple(PauliPEPO.X if _ == i else I for _ in range(N))
+            ops = tuple(PauliTNO.X if _ == i else I for _ in range(N))
             H += h * multi_kron(*ops)
 
         # Two-body terms.
         for ops in (
-            (I, I, I, I, PauliPEPO.Z, PauliPEPO.Z),
-            (I, I, I, PauliPEPO.Z, PauliPEPO.Z, I),
-            (I, I, PauliPEPO.Z, PauliPEPO.Z, I, I),
-            (I, PauliPEPO.Z, I, I, PauliPEPO.Z, I),
-            (PauliPEPO.Z, I, I, PauliPEPO.Z, I, I),
+            (I, I, I, I, PauliTNO.Z, PauliTNO.Z),
+            (I, I, I, PauliTNO.Z, PauliTNO.Z, I),
+            (I, I, PauliTNO.Z, PauliTNO.Z, I, I),
+            (I, PauliTNO.Z, I, I, PauliTNO.Z, I),
+            (PauliTNO.Z, I, I, PauliTNO.Z, I, I),
         ): H += J * multi_kron(*ops)
 
         return H
@@ -281,24 +281,24 @@ class TFI(PauliPEPO):
     @staticmethod
     def line(N: int, J: float = 1, h: float = 0) -> np.ndarray:
         """TFI mddel in one dimension, on `N` spins."""
-        if N == 1: return h * PauliPEPO.X
+        if N == 1: return h * PauliTNO.X
 
         H = np.zeros(shape=(2**N, 2**N))
         I = np.eye(2)
 
         # Coupling terms.
         for i in range(N-1):
-            ops = tuple(PauliPEPO.Z if _ in (i, i+1) else I for _ in range(N))
+            ops = tuple(PauliTNO.Z if _ in (i, i+1) else I for _ in range(N))
             H += J * multi_kron(*ops)
         # Transverse field.
         for i in range(N):
-            ops = tuple(PauliPEPO.X if _ == i else I for _ in range(N))
+            ops = tuple(PauliTNO.X if _ == i else I for _ in range(N))
             H += h * multi_kron(*ops)
 
         return H
 
 
-class Heisenberg(PauliPEPO):
+class Heisenberg(PauliTNO):
     """
     Heisenberg model with transverse field in x.
     """
@@ -314,16 +314,16 @@ class Heisenberg(PauliPEPO):
             sanity_check: bool = False
         ):
         """
-        Transverse Field Ising model PEPO on graph `G`, with couplings
+        Transverse Field Ising model TNO on graph `G`, with couplings
         `Jx`, `Jy`, `Jz`, and external field `g`.
 
-        Ordering of legs in the PEPO virtual dimensions is inherited
-        from `G`. The last two dimensions of every PEPO tensor are the
+        Ordering of legs in the TNO virtual dimensions is inherited
+        from `G`. The last two dimensions of every TNO tensor are the
         physical dimensions.
         """
         super().__init__(dtype=dtype)
 
-        self.G = PEPO.prepare_graph(G=G, chi=5, D=2, sanity_check=sanity_check)
+        self.G = TNO.prepare_graph(G=G, chi=5, D=2, sanity_check=sanity_check)
 
         # Saving coupling strength and transversal field.
         self.Jx = Jx
@@ -337,7 +337,7 @@ class Heisenberg(PauliPEPO):
         # Depth-first search tree.
         self.tree = nx.dfs_tree(G, self.root)
 
-        # Adding PEPO tensors (without coupling).
+        # Adding TNO tensors (without coupling).
         for node in self:
             N_in = len(self.tree.pred[node])
             N_out = len(self.tree.succ[node])
@@ -347,7 +347,7 @@ class Heisenberg(PauliPEPO):
                 # Node is a leaf.
                 N_out = 1
 
-            # PEPO tensor, where the first dimension is the incoming leg, the
+            # TNO tensor, where the first dimension is the incoming leg, the
             # passive legs and the outgoing legs follow, and the last two
             # dimensions are the physical legs.
             T = self.traversal_tensor(
@@ -359,7 +359,7 @@ class Heisenberg(PauliPEPO):
                 # last place within the virtual dimensions.
                 T = np.moveaxis(T, 0, -3)
 
-            # Re-shaping PEPO tensor to match the graph leg ordering.
+            # Re-shaping TNO tensor to match the graph leg ordering.
             T = self._canonical_to_correct_legs(T=T, node=node)
 
             self.G.nodes[node]["T"] = T
@@ -395,9 +395,9 @@ class Heisenberg(PauliPEPO):
             g: float = 0,
             dtype: np.dtype = np.complex128,
             sanity_check: bool = False
-        ) -> tuple[PEPO, PEPO]:
+        ) -> tuple[TNO, TNO]:
         """
-        Constructs two PEPOs, where one contains the
+        Constructs two TNOs, where one contains the
         positive-semidefinite part of the Heisenberg model and the other
         contains the negative-semidefinite part.
         """
@@ -414,11 +414,11 @@ class Heisenberg(PauliPEPO):
         Z_pos = np.array([[1, 0], [0, 0]])
         Z_neg = np.array([[0, 0], [0, -1]])
 
-        pos_op = PEPO(dtype=dtype)
-        neg_op = PEPO(dtype=dtype)
-        # Why not PauliPEPO? Because pos_op and neg_op will contain operators
+        pos_op = TNO(dtype=dtype)
+        neg_op = TNO(dtype=dtype)
+        # Why not PauliTNO? Because pos_op and neg_op will contain operators
         # that are not pauli matrices (e.g. projectors), so the sanity check of
-        # PauliPEPO would not work.
+        # PauliTNO would not work.
 
         chi = 8
         """
@@ -426,7 +426,7 @@ class Heisenberg(PauliPEPO):
         decay states, and 7 is the vacuum state.
         """
 
-        G = PEPO.prepare_graph(G=G, chi=chi, D=2, sanity_check=sanity_check)
+        G = TNO.prepare_graph(G=G, chi=chi, D=2, sanity_check=sanity_check)
         pos_op.G = copy.deepcopy(G)
         neg_op.G = copy.deepcopy(G)
 
@@ -450,7 +450,7 @@ class Heisenberg(PauliPEPO):
         pos_op.tree = copy.deepcopy(tree)
         neg_op.tree = copy.deepcopy(tree)
 
-        # Adding PEPO tensors (without coupling).
+        # Adding TNO tensors (without coupling).
         for node in G.nodes():
             N_in = len(tree.pred[node])
             N_out = len(tree.succ[node])
@@ -460,7 +460,7 @@ class Heisenberg(PauliPEPO):
                 # Node is a leaf.
                 N_out = 1
 
-            # PEPO tensors, where the first dimension is the incoming leg, the
+            # TNO tensors, where the first dimension is the incoming leg, the
             # passive legs and the outgoing legs follow, and the last two
             # dimensions are the physical legs.
             pos_T = pos_op.traversal_tensor(
@@ -484,7 +484,7 @@ class Heisenberg(PauliPEPO):
                 pos_T = np.moveaxis(pos_T, 0, -3)
                 neg_T = np.moveaxis(neg_T, 0, -3)
 
-            # Re-shaping PEPO tensor to match the graph leg ordering.
+            # Re-shaping TNO tensor to match the graph leg ordering.
             pos_op[node] = pos_op._canonical_to_correct_legs(
                 T=pos_T, node=node
             )

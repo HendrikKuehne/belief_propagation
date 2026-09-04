@@ -1,6 +1,8 @@
 # Belief propagation for tensor network contraction
 
-The code contained herein uses Belief Propagation (BP) as a subroutine in ground state search, and implements many PEPS and PEPO routines around that. The goal is to facilitate ground state search on systems with arbitrary geometries. The typical workflow is as follows: Given a geometry of a system (i.e. a graph that represents coupling between spins), one creates a Hamiltonian and passes it to the desired algorithm.
+> **Note:** The concepts and numerical implementations in this repository are discussed in our preprint. For more details, please see [arXiv:2609.02361](https://arxiv.org/abs/2609.02361).
+
+The code contained herein uses Belief Propagation (BP) as a subroutine in ground state search, and implements many TNS and TNO routines around that. The goal is to facilitate ground state search on systems with arbitrary geometries. The typical workflow is as follows: Given a geometry of a system (i.e. a graph that represents coupling between spins), one creates a Hamiltonian and passes it to the desired algorithm.
 
 ## Basic usage of BP within this module
 
@@ -11,13 +13,13 @@ Consider the following example:
 ```python
     from belief_propagation.graphs import heavyhex
     from belief_propagation.braket import Braket
-    from belief_propagation.PEPS import PEPS
+    from belief_propagation.TNS import TNS
 
     # Defining the geometry of this problem: a heavyhex-graph with four cells.
     G = heavyhex(2, 2)
 
     # Constructing a quantum state, and its norm.
-    psi = PEPS.init_random(G=G, D=2, chi=3)
+    psi = TNS.init_random(G=G, D=2, chi=3)
     braket = Braket.Overlap(psi, psi)
 
     # BP on the norm.
@@ -39,19 +41,19 @@ Currently, two algorithms for ground state search are implemented and equipped w
 
 ### BP-DMRG
 
-The BP-DMRG algorithm is in many respects a standard implementation of DMRG. Standard implementations in one dimension rely on the site-canonical form of a MPS, however, which is not available for PEPOs.[^1] This is where BP comes in: in absence of a canonical form, the left- and right block in the local Hamiltonian need to be obtained through partial contraction of the expectation value $\braket{\psi|H|\psi}$. This is computationally intensive to do exactly for each local update, but contraction through BP is cheap. Thus, this implementation of DMRG forms the local Hamiltonian from messages. Note also that since there is no canonical form available, the local update requires us to solve a generalized eigenvalue problem.
+The BP-DMRG algorithm is in many respects a standard implementation of DMRG. Standard implementations in one dimension rely on the site-canonical form of a MPS, however, which is not available for TNOs.[^1] This is where BP comes in: in absence of a canonical form, the left- and right block in the local Hamiltonian need to be obtained through partial contraction of the expectation value $\braket{\psi|H|\psi}$. This is computationally intensive to do exactly for each local update, but contraction through BP is cheap. Thus, this implementation of DMRG forms the local Hamiltonian from messages. Note also that since there is no canonical form available, the local update requires us to solve a generalized eigenvalue problem.
 
 One sweep of BP-DMRG thus proceeds as follows (for every node):
 
 * QR-gauging, with node $i$ as orthogonality center.
 * BP iterations on $\braket{\psi|H^{(\pm)}|\psi}$ and $\braket{\psi|\psi}$, to obtain fixed-point messages.
 * Assemble local Hamiltonian $H_i^{(\pm)} = \mathrm{Tr}\left(W_i^{(\pm)}\prod_{j\in\partial i}m_{j\rightarrow i}^{(\pm)}\right)$ and local environment $N_i = \mathrm{Tr}\left(I_{D\times D}\prod_{j\in\partial i}m_{j\rightarrow i}\right)$.
-* Solve the generalized eigenvalue problem $\left(H^{(+)}+H^{(-)}\right)\ket{\psi_i}=\lambda N_i\ket{\psi_i}$ to obtain the new PEPS tensor $\psi_i$ on this site.
+* Solve the generalized eigenvalue problem $\left(H^{(+)}+H^{(-)}\right)\ket{\psi_i}=\lambda N_i\ket{\psi_i}$ to obtain the new TNS tensor $\psi_i$ on this site.
 
 What does this look like in practice? All the above functionality is captured in the `run()` function of the `DMRG` class. The instantiation of one such object requires two things:
 
 * A Hamiltonian. Since BP only converges on positive- or negative-semidefinite graphical models, it must be split up into a positive- and a negative-semidefinite part. Functions for obtaining definite splittings of the TFI model and the Heisenberg model come with this module.[^2]
-* An initial state. It can be defined in two ways: Either by passing a bond dimension, in which case an initial state with that bond dimension is chosen at random, or by explicitly passing a state (e.g. an instance of the `PEPS` class).
+* An initial state. It can be defined in two ways: Either by passing a bond dimension, in which case an initial state with that bond dimension is chosen at random, or by explicitly passing a state (e.g. an instance of the `TNS` class).
 
 Consider the following code snippet:
 
@@ -77,7 +79,7 @@ The invocation of `dmrg.run()` runs the DMRG algorithm with three sweeps. Every 
 
 ### Imaginary time evolution
 
-The implementation of imaginary time evolution itself is the standard one; the state $\ket{\psi}$ is evolved by applying $e^{-\Delta\tau H}$ to it. Here as well the implementation is independent of the system geometry; $\ket{\psi}$ and $e^{-\Delta\tau H}$ are instances of the `PEPS` and `PEPO` classes, respectively, and may be defined on any graph. Applying an operator to a state follows familiar notation; $e^{-\Delta\tau H}\ket{\psi}$ is calculated through the line `psi = H_exp @ psi`.
+The implementation of imaginary time evolution itself is the standard one; the state $\ket{\psi}$ is evolved by applying $e^{-\Delta\tau H}$ to it. Here as well the implementation is independent of the system geometry; $\ket{\psi}$ and $e^{-\Delta\tau H}$ are instances of the `TNS` and `TNO` classes, respectively, and may be defined on any graph. Applying an operator to a state follows familiar notation; $e^{-\Delta\tau H}\ket{\psi}$ is calculated through the line `psi = H_exp @ psi`.
 
 BP enters the picture in two subroutines, that are necessary to make imaginary time evolution viable on classical hardware: compression and contraction.
 
@@ -103,7 +105,7 @@ Consider the following code snippet:
     H = Heisenberg(G=G, g=3, Jx=.5, Jy=1, Jz=1.5)
 
     # Constructing the initial state.
-    psi = PEPS.init_random(G=G, D=2, chi=3)
+    psi = TNS.init_random(G=G, D=2, chi=3)
 
     # Constructing the time evolution operator.
     dtau = .05
@@ -140,10 +142,10 @@ This code first defines the Heisenberg model Hamiltonian and an initial state wi
     * `graphs.py` Creation of various graphs.
     * `hamiltonians.py` Transverse-field Ising model and Heisenberg model.
     * `networks.py` Manipulation of tensor networks.
-    * `PEPO.py` Classes `OpChain`, `OpLayer`, `PEPO` and `PauliPEPO`. Zero-valued PEPO and identity PEPO.
-    * `PEPS.py` Class `PEPS`.
-    * `time_evolution.py` Trotterization, PEPO exponential and simple-update TEBD.
-    * `truncate_expand.py` Manipulation and processing of brakets and PEPS. Inserting projectors on edges, compression, feynman cuts, gauging, and Loop Series Expansion.
+    * `TNO.py` Classes `OpChain`, `OpLayer`, `TNO` and `PauliTNO`. Zero-valued TNO and identity TNO.
+    * `TNS.py` Class `TNS`.
+    * `time_evolution.py` Trotterization, TNO exponential and simple-update TEBD.
+    * `truncate_expand.py` Manipulation and processing of brakets and TNS. Inserting projectors on edges, compression, feynman cuts, gauging, and Loop Series Expansion.
     * `utils.py` Utility functions: Math routines, hermiticity checks, graph processing, operator chains and operator layer processing, sanity checks.
 * `doc/`
     * `plots/` Discussion of various plots that illustrate the behavior of the contents of this module. Very messy and without explanations; beware.

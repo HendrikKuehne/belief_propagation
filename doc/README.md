@@ -19,7 +19,7 @@ $$
     m_{a\leftrightarrow b}\rightarrow \frac{m_{a\leftrightarrow b}}{\sqrt{|m_{a\rightarrow b}m_{b\rightarrow a}|}}.
 $$
 
-[^1]: This can be interpreted statistically. When interpreting the contraction of a PEPS as Belief Propagation on a factor graph, the graph in question becomes a "double edge factor graph". The local marginals of it's variables can be calculated using eq. A3 of [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073). By normalizing the messages in this particular way, we are normalizing the marginal.
+[^1]: This can be interpreted statistically. When interpreting the contraction of a TNS as Belief Propagation on a factor graph, the graph in question becomes a "double edge factor graph". The local marginals of it's variables can be calculated using eq. A3 of [Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073). By normalizing the messages in this particular way, we are normalizing the marginal.
 
 The BP algorithm is exact on trees, too. The approximation that it carries out is drastically different, however: MP directly implements the contraction of the network, s.t. each node holds the contraction value $Z$. Let $\text{cntr}_a$ be the result of the contraction of tensor $a$ with it's incident messages, then MP gives
 
@@ -64,9 +64,9 @@ The presence of loops in the graph causes feedback loops in the passage of messa
   <img width="556" height="200" src="https://github.com/HendrikKuehne/belief_propagation/blob/main/doc/imgs/double_edge_factor_graph.png">
 </p>
 
-Arad (2021) ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073)) investigates so-called "double-edge factor graphs" (DEFG), which are constructed from a PEPS by stacking it and it's complex conjugate according to the picture above. This is of course what the option `psd=True` in this code accomplishes. They emphasize that the messages $m_{a\rightarrow b}(x_1,x_1')$, when interpreted as matrices, are positive semi-definite.
+Arad (2021) ([Phys. Rev. Research 3, 023073 (2021)](https://doi.org/10.1103/PhysRevResearch.3.023073)) investigates so-called "double-edge factor graphs" (DEFG), which are constructed from a TNS by stacking it and it's complex conjugate according to the picture above. This is of course what the option `psd=True` in this code accomplishes. They emphasize that the messages $m_{a\rightarrow b}(x_1,x_1')$, when interpreted as matrices, are positive semi-definite.
 
-Recall also the mapping from a PEPS to a factor graph in the paper mentioned above. As explained [here](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc#user-content-fn-1-fd873affe81f52cd3ae93dbdff2abae5), the normalization of messages in the final step of the BP algorithm can be seen as the normalization of the marginals of the variables of the DEFG.
+Recall also the mapping from a TNS to a factor graph in the paper mentioned above. As explained [here](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc#user-content-fn-1-fd873affe81f52cd3ae93dbdff2abae5), the normalization of messages in the final step of the BP algorithm can be seen as the normalization of the marginals of the variables of the DEFG.
 
 The two properties that (I) the messages are positive semi-definite and that (II) the marginals of the variables are normalized are both affected by the `psd`-option, but not in the same way. Both are not true anymore when `psd=False`, yet (II) can be saved rather straightforwardly. If `psd=False`, the marginals are normalized not to unity but to a unit complex number, which prevents the statistical interpretation of the BP algorithm. By normalizing the messages according to
 
@@ -74,8 +74,8 @@ $$
     m_{a\leftrightarrow b}\rightarrow \frac{m_{a\leftrightarrow b}}{\sqrt{m_{a\rightarrow b}m_{b\rightarrow a}}}
 $$
 
-(removing the absolute value in the denominator), the marginals are once again normalized to unity. This does not make the algorithm work, however: (I) is also not true if `psd=False`.[^4] This behavior does not depend on the initialization of the messages.[^5] Arad et Al interpret the result of the BP algorithm as "the density matrix of some fictitious quantum state that 'lives on the edges of the PEPS'" (section A.2). This interpretation is lost if (I) does not hold anymore.
+(removing the absolute value in the denominator), the marginals are once again normalized to unity. This does not make the algorithm work, however: (I) is also not true if `psd=False`.[^4] This behavior does not depend on the initialization of the messages.[^5] Arad et Al interpret the result of the BP algorithm as "the density matrix of some fictitious quantum state that 'lives on the edges of the TNS'" (section A.2). This interpretation is lost if (I) does not hold anymore.
 
-[^4]: It is, of course, fairly self-explanatory that (I) does not necessarily hold if the network does not originate from a PEPS.
+[^4]: It is, of course, fairly self-explanatory that (I) does not necessarily hold if the network does not originate from a TNS.
 
 [^5]: Tested using initialization of the messages using a normal distribution centered around zero.

@@ -1,9 +1,9 @@
 """
 Creating sandwiches of the form
-* MPS @ PEPO @ MPS, or
-* MPS @ MPS,
+* TNS @ TNO @ TNS, or
+* TNS @ TNS,
 
-by combining the classes MPS and PEPO. The class `Braket` contained
+by combining the classes TNS and TNO. The class `Braket` contained
 herein implements the Belief Propagation algorithm.
 """
 
@@ -37,8 +37,8 @@ from belief_propagation.utils import (
     same_legs,
     check_msg_intact
 )
-from belief_propagation.PEPO import PEPO, Identity
-from belief_propagation.PEPS import PEPS
+from belief_propagation.TNO import TNO, Identity
+from belief_propagation.TNS import TNS
 
 # -----------------------------------------------------------------------------
 #                   Braket classes
@@ -102,7 +102,7 @@ def contract_tensor_msg(
 
 class BaseBraket:
     """
-    Base class for sandwiches of MPS and PEPOs.
+    Base class for sandwiches of TNS and TNOs.
     Always describes a braket of the form `<bra|op|ket>`.
     """
 
@@ -293,14 +293,14 @@ class BaseBraket:
         }
 
     @property
-    def ket(self) -> PEPS:
+    def ket(self) -> TNS:
         """
         The ket-state in the braket `bra @ op @ ket`.
         """
         return self._ket
 
     @ket.setter
-    def ket(self, ket: PEPS) -> None:
+    def ket(self, ket: TNS) -> None:
         # sanity check
         assert graph_compatible(self.G, ket.G, sanity_check=True)
         self._ket = ket
@@ -314,14 +314,14 @@ class BaseBraket:
         return
 
     @property
-    def bra(self) -> PEPS:
+    def bra(self) -> TNS:
         """
         The bra-state in the braket `bra @ op @ ket`.
         """
         return self._bra
 
     @bra.setter
-    def bra(self, bra: PEPS) -> None:
+    def bra(self, bra: TNS) -> None:
         # sanity check
         assert graph_compatible(self.G, bra.G, sanity_check=True)
         self._bra = bra
@@ -335,14 +335,14 @@ class BaseBraket:
         return
 
     @property
-    def op(self) -> PEPO:
+    def op(self) -> TNO:
         """
         The operator in the braket `bra @ op @ ket`.
         """
         return self._op
 
     @op.setter
-    def op(self, op: PEPO) -> None:
+    def op(self, op: TNO) -> None:
         # sanity check
         assert graph_compatible(self.G, op.G, sanity_check=True)
         self._op = op
@@ -413,9 +413,9 @@ class BaseBraket:
         the `legs` attribute on every edge.
         """
         return cls(
-            bra=PEPS.Dummy(G=G, sanity_check=sanity_check),
+            bra=TNS.Dummy(G=G, sanity_check=sanity_check),
             op=Identity(G=G, D=1, sanity_check=sanity_check),
-            ket=PEPS.init_from_TN(G=G, sanity_check=sanity_check),
+            ket=TNS.init_from_TN(G=G, sanity_check=sanity_check),
             sanity_check=sanity_check,
             **kwargs
         )
@@ -423,13 +423,13 @@ class BaseBraket:
     @classmethod
     def Overlap(
             cls,
-            psi1: PEPS,
-            psi2: PEPS,
+            psi1: TNS,
+            psi2: TNS,
             sanity_check: bool = False,
             **kwargs
         ):
         """
-        Overlap <`psi1`,`psi2`> of two PEPS. Returns the corresponding
+        Overlap <`psi1`,`psi2`> of two TNS. Returns the corresponding
         `Braket` object. `kwargs` are passed to `cls.__init__`.
         """
         if "dtype" not in kwargs.keys():
@@ -446,8 +446,8 @@ class BaseBraket:
     @classmethod
     def Expval(
             cls,
-            psi: PEPS,
-            op: PEPO,
+            psi: TNS,
+            op: TNO,
             sanity_check: bool = False,
             **kwargs
         ):
@@ -557,9 +557,9 @@ class BaseBraket:
 
     def __init__(
             self,
-            bra: PEPS,
-            op: PEPO,
-            ket: PEPS,
+            bra: TNS,
+            op: TNO,
+            ket: TNS,
             dtype: np.dtype = np.complex128,
             sanity_check: bool = False
         ) -> None:
@@ -581,9 +581,9 @@ class BaseBraket:
         Graph that contains leg ordering, and physical dimensions.
         """
 
-        self._bra: PEPS = bra
-        self._op: PEPO = op
-        self._ket: PEPS = ket
+        self._bra: TNS = bra
+        self._op: TNO = op
+        self._ket: TNS = ket
 
         self._converged: bool = False
         """Whether the messages in `self.msg` are converged."""
@@ -1798,9 +1798,9 @@ class Braket(BaseBraket):
 
     def __init__(
             self,
-            bra: PEPS,
-            op: PEPO,
-            ket: PEPS,
+            bra: TNS,
+            op: TNO,
+            ket: TNS,
             msg: dict[int, dict[int, np.ndarray]] = None,
             edge_T: dict[int, dict[int, np.ndarray]] = None,
             converged: bool = False,
@@ -1861,9 +1861,9 @@ class ExcBraket(Braket):
 
     def __init__(
             self,
-            bra: PEPS,
-            op: PEPO,
-            ket: PEPS,
+            bra: TNS,
+            op: TNO,
+            ket: TNS,
             exc: nx.MultiGraph,
             msg: dict[int, dict[int, np.ndarray]] = None,
             edge_T: dict[int, dict[int, np.ndarray]] = None,
@@ -2638,7 +2638,7 @@ def __BP_excitations_holefree(
 
     # TODO fix this. The whole impetus for writing this method was to find a
     # way of constructing excitations that is more efficient than finding the
-    # operator chains of a PEPO.
+    # operator chains of a TNO.
 
     def nodes_to_graph(nodes: list[int]) -> nx.MultiGraph:
         edges = tuple(
@@ -2717,26 +2717,26 @@ def BP_excitations(
 
     if nx.is_tree(G): return ()
 
-    # The loop excitations are the operator chains of a PEPO with bond
-    # dimension 2 on the graph G, where the PEPOs local tensors are defined
+    # The loop excitations are the operator chains of a TNO with bond
+    # dimension 2 on the graph G, where the TNOs local tensors are defined
     # s.t. the only non-zero components are located in indices that ensure
     # that there are no dangling edges.
 
-    # Root node of the PEPO is node with smallest degree.
+    # Root node of the TNO is node with smallest degree.
     root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
 
-    # Depth-first search tree is PEPO traversal tree.
+    # Depth-first search tree is TNO traversal tree.
     tree = nx.dfs_tree(G,root)
 
-    pepoG = PEPO.prepare_graph(G=G, chi=2, sanity_check=sanity_check)
+    tnoG = TNO.prepare_graph(G=G, chi=2, sanity_check=sanity_check)
 
-    # Filling the PEPO with tensors that are zero-valued if there is a dangling
+    # Filling the TNO with tensors that are zero-valued if there is a dangling
     # edge.
-    for node in pepoG:
-        nLegs = len(pepoG.adj[node])
-        # Baseline PEPO tensor, which allows dangling excitations. This is
+    for node in tnoG:
+        nLegs = len(tnoG.adj[node])
+        # Baseline TNO tensor, which allows dangling excitations. This is
         # sufficient if node is a hole.
-        pepoG.nodes[node]["T"] = np.reshape(
+        tnoG.nodes[node]["T"] = np.reshape(
             np.outer(np.ones(shape=2**nLegs), (1, 0, 0, 1)),
             shape=tuple(2 for _ in range(nLegs + 2))
         )
@@ -2752,16 +2752,16 @@ def BP_excitations(
                 # dangling excitations.
                 idx = (tuple(1 if i == leg else 0 for i in range(nLegs))
                        + (slice(2), slice(2)))
-                pepoG.nodes[node]["T"][idx] = np.zeros(shape=(2, 2))
+                tnoG.nodes[node]["T"][idx] = np.zeros(shape=(2, 2))
 
-    exc_pepo = PEPO.from_graphs(
-        G=pepoG,
+    exc_tno = TNO.from_graphs(
+        G=tnoG,
         tree=tree,
         check_tree=False,
         sanity_check=sanity_check
     )
 
-    _, virt_idx_list = exc_pepo.operator_chains(
+    _, virt_idx_list = exc_tno.operator_chains(
         return_virtidx=True,
         sanity_check=sanity_check
     )
@@ -2979,9 +2979,9 @@ def assemble_excitation_brakets(
     # Constructing a new braket for this excitation, and contracting it to get
     # the contribution of this excitation.
     exc_braket = ExcBraket(
-        bra=PEPS(G=G_bra),
-        op=PEPO.from_graphs(G=G_op, tree=exc_tree, check_tree=False),
-        ket=PEPS(G=G_ket),
+        bra=TNS(G=G_bra),
+        op=TNO.from_graphs(G=G_op, tree=exc_tree, check_tree=False),
+        ket=TNS(G=G_ket),
         exc=excitation,
         sanity_check=sanity_check
     )

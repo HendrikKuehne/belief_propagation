@@ -5,8 +5,8 @@ Projector-entangled pair operators on arbitrary graphs.
 __all__ = [
     "OpChain",
     "OpLayer",
-    "PEPO",
-    "PauliPEPO",
+    "TNO",
+    "PauliTNO",
     "Zero",
     "Identity"
 ]
@@ -30,7 +30,7 @@ from belief_propagation.utils import (
     same_legs,
     graph_compatible
 )
-from belief_propagation.PEPS import PEPS
+from belief_propagation.TNS import TNS
 
 
 # -----------------------------------------------------------------------------
@@ -55,12 +55,12 @@ class OpChain(dict[int, np.ndarray]):
         order of the physical dimensions is inherited from the keys:
         operators are sorted in ascending key-order.
         
-        `create_using` is forwarded to `PEPO.toarray` or
+        `create_using` is forwarded to `TNO.toarray` or
         `utils.multi_kron`, respectively.
         """
         if self.G is not None:
-            pepo = self.topepo(sanity_check=sanity_check)
-            return pepo.toarray(
+            tno = self.totno(sanity_check=sanity_check)
+            return tno.toarray(
                 create_using=create_using, sanity_check=sanity_check
             )
 
@@ -69,13 +69,13 @@ class OpChain(dict[int, np.ndarray]):
             create_using=create_using
         )
 
-    def topepo(
+    def totno(
             self,
             G: nx.MultiGraph = None,
             sanity_check: bool = False
-        ) -> "PEPO":
+        ) -> "TNO":
         """
-        Creates the PEPO that contains this operator chain. Tries to
+        Creates the TNO that contains this operator chain. Tries to
         use `self.G`, if it is not `None`; uses the argument `G`
         otherwise.
         """
@@ -238,21 +238,21 @@ class OpLayer(tuple[OpChain]):
         """
         Construct a matrix representation of this operator layer.
 
-        `create_using` is forwarded to `PEPO.toarray`.
+        `create_using` is forwarded to `TNO.toarray`.
         """
-        pepo = self.topepo(G=G, sanity_check=sanity_check)
-        return pepo.toarray(
+        tno = self.totno(G=G, sanity_check=sanity_check)
+        return tno.toarray(
             create_using=create_using,
             sanity_check=sanity_check
         )
 
-    def topepo(
+    def totno(
             self,
             G: nx.MultiGraph = None,
             sanity_check: bool = False
-        ) -> "PEPO":
+        ) -> "TNO":
         """
-        Creates the PEPO that contains this operator layer. This
+        Creates the TNO that contains this operator layer. This
         corresponds to the sum of all operator chains.
         """
         with tqdm.tqdm.external_write_mode():
@@ -260,7 +260,7 @@ class OpLayer(tuple[OpChain]):
                 "".join((
                     "So far, this method simply adds operator chains. There ",
                     "is a more elegant method: if the operator chains are ",
-                    "disjoint, they can be compressed into a PEPO with ",
+                    "disjoint, they can be compressed into a TNO with ",
                     "smaller bond dimension. This has yet to be implemented."
                 )),
                 FutureWarning
@@ -274,13 +274,13 @@ class OpLayer(tuple[OpChain]):
             if G is None:
                 raise ValueError("No graph available.")
 
-        pepo = self[0].topepo(G=G, sanity_check=sanity_check)
+        tno = self[0].totno(G=G, sanity_check=sanity_check)
         for chain in self[1:]:
-            pepo = pepo + chain.topepo(G=G, sanity_check=sanity_check)
+            tno = tno + chain.totno(G=G, sanity_check=sanity_check)
 
-        if sanity_check: assert pepo.intact
+        if sanity_check: assert tno.intact
 
-        return pepo
+        return tno
 
     @property
     def disjoint(self) -> bool:
@@ -373,7 +373,7 @@ class OpLayer(tuple[OpChain]):
         return
 
 
-class PEPO:
+class TNO:
     """
     Base class for tensor product operators, that are constructed
     mathematically as sums of operator chains. Subclasses must provide
@@ -381,10 +381,10 @@ class PEPO:
     * `self.G`: Graph on which the Hamiltonian is defined.
     * `self.D`: Physical dimension.
     * `self.tree`: Tree that determines the traversal of `G`, along
-    which the PEPO is oriented.
+    which the TNO is oriented.
     * `self.root`: The root node of the tree.
 
-    Writing down a PEPO on an arbitrary graph `G` can be achieved by
+    Writing down a TNO on an arbitrary graph `G` can be achieved by
     finding a spanning tree of `G`. The flow of finite state automaton
     information is then defined by the tree: The origin is at the root,
     and it terminates at the leaves. This method is inspired by
@@ -399,7 +399,7 @@ class PEPO:
     initial state ("particle state") is only passed along the tree,
     while intermediate states ("decay states") can be passed along any
     edge. The final state ("vacuum state") is passed along every edge.
-    The physical legs are the last two dimensions if the PEPO tensors.
+    The physical legs are the last two dimensions if the TNO tensors.
     All other legs are virtual bond dimensions. The correspondence
     between legs and neighbors is determined by the `legs` attribute on
     each edge.
@@ -408,7 +408,7 @@ class PEPO:
     additional leg. These legs connect to the initial and final states
     of the finite state automaton, respectively. At the end of
     initialisation, these additional legs should be contracted such that
-    the PEPO has the same structure as the underlying graph.
+    the TNO has the same structure as the underlying graph.
 
     It is assumed that, within the virtual dimension, the finite state
     automaton initial state is the 0th component, and the final state is
@@ -424,12 +424,12 @@ class PEPO:
 
         This means contraction of the root node with the initial state,
         and each leaf with the final state (of the finite-state
-        automaton, which is the model that I use to construct PEPOs). It
+        automaton, which is the model that I use to construct TNOs). It
         is assumed that the initial state is the 0th component of the
         bond dimension, and that the final state is the last component.
 
         This method is intended to be used during the construction of
-        PEPOs (see e.g. the implementation of the TFI- and the
+        TNOs (see e.g. the implementation of the TFI- and the
         Heisenberg-model).
         """
         for node in self.G.nodes():
@@ -452,11 +452,11 @@ class PEPO:
         Construct a matrix representation of this operator. Different
         methods are implemented, which can be selected by the argument
         `create_using`:
-        * `numpy`: Dense Numpy-array from contraction of the PEPO.
+        * `numpy`: Dense Numpy-array from contraction of the TNO.
         * `scipy.csr`: Scipy csr-sparse array, constructed using
         operator chains.
         * `sparse`: Scipy csr-sparse matrix from sparse contraction of
-        the network. Works for small PEPOs only.
+        the network. Works for small TNOs only.
 
         The order of the physical dimensions is inherited from the
         graph labels of the nodes: the nodes are sorted in ascending
@@ -645,10 +645,10 @@ class PEPO:
         """
         if sanity_check: assert self.intact
 
-        newPEPO = copy.deepcopy(self)
-        for node in self.G.nodes(): newPEPO[node] = self[node].conj()
+        newTNO = copy.deepcopy(self)
+        for node in self.G.nodes(): newTNO[node] = self[node].conj()
 
-        return newPEPO
+        return newTNO
 
     def view_site(self, node: int):
         """
@@ -710,7 +710,7 @@ class PEPO:
             decay_op: np.ndarray = None,
         ) -> np.ndarray:
         """
-        Returns the minimum tensor for PEPO at node `node`, that is, a
+        Returns the minimum tensor for TNO at node `node`, that is, a
         tensor that ensures correct tree traversal.
 
         `T` has the canonical leg ordering: The first leg is the
@@ -800,10 +800,10 @@ class PEPO:
         automaton) are added to this edge, NOT that an operator
         `first_decay_op * second_decay_op` is added to the Hamiltonian!
         """
-        # Why is the construction of the PEPO this convoluted? Why do I not
-        # assemble the tensors in `__ising_PEPO_tensor_without_coupling`,
+        # Why is the construction of the TNO this convoluted? Why do I not
+        # assemble the tensors in `__ising_TNO_tensor_without_coupling`,
         # re-shape them according to the tree structure, and insert them into
-        # the PEPO? The code would be much more intelligible. The problem is
+        # the TNO? The code would be much more intelligible. The problem is
         # that I want only one ising coupling per edge. Since my graph might
         # have any structure, there's no way to know where to add coupling in a
         # graph-agnostic way. Put another way, I have to take the graph (and
@@ -875,7 +875,7 @@ class PEPO:
 
         Operator chains are returned as a dict, where nodes are keys.
         If `save_tensors = True` (default), local operators are values;
-        otherwise, indices to PEPO tensors are values. If `remove_ids =
+        otherwise, indices to TNO tensors are values. If `remove_ids =
         True` (default), identities are removed. If `return_virtidx =
         True`, the virtual indices on every edge are returned as a
         dictionary alognside the operator chains.
@@ -945,7 +945,7 @@ class PEPO:
             sanity_check: bool = False
         ) -> None:
         """
-        Traversing the PEPO graph, collecting the operator chains.
+        Traversing the TNO graph, collecting the operator chains.
         Chains are saved in the argument `chains`, which is manipulated
         in-place. `edges_to_indices_list` contains the edge indices of
         every chain.
@@ -1075,7 +1075,7 @@ class PEPO:
             node: int
         ) -> np.ndarray:
         """
-        Re-shapes the PEPO-tensor `T` at node `node` such that it fits
+        Re-shapes the TNO-tensor `T` at node `node` such that it fits
         into the graph `self.G`.
 
         It is assumed that the dimensions of `T` are in the canonical
@@ -1187,7 +1187,7 @@ class PEPO:
     @property
     def intact(self) -> bool:
         """
-        Whether the PEPO is intact:
+        Whether the TNO is intact:
         * Is the underlying network message-ready?
         * Is the size of every edge saved?
         * Are the physical legs the last two dimensions in each tensor?
@@ -1276,8 +1276,8 @@ class PEPO:
                 return False
 
         if not self.check_tree:
-            # The following tests fail if the PEPO is constructed using
-            # PEPO.__add__ (status on 5th of February).
+            # The following tests fail if the TNO is constructed using
+            # TNO.__add__ (status on 5th of February).
             return True
 
         # Tree traversal correct?
@@ -1362,13 +1362,13 @@ class PEPO:
     @property
     def hermitian(self) -> bool:
         """
-        A PEPO is hermitian, if all it's site tensors are hermitian.
+        A TNO is hermitian, if all it's site tensors are hermitian.
         """
         with tqdm.tqdm.external_write_mode():
             warnings.warn(
                 "".join((
                     "This hermiticity test fails when I multiply two TFI ",
-                    "PEPOs using PEPO.__matmul__, although the dense matrix ",
+                    "TNOs using TNO.__matmul__, although the dense matrix ",
                     "of TFI @ TFI is hermitian; TODO revise this"
                 )),
                 RuntimeWarning
@@ -1402,7 +1402,7 @@ class PEPO:
     @staticmethod
     def view_tensor(T: np.ndarray):
         """
-        Prints all extractable information from PEPO tensor `T`.
+        Prints all extractable information from TNO tensor `T`.
         """
         D = T.shape[-1]
         # Sanity check.
@@ -1440,7 +1440,7 @@ class PEPO:
         The leg ordering is preserved, `trace` is set to `False` and,
         accordingly, `indices` to `None`.
 
-        To be used in `__init__` of subclasses of `PEPO`: `G` is the
+        To be used in `__init__` of subclasses of `TNO`: `G` is the
         graph from which the operator inherits it's underlying graph.
         """
         # Shallow copy of G.
@@ -1513,7 +1513,7 @@ class PEPO:
             sanity_check: bool = False
         ):
         """
-        Initialisation from a graph `G` that contains PEPO tensors, and
+        Initialisation from a graph `G` that contains TNO tensors, and
         a tree `tree` that determines the graph traversal by the finite
         state automaton. `G` must have a leg ordering.
         """
@@ -1550,7 +1550,7 @@ class PEPO:
         # Inferring root node.
         root = sorted(tuple(tree.nodes), key=lambda x: len(tree.pred[x]))[0]
 
-        # Initialising the new PEPO.
+        # Initialising the new TNO.
         op = cls(dtype=dtype)
         op.G = G
         op.tree = tree
@@ -1588,9 +1588,9 @@ class PEPO:
                 )
         else:
             # I do not check the dimensions of the tensor here because the
-            # dimensions are different from the above cases, while the PEPO is
+            # dimensions are different from the above cases, while the TNO is
             # constructed. It is advised to check self.intact after
-            # construction of the PEPO.
+            # construction of the TNO.
             pass
 
         self.G.nodes[node]["T"] = T
@@ -1602,37 +1602,37 @@ class PEPO:
 
     def __mul__(self, x: float):
         """
-        Multiplication of the whole PEPO with a scalar.
+        Multiplication of the whole TNO with a scalar.
         """
         if not np.isscalar(x): raise ValueError("x must be a scalar.")
-        newPEPO = copy.deepcopy(self)
+        newTNO = copy.deepcopy(self)
 
-        # If we insert additional factors into the PEPO, the tree traversal
+        # If we insert additional factors into the TNO, the tree traversal
         # check will fail.
-        newPEPO.check_tree = False
+        newTNO.check_tree = False
 
         # What we are really doing is multiplying every operator chain by x;
         # this is more computationaly intensive, but has the advantage that the
         # sanity check still works (otherwise, identity operators would be
         # multiplied by x, which makes the sanity check fail)
-        chains = newPEPO.operator_chains(save_tensors=False)
+        chains = newTNO.operator_chains(save_tensors=False)
 
         for chain in chains:
             for node, index in chain.items():
-                newPEPO[node][index] *= x
+                newTNO[node][index] *= x
                 break
 
         # Changing the data type, if needed.
         self.dtype = np.result_type(self.dtype, np.min_scalar_type(x))
 
-        return newPEPO
+        return newTNO
 
     def __rmul__(self, x: float): return self.__mul__(x)
 
     def __matmul__(
             self,
-            psi: Union["PEPO", PEPS, np.ndarray]
-        ) -> Union["PEPO", PEPS, np.ndarray]:
+            psi: Union["TNO", TNS, np.ndarray]
+        ) -> Union["TNO", TNS, np.ndarray]:
         """
         Action of the operator on the object `psi`.
         """
@@ -1642,22 +1642,22 @@ class PEPO:
             # do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024)
             # (https://doi.org/10.1126/sciadv.adk4321)
 
-            # Returns newPEPO, where newPEPO = self @ psi.
+            # Returns newTNO, where newTNO = self @ psi.
 
             # Sanity check.
             if not graph_compatible(self.G, psi.G, sanity_check=True):
-                raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
+                raise ValueError("Graphs of TNO and TNS cannot be combined.")
 
             if not same_legs(self.G, psi.G):
                 # Permute lhs virtual dimensions s.t. they match the leg
                 # ordering of the rhs.
                 self._permute_virtual_dimensions(psi.G)
 
-            newPEPO = copy.deepcopy(self)
+            newTNO = copy.deepcopy(self)
 
             # New sizes.
             for node1, node2, rhs_edge_size in psi.G.edges(data="size"):
-                newPEPO.G[node1][node2][0]["size"] *= rhs_edge_size
+                newTNO.G[node1][node2][0]["size"] *= rhs_edge_size
 
             # Multiplying site tensors.
             for node in self.G.nodes():
@@ -1685,38 +1685,38 @@ class PEPO:
 
                 # Preparing a re-shape.
                 newshape = ([None for _ in range(N_neighbors)]
-                            + [newPEPO.D[node], newPEPO.D[node]])
-                for neighbor in newPEPO.G.adj[node]:
-                    leg = newPEPO.G[node][neighbor][0]["legs"][node]
-                    newshape[leg] = newPEPO.G[node][neighbor][0]["size"]
+                            + [newTNO.D[node], newTNO.D[node]])
+                for neighbor in newTNO.G.adj[node]:
+                    leg = newTNO.G[node][neighbor][0]["legs"][node]
+                    newshape[leg] = newTNO.G[node][neighbor][0]["size"]
 
                 # Inserting the re-shaped tensor.
-                newPEPO[node] = np.reshape(T, shape=newshape)
+                newTNO[node] = np.reshape(T, shape=newshape)
 
-            return newPEPO
+            return newTNO
 
-        if isinstance(psi, PEPS):
+        if isinstance(psi, TNS):
             # TODO: implement this using lazy belief propagation; what I should
             # do here is what Gray is doing in Sci. Adv. 10, eadk4321 (2024)
             # (https://doi.org/10.1126/sciadv.adk4321)
 
-            # The action of self on psi is computed, and the new PEPS is
+            # The action of self on psi is computed, and the new TNS is
             # returned. It will inherit the leg ordering from psi.
 
             # Sanity check.
             if not graph_compatible(self.G, psi.G, sanity_check=True):
-                raise ValueError("Graphs of PEPO and PEPS cannot be combined.")
+                raise ValueError("Graphs of TNO and TNS cannot be combined.")
 
             if not same_legs(self.G, psi.G):
-                # Permute PEPO virtual dimensions s.t. they match the leg
-                # ordering of the PEPS.
+                # Permute TNO virtual dimensions s.t. they match the leg
+                # ordering of the TNS.
                 self._permute_virtual_dimensions(psi.G)
 
-            newPEPS = copy.deepcopy(psi)
+            newTNS = copy.deepcopy(psi)
 
             # New sizes.
             for node1, node2, rhs_edge_size in self.G.edges(data="size"):
-                newPEPS.G[node1][node2][0]["size"] *= rhs_edge_size
+                newTNS.G[node1][node2][0]["size"] *= rhs_edge_size
 
             # Multiplying site tensors.
             for node in self.G.nodes():
@@ -1741,15 +1741,15 @@ class PEPO:
                 )
 
                 # Preparing a re-shape.
-                newshape = [None for _ in range(N_neighbors)] + [newPEPS.D[node],]
-                for neighbor in newPEPS.G.adj[node]:
-                    leg = newPEPS.G[node][neighbor][0]["legs"][node]
-                    newshape[leg] = newPEPS.G[node][neighbor][0]["size"]
+                newshape = [None for _ in range(N_neighbors)] + [newTNS.D[node],]
+                for neighbor in newTNS.G.adj[node]:
+                    leg = newTNS.G[node][neighbor][0]["legs"][node]
+                    newshape[leg] = newTNS.G[node][neighbor][0]["size"]
 
                 # Inserting the re-shaped tensor.
-                newPEPS[node] = np.reshape(T, shape=newshape)
+                newTNS[node] = np.reshape(T, shape=newshape)
 
-            return newPEPS
+            return newTNS
 
         if isinstance(psi, np.ndarray):
             # Sanity check.
@@ -1806,14 +1806,14 @@ class PEPO:
             return psi
 
         raise ValueError("".join((
-            "PEPO.__matmul__ not implemented for type ",
+            "TNO.__matmul__ not implemented for type ",
             str(type(psi)),
             "."
         )))
 
-    def __add__(lhs, rhs: "PEPO"):
+    def __add__(lhs, rhs: "TNO"):
         """
-        Addition of two PEPOs. The bond dimension of the new operator is
+        Addition of two TNOs. The bond dimension of the new operator is
         the sum of the two old bond dimensions.
         """
         # Notice that lhs == self !!! I chose this variable name to keep track
@@ -1833,10 +1833,10 @@ class PEPO:
                 )
 
         if not same_legs(lhs.G, rhs.G):
-            # Permute dimensions of lhs to make both PEPOs compatible.
+            # Permute dimensions of lhs to make both TNOs compatible.
             lhs._permute_virtual_dimensions(rhs.G)
 
-        res = PEPO(dtype=np.result_type(lhs.dtype, rhs.dtype))
+        res = TNO(dtype=np.result_type(lhs.dtype, rhs.dtype))
         res.root = lhs.root
         res.tree = lhs.tree
 
@@ -1845,7 +1845,7 @@ class PEPO:
         # see TODO in README.
 
         # Graph for the result with correct legs and sizes.
-        res.G = PEPO.prepare_graph(lhs.G, D=lhs.D)
+        res.G = TNO.prepare_graph(lhs.G, D=lhs.D)
 
         # Saving new sizes in the edges.
         for node1, node2 in res.G.edges():
@@ -1882,13 +1882,13 @@ class PEPO:
             res.G.nodes[node]["T"] = T
 
         if not res.intact:
-            raise RuntimeError("PEPO not intact.")
+            raise RuntimeError("TNO not intact.")
 
         return res
 
     def __repr__(self) -> str:
         return "".join((
-            f"Operator on {self.nsites} sites. PEPO is ",
+            f"Operator on {self.nsites} sites. TNO is ",
             "intact." if self.intact else "not intact."
         ))
 
@@ -1904,9 +1904,9 @@ class PEPO:
         """Does the graph `self.G` contain the node `node`?"""
         return self.G.has_node(node)
 
-    def __eq__(self, rhs: "PEPO") -> bool:
+    def __eq__(self, rhs: "TNO") -> bool:
         """
-        Two PEPOs are considered equal if they contain the same local
+        Two TNOs are considered equal if they contain the same local
         tensors on the same graph. Different leg orderings are accounted
         for. Keep in mind that this notion of equality is not invariant
         with respect to the gauge freedom of the virtual bond
@@ -1915,7 +1915,7 @@ class PEPO:
         warnings.warn(
             "".join((
                 "This did not work as I expected (on 7th of May). What you ", 
-                "can do instead is subtract the two PEPOs and check if the ",
+                "can do instead is subtract the two TNOs and check if the ",
                 "dense matrix is close to zero everywhere."
             )),
             UserWarning
@@ -1942,7 +1942,7 @@ class PEPO:
     def __init__(self, dtype: np.dtype = np.complex128) -> None:
         self.G: nx.MultiGraph
         """
-        Graph that contains PEPO local tensors, leg ordering, virtual
+        Graph that contains TNO local tensors, leg ordering, virtual
         bond dimension sizes, and physical dimensions.
         """
 
@@ -1963,7 +1963,7 @@ class PEPO:
         return
 
 
-class PauliPEPO(PEPO):
+class PauliTNO(TNO):
     """
     Tensor product operators on spin systems,
     composed of Pauli operators.
@@ -1978,7 +1978,7 @@ class PauliPEPO(PEPO):
     @property
     def intact(self) -> bool:
         """
-        Whether the PEPO is intact:
+        Whether the TNO is intact:
         * Checks `super().intact`.
         * Checks if the physical dimension is two.
         * Checks if the hamiltonian is composed of Pauli operators.
@@ -2032,7 +2032,7 @@ class PauliPEPO(PEPO):
 
 
 # -----------------------------------------------------------------------------
-#                   Functions for PEPO.operator_chains
+#                   Functions for TNO.operator_chains
 # -----------------------------------------------------------------------------
 
 
@@ -2125,9 +2125,9 @@ def Zero(
         D: Union[int, dict[int, int]],
         dtype=np.complex128,
         sanity_check: bool = False
-    ) -> PEPO:
+    ) -> TNO:
     """
-    Returns a zero-valued PEPO on graph `G`. Physical dimension `D`.
+    Returns a zero-valued TNO on graph `G`. Physical dimension `D`.
     If `D` is a dict, it must contain the physical dimension for every
     site in `G`.
     """
@@ -2138,8 +2138,8 @@ def Zero(
                 "D must define the physical dimension on every site of G."
             )
 
-    op = PEPO()
-    op.G = PEPO.prepare_graph(G=G, chi=1, D=D)
+    op = TNO()
+    op.G = TNO.prepare_graph(G=G, chi=1, D=D)
 
     # Root node is node with smallest degree.
     op.root = sorted(G.nodes(), key=lambda x: len(G.adj[x]))[0]
@@ -2147,7 +2147,7 @@ def Zero(
     # Depth-first search tree.
     op.tree = nx.dfs_tree(G, op.root)
 
-    # Since the PEPO contains only zeros, the tree traversal checks are not
+    # Since the TNO contains only zeros, the tree traversal checks are not
     # applicable.
     op.check_tree = False
 
@@ -2169,9 +2169,9 @@ def Identity(
         D: Union[int, dict[int, int]],
         dtype=np.complex128,
         sanity_check: bool = False
-    ) -> PEPO:
+    ) -> TNO:
     """
-    Returns the identity PEPO on graph `G`. Physical dimension `D`.
+    Returns the identity TNO on graph `G`. Physical dimension `D`.
     If `D` is a dict, it must contain the physical dimension for every
     site in `G`.
     """

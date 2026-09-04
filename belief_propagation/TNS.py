@@ -2,7 +2,7 @@
 Projector-entangled pair states on arbitrary graphs.
 """
 
-__all__ = ["PEPS",]
+__all__ = ["TNS",]
 
 import warnings
 import copy
@@ -23,14 +23,14 @@ from belief_propagation.utils import (
     same_legs
 )
 
-class PEPS:
+class TNS:
     """
     Base class for matrix-product states with arbitrary geometry.
     """
 
     def toarray(self, sanity_check: bool = False) -> np.ndarray:
         """
-        Contracts the PEPS using `ctg.einsum`.
+        Contracts the TNS using `ctg.einsum`.
 
         The order of the physical dimensions is inherited from the
         graph labels of the nodes: the nodes are sorted in ascending
@@ -72,7 +72,7 @@ class PEPS:
 
     def conj(self, sanity_check: bool = False):
         """
-        bra to this state's ket: All PEPS tensors are conjugated.
+        bra to this state's ket: All TNS tensors are conjugated.
         """
         if sanity_check: assert self.intact
 
@@ -132,7 +132,7 @@ class PEPS:
             self,
             size: Union[int, nx.MultiGraph],
             sanity_check: bool = False
-        ) -> "PEPS":
+        ) -> "TNS":
         """
         Enlarges the virtual bond dimensions of the state. They new bond
         dimensions can be given as integer `size`, which applies to all
@@ -155,35 +155,35 @@ class PEPS:
                 "geometry of the state."
             )))
 
-        new_peps = copy.deepcopy(self)
+        new_tns = copy.deepcopy(self)
 
         # Adding new bond dimensions.
-        for node1, node2 in new_peps.G.edges():
+        for node1, node2 in new_tns.G.edges():
             newsize = size_graph[node1][node2][0]["size"]
-            new_peps.G[node1][node2][0]["size"] = newsize
+            new_tns.G[node1][node2][0]["size"] = newsize
 
-        for node in new_peps:
+        for node in new_tns:
             # Assembling numpy pad widths.
-            pad_width = [None for _ in new_peps.G.adj[node]] + [(0, 0,),]
-            for neighbor in new_peps.G.adj[node]:
-                leg = new_peps.G[node][neighbor][0]["legs"][node]
+            pad_width = [None for _ in new_tns.G.adj[node]] + [(0, 0,),]
+            for neighbor in new_tns.G.adj[node]:
+                leg = new_tns.G[node][neighbor][0]["legs"][node]
                 old_size = self.G[node][neighbor][0]["size"]
                 pad_width[leg] = (
                     0,
                     max(size_graph[node][neighbor][0]["size"] - old_size, 0)
                 )
 
-            # Padding tensor, and inserting into new PEPS.
-            new_peps[node] = np.pad(
+            # Padding tensor, and inserting into new TNS.
+            new_tns[node] = np.pad(
                 self[node],
                 pad_width=pad_width,
                 mode="constant",
                 constant_values=0
             )
 
-        if sanity_check: assert new_peps.intact
+        if sanity_check: assert new_tns.intact
 
-        return new_peps
+        return new_tns
 
     def _permute_virtual_dimensions(
             self,
@@ -231,7 +231,7 @@ class PEPS:
     @property
     def intact(self) -> bool:
         """
-        Checks if the PEPS is intact:
+        Checks if the TNS is intact:
         * Is the underlying network message-ready?
         * Is the size of every edge saved?
         * Are the physical legs the last dimension in each tensor?
@@ -351,13 +351,13 @@ class PEPS:
             rng: np.random.Generator = np.random.default_rng(),
             dtype: np.dtype = np.complex128,
             sanity_check: bool = False,
-        ) -> "PEPS":
+        ) -> "TNS":
         """
         Initializes a MPS randomly. The virtual bond dimension is `chi`,
         the physical dimension is `D`. Leg ordering in `G` is included
         based on value of `keep_legs` (default is `False`). Bond
         dimensions are initialized using `bond_dim_strategy`; see
-        `PEPS.set_bond_dimensions`.
+        `TNS.set_bond_dimensions`.
         """
         # Random number generation.
         if real:
@@ -396,9 +396,9 @@ class PEPS:
             cls,
             G: nx.MultiGraph,
             sanity_check: bool = False
-        ) -> "PEPS":
+        ) -> "TNS":
         """
-        Initialises a PEPS from a TN by appending dummy physical
+        Initialises a TNS from a TN by appending dummy physical
         dimensions of size one to the site tensors. `G` needs to contain
         a tensor on every site, and the `legs` attribute on every edge.
         """
@@ -422,9 +422,9 @@ class PEPS:
             G: nx.MultiGraph,
             dtype: np.dtype = np.complex128,
             sanity_check: bool = False
-        ) -> "PEPS":
+        ) -> "TNS":
         """
-        Returns a dummy PEPS on graph `G` with physical dimension one.
+        Returns a dummy TNS on graph `G` with physical dimension one.
         """
         G = cls.prepare_graph(G=G, D=1)
         # adding tensors
@@ -447,11 +447,11 @@ class PEPS:
             normalize: bool = True,
             dtype: np.dtype = None,
             sanity_check: bool = False
-        ) -> "PEPS":
+        ) -> "TNS":
         """
-        Initialises a product state PEPO. If `state` is an array, it is
+        Initialises a product state TNO. If `state` is an array, it is
         broadcasted to all sites. If `state` is a dictionary, it is
-        assumed to contain a pure state for every site. The PEPO is
+        assumed to contain a pure state for every site. The TNO is
         normalized to unity, if `normalize=True` (default).
         """
         if isinstance(state, np.ndarray):
@@ -498,7 +498,7 @@ class PEPS:
             return psi
 
         raise NotImplementedError("".join((
-            "PEPS.ProductState not implemented for state of type ",
+            "TNS.ProductState not implemented for state of type ",
             str(type(state)),
             "."
         )))
@@ -516,7 +516,7 @@ class PEPS:
         and `indices` to the edges. If `D` is given, adds physical
         dimensions to the nodes.
 
-        To be used in `__init__` of subclasses of `PEPO`: `G` is the
+        To be used in `__init__` of subclasses of `TNO`: `G` is the
         graph from which the operator inherits it's underlying graph.
         """
         # shallow copy of G
@@ -616,7 +616,7 @@ class PEPS:
         if bond_dim_strategy == "exp":
             #if not np.isscalar(D):
             #    raise NotImplementedError("".join((
-            #        "PEPS.set_bond_dimensions is not implemented for bond ",
+            #        "TNS.set_bond_dimensions is not implemented for bond ",
             #        "dimensions that change between nodes."
             #    )))
 
@@ -626,7 +626,7 @@ class PEPS:
         if bond_dim_strategy == "exp_cutoff":
             #if not np.isscalar(D):
             #    raise NotImplementedError("".join((
-            #        "PEPS.set_bond_dimensions is not implemented for bond ",
+            #        "TNS.set_bond_dimensions is not implemented for bond ",
             #        "dimensions that change between nodes."
             #    )))
 
@@ -676,18 +676,18 @@ class PEPS:
 
     def __mul__(self, x: float):
         """
-        Multiplication of the whole PEPS with a scalar.
+        Multiplication of the whole TNS with a scalar.
         """
         if not np.isscalar(x): raise ValueError("x must be a scalar.")
-        newPEPS = copy.deepcopy(self)
+        newTNS = copy.deepcopy(self)
 
-        N = newPEPS.nsites
-        for node in newPEPS: newPEPS[node] = newPEPS[node] * (x**(1/N))
+        N = newTNS.nsites
+        for node in newTNS: newTNS[node] = newTNS[node] * (x**(1/N))
 
         # Changing the data type, if needed.
         self.dtype = np.result_type(self.dtype, np.min_scalar_type(x**(1/N)))
 
-        return newPEPS
+        return newTNS
 
     def __rmul__(self, x: float): return self.__mul__(x)
 
@@ -698,7 +698,7 @@ class PEPS:
         ) -> str:
         out = "".join((
             f"State on {self.nsites} sites.",
-            " PEPS is ",
+            " TNS is ",
             ("intact." if self.intact else "not intact.")))
 
         if edge_details:
@@ -736,9 +736,9 @@ class PEPS:
         """Does the graph `self.G` contain the node `node`?"""
         return self.G.has_node(node)
 
-    def __eq__(self, rhs: "PEPS") -> bool:
+    def __eq__(self, rhs: "TNS") -> bool:
         """
-        Two PEPS are considered equal if they contain the same local
+        Two TNS are considered equal if they contain the same local
         tensors on the same graph. Different leg orderings are accounted
         for. Keep in mind that this notion of equality is not invariant
         with respect to the gauge freedom of the virtual bond
@@ -800,7 +800,7 @@ class PEPS:
 
         self.G: nx.MultiGraph = G
         """
-        Graph that contains PEPO local tensors, leg ordering, virtual
+        Graph that contains TNO local tensors, leg ordering, virtual
         bond dimension sizes, and physical dimensions.
         """
 

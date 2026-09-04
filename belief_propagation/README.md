@@ -2,24 +2,24 @@
 
 * **Stoudenmire vs Gray:** Kim et Al claimed utility of quantum computing before fault tolerance in 2023 ([Nature 618, 500 - 505 (2023)](https://doi.org/10.1038/s41586-023-06096-3)). Both Stoudenmire et Al ([PRX Quantum 5, 010308 (2024)](https://doi.org/10.1103/PRXQuantum.5.010308)) and Gray et Al ([Sci. Adv. 10, eadk4321 (2024)](https://doi.org/10.1126/sciadv.adk4321)) published results, where they simulate this experiment using BP on tensor networks - so what's the difference?
   * Both use the same gauge[^1]; Stoudenmire calls it the "Vidal gauge", while Gray calls it the "super-orthogonal gauge".
-  * :arrow_right: Gray uses mixed time evolution, where they evolve both the PEPS and the PEPO "towards each other" to limit entanglement creation; Stoudenmire stays in the Schrödinger picture.
-  * :arrow_right: Gray compresses each layer of the trotterized time evolution into a single PEPO, that he applies using what he calls "L2BP". Stoudenmire applies gates individually using the Simple-Update algorithm.
+  * :arrow_right: Gray uses mixed time evolution, where they evolve both the TNS and the TNO "towards each other" to limit entanglement creation; Stoudenmire stays in the Schrödinger picture.
+  * :arrow_right: Gray compresses each layer of the trotterized time evolution into a single TNO, that he applies using what he calls "L2BP". Stoudenmire applies gates individually using the Simple-Update algorithm.
 
 [^1]: Consult Tindall 2023 ([arXiv:2306.17837](https://arxiv.org/abs/2306.17837)) to see this; this gauge can be found using Belief Propagation.
 
 # File contents
 
-* **`PEPO.py`** Projector-entangled Pair Operators on arbitrary graphs, where the Tensor Network structure is inherited from the main module (see [this file](https://github.com/HendrikKuehne/belief_propagation/blob/main/belief_propagation/README.md) for an introduction).
-  * **ToDo**: Overhaul PEPO initialisation. The current method defines site tensors without site-to-site coupling, then reshapes them such that the leg ordering is correct with respect to the graph. Site-to-site coupling is added afterwards. This, then, is very illegibile since I need to keep track of the leg ordering and since case distinctions are necessary. This could be done more elegantly by defining a tree along which coupling flows[^2]. The goal would be to define the site tensors without having to refer to the leg ordering of the graph, and re-shape afterwards.
-  * **ToDo** Complete implementation of `PEPO.__add__`.
-    * This necessitates handling the tree traversal; so far (5th of February), I had to disable the tree traversal tests in `PEPO.intact`, since the way I implemented summation of PEPOs is not compatible with the check I had so far. I don't think this would be hard to implement, it just requires some bookkeeping.
-  * **ToDo** Check `PEPO.hermitian`; it somehow fails for the square Ising model, calculated using `PEPO.__matmul__`.
-    * The reason is, probably, that factors `1j` get mixed up (wander from one virtual index to another). I suspect this because the sanity check still works, i.e. every local operator is still proportional to a Pauli matrix. Is there a simple, concise way to test if a PEPO is hermitian in this case?
-  * **ToDo** Unify implementation of `PEPS` and `PEPO` classes; some sanity checks and properties like `D` and `chi` could probably be merged into a base class, from which both `PEPS` and `PEPO` would inherit.
-  * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `PEPO.to_dense()` yield the same eigenvalues. Tested against Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master).
-* **`PEPS.py`** PEPS on arbitrary graphs.
+* **`TNO.py`** Projector-entangled Pair Operators on arbitrary graphs, where the Tensor Network structure is inherited from the main module (see [this file](https://github.com/HendrikKuehne/belief_propagation/blob/main/belief_propagation/README.md) for an introduction).
+  * **ToDo**: Overhaul TNO initialisation. The current method defines site tensors without site-to-site coupling, then reshapes them such that the leg ordering is correct with respect to the graph. Site-to-site coupling is added afterwards. This, then, is very illegibile since I need to keep track of the leg ordering and since case distinctions are necessary. This could be done more elegantly by defining a tree along which coupling flows[^2]. The goal would be to define the site tensors without having to refer to the leg ordering of the graph, and re-shape afterwards.
+  * **ToDo** Complete implementation of `TNO.__add__`.
+    * This necessitates handling the tree traversal; so far (5th of February), I had to disable the tree traversal tests in `TNO.intact`, since the way I implemented summation of TNOs is not compatible with the check I had so far. I don't think this would be hard to implement, it just requires some bookkeeping.
+  * **ToDo** Check `TNO.hermitian`; it somehow fails for the square Ising model, calculated using `TNO.__matmul__`.
+    * The reason is, probably, that factors `1j` get mixed up (wander from one virtual index to another). I suspect this because the sanity check still works, i.e. every local operator is still proportional to a Pauli matrix. Is there a simple, concise way to test if a TNO is hermitian in this case?
+  * **ToDo** Unify implementation of `TNS` and `TNO` classes; some sanity checks and properties like `D` and `chi` could probably be merged into a base class, from which both `TNS` and `TNO` would inherit.
+  * Implementation works; tested using `dummynet1`. Explicit construction of the Hamiltonian and `TNO.to_dense()` yield the same eigenvalues. Tested against Christian's [pytenet](https://github.com/cmendl/pytenet/tree/master).
+* **`TNS.py`** TNS on arbitrary graphs.
   * **ToDo** Smarter initialization of bond dimensions on loopy geometries. What I have so far prevents bond dimension bottlenecks, and is exact on edges that are not part of loops.
-* **`braket.py`** Stacks of combinations of PEPS and PEPO on arbitrary graphs.
+* **`braket.py`** Stacks of combinations of TNS and TNO on arbitrary graphs.
   * **ToDo** Accelerate the message update somehow
     * Sparse matrices? Scipy only allows for two-dimensional sparse arrays, but the [sparse package](https://sparse.pydata.org/en/stable/) implements higher-dimensional sparse arrays.
     * Pancotti & Gray stack all the tensors and the messages s.t. the BP algorithm becomes a vector iteration ([arxiv:2306.15004](https://arxiv.org/abs/2306.15004))

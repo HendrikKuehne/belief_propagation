@@ -34,8 +34,8 @@
         * I could use PyTorch Geometric instead of NetworkX, but sparse diagonalization seems to be a problem... what about CuPy though.
     * Sparse linear algebra using [CuPy](https://cupy.dev)
         * A drop-in replacement for SciPy! It has a [sparse eigensolver](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.eigsh.html#cupyx.scipy.sparse.linalg.eigsh) and [linear operators](https://docs.cupy.dev/en/stable/reference/generated/cupyx.scipy.sparse.linalg.LinearOperator.html#cupyx.scipy.sparse.linalg.LinearOperator).
-* Improve implementation of `Braket`, `PEPS`, `PEPO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
-* Go through all the code and fix the names of classes, arguments, attributes, and so on; many of them are confusingly named (`PEPS` $\rightarrow$ `TPS`, `BP_excitations` $\rightarrow$ `LSE_configurations`, and so on)
+* Improve implementation of `Braket`, `TNS`, `TNO` and `DMRG` classes; see `README.md` in [`belief_propagation/`](https://github.com/HendrikKuehne/belief_propagation/tree/main/belief_propagation).
+* Go through all the code and fix the names of classes, arguments, attributes, and so on; many of them are confusingly named (`TNS` $\rightarrow$ `TPS`, `BP_excitations` $\rightarrow$ `LSE_configurations`, and so on)
 * More elegant implementation of Loop Series Contraction
   * Put more functionality for configurations into a single class.
   * I feel like the workarounds necessary for leaving the `Braket` object unchanged are a bit ugly; maybe re-think the implementation.
@@ -68,7 +68,7 @@ This will be updated continuously, as questions come to mind.
     * :arrow_right: The relative error improves when `block_bp` is included in the plaquette routine; why is that the case? It is not because we are reducing the number of nodes (see [this section](https://github.com/HendrikKuehne/belief_propagation/tree/main/doc/plots#tn_vs_pq_3x3_baselinepdf)) - is it because we are able to model local interactions more faithfully if a large chunk of the network is contracted explicitly? That is the physical argument - in terms of graphs, we are treating many small loops exactly which could otherwise have introduced inaccuracies.
 * Some iterations of the Belief Propagation algorithm take many orders of magnitude longer than others; do these still converge?
 * What happens when we try Christian's idea of Orthogonal Belief Propagation?
-    * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of PEPS networks that Arad (2021) introduces?
+    * After one iteration is finished and the messages are found, we attempt to find messages that are orthogonal to the previous ones.[^5] What is the result? Are we iteratively finding Schmidt bases of the edges? Is this related to the quasi-canonical form of TNS networks that Arad (2021) introduces?
 * Do different gauges have a (strong) effect on BPDMRG performance?
   * :arrow_right: Yes! The QR-gauge drastically improves the conditioning of the generalized eigenvalue problem.
 * What are BP Trapping sets?

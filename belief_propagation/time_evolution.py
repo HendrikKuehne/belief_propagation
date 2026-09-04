@@ -1,5 +1,5 @@
 """
-Time evolution of PEPO operators.
+Time evolution of TNO operators.
 """
 
 __all__ = [
@@ -17,8 +17,8 @@ import networkx as nx
 import scipy.linalg as scialg
 import tqdm
 
-from belief_propagation.PEPO import PEPO, OpChain, OpLayer, Identity
-from belief_propagation.PEPS import PEPS
+from belief_propagation.TNO import TNO, OpChain, OpLayer, Identity
+from belief_propagation.TNS import TNS
 from belief_propagation.braket import Braket
 from belief_propagation.utils import (
     graph_compatible,
@@ -162,14 +162,14 @@ def __assemble_layers_in_trotter_order(
 
 
 def get_brick_wall_layers(
-        op: PEPO,
+        op: TNO,
         t: float = 1,
         trotter_order: int = 1,
         sanity_check: bool = False
     ) -> tuple[OpLayer]:
     """
-    Decomposes a PEPO into multiple layers based on the brick wall
-    layout. This is accomplished by decomposing the PEPO into operator
+    Decomposes a TNO into multiple layers based on the brick wall
+    layout. This is accomplished by decomposing the TNO into operator
     chains, and choosing (spatially) disjoint subsets. Returns the
     operator layers in correct trotterization order, each multiplied
     with the factor `t`.
@@ -202,17 +202,17 @@ def get_brick_wall_layers(
 
 
 # -----------------------------------------------------------------------------
-#                   PEPO operator exponential & trotterization
+#                   TNO operator exponential & trotterization
 # -----------------------------------------------------------------------------
 
 
 def operator_exponential(
-        op: PEPO,
+        op: TNO,
         t: float = 1,
         trotter_order: int = 1,
         contract: bool = False,
         sanity_check: bool = False
-    ) -> Union[PEPO, tuple[PEPO]]:
+    ) -> Union[TNO, tuple[TNO]]:
     """
     Operator exponential `exp(op * t)`, using trotterization. If
     `contract=True`, multiple layers are multiplied together afterwards.
@@ -226,10 +226,10 @@ def operator_exponential(
     )
 
     if not contract:
-        # no contraction; returning the PEPOs separately in a list.
+        # no contraction; returning the TNOs separately in a list.
         return op_list[::-1]
 
-    # Contracting all PEPOs.
+    # Contracting all TNOs.
     contracted_op = op_list[-1]
     for op in reversed(op_list[:-1]): contracted_op = op @ contracted_op
 
@@ -237,17 +237,17 @@ def operator_exponential(
 
 
 def __trotter_operator_exponential(
-        op: PEPO,
+        op: TNO,
         t: float,
         trotter_order: int,
         sanity_check: bool
-    ) -> tuple[PEPO]:
+    ) -> tuple[TNO]:
     """
     Decomposes the operator into brick wall layers based on
     `trotter_order`, and calculates the operator exponential of each
     layer.
     """
-    # Trotterization: decomposing PEPO into brick wall layers.
+    # Trotterization: decomposing TNO into brick wall layers.
     layers = get_brick_wall_layers(
         op=op, t=t, trotter_order=trotter_order, sanity_check=sanity_check
     )
@@ -260,12 +260,12 @@ def __trotter_operator_exponential(
         chain_length_set = layer.chain_length_set
 
         if chain_length_set == set((1,)):
-            op_list += (__PEPO_exp_single_site_brick_wall_layer(
+            op_list += (__TNO_exp_single_site_brick_wall_layer(
                 G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
 
         elif chain_length_set == set((2,)):
-            op_list += (__PEPO_exp_two_site_brick_wall_layer(
+            op_list += (__TNO_exp_two_site_brick_wall_layer(
                 G=op.G, brick_wall_layer=layer, sanity_check=sanity_check
             ),)
 
@@ -279,13 +279,13 @@ def __trotter_operator_exponential(
     return op_list
 
 
-def __PEPO_exp_single_site_brick_wall_layer(
+def __TNO_exp_single_site_brick_wall_layer(
         G: nx.MultiGraph,
         brick_wall_layer: OpLayer,
         sanity_check: bool = False
-    ) -> PEPO:
+    ) -> TNO:
     """
-    PEPO exponential of the sum of all operator chains in
+    TNO exponential of the sum of all operator chains in
     `brick_wall_layer`. All operator chains must have length one, and
     must be disjoint. In other words, this method computes
     `exp(sum(brick_wall_layer))`.
@@ -313,14 +313,14 @@ def __PEPO_exp_single_site_brick_wall_layer(
     return op
 
 
-def __PEPO_exp_two_site_brick_wall_layer(
+def __TNO_exp_two_site_brick_wall_layer(
         G: nx.MultiGraph,
         brick_wall_layer: OpLayer,
         singval_eps: float = None,
         sanity_check: bool = False
-    ) -> PEPO:
+    ) -> TNO:
     """
-    PEPO exponential of the sum of all operator chains in
+    TNO exponential of the sum of all operator chains in
     `brick_wall_layer`. All operator chains must have length two, and
     must be disjoint.
 
@@ -328,7 +328,7 @@ def __PEPO_exp_two_site_brick_wall_layer(
     (as it occurs during trotterization). This method then takes all
     operator chains in `brick_wall_layer`, computes their operator
     exponentials, and separates them using SVDs. All operator chain
-    exponentials are inserted into one PEPO. In other words, this method
+    exponentials are inserted into one TNO. In other words, this method
     computes `exp(sum(brick_wall_layer))`.
 
     Singular values close to zero are truncated. If
@@ -396,12 +396,12 @@ def __PEPO_exp_two_site_brick_wall_layer(
         # New bond dimension.
         chi = len(singvals)
 
-        # Enlarging PEPO tensor in node1.
+        # Enlarging TNO tensor in node1.
         shape1 = list(op[node1].shape)
         leg1 = op.G[node1][node2][0]["legs"][node1]
         shape1[leg1] = chi
         op[node1] = np.resize(op[node1], new_shape=shape1)
-        # Enlarging PEPO tensor in node2.
+        # Enlarging TNO tensor in node2.
         shape2 = list(op[node2].shape)
         leg2 = op.G[node1][node2][0]["legs"][node2]
         shape2[leg2] = chi
@@ -447,8 +447,8 @@ def __PEPO_exp_two_site_brick_wall_layer(
 
 
 def simple_update_TEBD(
-        psi: PEPS,
-        H: PEPO,
+        psi: TNS,
+        H: TNO,
         dtau: Union[float, Callable[[int], float]] = 0.05,
         nSteps: int = None,
         tau_total: float = 5,
@@ -461,7 +461,7 @@ def simple_update_TEBD(
         normalize_with: str = "BP",
         verbose: bool = False,
         sanity_check: bool = False,
-    ) -> Union[PEPS, tuple[PEPS]]:
+    ) -> Union[TNS, tuple[TNS]]:
     """
     TEBD using the simple-update method from
     [Phys. Rev. Lett. 101, 090603 (2008)](https://doi.org/10.1103/PhysRevLett.101.090603).
@@ -654,7 +654,7 @@ def simple_update_TEBD(
 
 
 def __simple_update_apply_op_chain_single_site(
-        psi: PEPS,
+        psi: TNS,
         op_chain: OpChain,
         sanity_check: bool,
     ) -> None:
@@ -688,7 +688,7 @@ def __simple_update_apply_op_chain_single_site(
 
 
 def __simple_update_apply_op_chain_two_site(
-        psi: PEPS,
+        psi: TNS,
         op_chain: OpChain,
         singval_threshold: float,
         min_bond_dim: int,

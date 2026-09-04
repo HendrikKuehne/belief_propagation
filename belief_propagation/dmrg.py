@@ -29,9 +29,9 @@ from belief_propagation.utils import (
     graph_compatible,
     check_msg_intact
 )
-from belief_propagation.PEPO import PEPO, Zero
+from belief_propagation.TNO import TNO, Zero
 # Zero is used for convenience; can be circumvented easily.
-from belief_propagation.PEPS import PEPS
+from belief_propagation.TNS import TNS
 from belief_propagation.braket import (
     Braket,
     BP_excitations,
@@ -263,7 +263,7 @@ class LocalHamiltonianOperator(LocalOperator):
         Arguments:
         * `nLegs`: Number of neighbors in the graph.
         * `D`: Physical dimension.
-        * `W`: Hamiltonian PEPO tensor.
+        * `W`: Hamiltonian TNO tensor.
         * `msgdata`: Message data. One tuple for each incoming message,
         which consists of the message itself, and the legs
         (`(bra_leg, op_leg, ket_leg)`). These legs are the legs of the
@@ -272,7 +272,7 @@ class LocalHamiltonianOperator(LocalOperator):
         """
         # Sanity checks.
         if W.ndim != nLegs + 2: raise ValueError("".join((
-            f"Operator PEPO tensor has wring shape. Expected {nLegs + 2} ",
+            f"Operator TNO tensor has wring shape. Expected {nLegs + 2} ",
             f"legs, received {W.ndim}. W should have one dimension per ",
             "neighbor, plus two physical dimensions."
         )))
@@ -930,14 +930,14 @@ class DMRG:
                 and all(expval.converged for expval in self.expvals))
 
     @property
-    def psi(self) -> PEPS:
+    def psi(self) -> TNS:
         """The current state of the system."""
         return self.overlap.ket
 
     @psi.setter
-    def psi(self, newket: PEPS) -> None:
+    def psi(self, newket: TNS) -> None:
         """
-        Changing the state of the system requires inserting a new PEPS
+        Changing the state of the system requires inserting a new TNS
         in all `Braket` objects. Convergence markers will be set to
         `False`.
         """
@@ -1112,8 +1112,8 @@ class DMRG:
 
     def __init__(
             self,
-            oplist: tuple[PEPO],
-            psi_init: PEPS = None,
+            oplist: tuple[TNO],
+            psi_init: TNS = None,
             chi: int = None,
             dtype: np.dtype = np.complex128,
             sanity_check: bool = False,
@@ -1122,7 +1122,7 @@ class DMRG:
         """
         Initialisation of a `DMRG` object, where the state has bond
         dimension `chi`. The initial state is chosen randomly, if it is
-        not given. `kwargs` are passed to `PEPS.init_random`.
+        not given. `kwargs` are passed to `TNS.init_random`.
 
         For `oplist = (H1, H2, ...)`, this object runs single-site DMRG
         on the Hamiltonian `H = H1 + H2 + ...`.
@@ -1150,7 +1150,7 @@ class DMRG:
 
         # If not given, initial state is chosen randomly.
         if psi_init is None:
-            psi_init = PEPS.init_random(
+            psi_init = TNS.init_random(
                 G=oplist[0].G,
                 D=oplist[0].D,
                 chi=chi,
@@ -1220,7 +1220,7 @@ class LoopSeriesDMRG:
 
     def __assemble_T_totalH(self) -> None:
         """
-        Evaluates the direct product of PEPO tensors, and writes to
+        Evaluates the direct product of TNO tensors, and writes to
         `self._T_totalH`. Local hamiltonian tensors are block-diagonal
         and contain the local tensors of `self.expvals` on the diagonal.
         """
@@ -1896,12 +1896,12 @@ class LoopSeriesDMRG:
         return self._converged
 
     @property
-    def psi(self) -> PEPS:
+    def psi(self) -> TNS:
         """The current state of the system."""
         return self._psi
 
     @psi.setter
-    def psi(self, newpsi: PEPS) -> None:
+    def psi(self, newpsi: TNS) -> None:
         """
         Changing the state of the system. Convergence marker is set to
         `False`.
@@ -2112,8 +2112,8 @@ class LoopSeriesDMRG:
 
     def __init__(
             self,
-            oplist: tuple[PEPO],
-            psi_init: PEPS = None,
+            oplist: tuple[TNO],
+            psi_init: TNS = None,
             chi: int = None,
             max_order: int = 0,
             sanity_check: bool = False,
@@ -2122,7 +2122,7 @@ class LoopSeriesDMRG:
         """
         Initialisation of a `LoopSeriesDMRG` object, where the state has
         bond dimension `chi`. The initial state is chosen randomly, if
-        it is not given. `kwargs` are passed to `PEPS.init_random`.
+        it is not given. `kwargs` are passed to `TNS.init_random`.
         
         For `oplist = (H1, H2, ...)`, this object runs single-site DMRG
         on the Hamiltonian `H = H1 + H2 + ...`.
@@ -2154,17 +2154,17 @@ class LoopSeriesDMRG:
 
         # If not given, initial state is chosen randomly.
         if psi_init is None:
-            psi_init = PEPS.init_random(
+            psi_init = TNS.init_random(
                 G=op.G,
                 D=oplist[0].D,
                 chi=chi,
                 **kwargs
             )
 
-        self.oplist: tuple[PEPO] = oplist
+        self.oplist: tuple[TNO] = oplist
         """Constituent operators of the Hamiltonian."""
 
-        self._psi: PEPS = psi_init
+        self._psi: TNS = psi_init
         """The current state of the system."""
 
         self.max_order: int = max_order
@@ -2209,8 +2209,8 @@ class LoopSeriesDMRG:
         self._env_overlap: dict[int, np.ndarray] = None
         """Environments on the overlap."""
 
-        # Local PEPO tensors of the total hamiltonian. Formed as direct sums of
-        # constituent PEPO tensors.
+        # Local TNO tensors of the total hamiltonian. Formed as direct sums of
+        # constituent TNO tensors.
         self._T_totalH: dict[int, np.ndarray] = None
         """Local tensors of the total hamiltonian."""
         self.__assemble_T_totalH()

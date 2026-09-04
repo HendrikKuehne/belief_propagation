@@ -192,7 +192,7 @@ class LocalHamiltonianOperator(LocalOperator):
         Arguments:
         * `nLegs`: Number of neighbors in the graph.
         * `D`: Physical dimension.
-        * `W`: Hamiltonian PEPO tensor.
+        * `W`: Hamiltonian TNO tensor.
         * `msgdata`: Message data. One tuple for each incoming message,
         which consists of the message itself, and the legs
         (`(bra_leg, op_leg, ket_leg)`). These legs are the legs of the
@@ -201,7 +201,7 @@ class LocalHamiltonianOperator(LocalOperator):
         """
         # Sanity checks.
         if W.ndim != nLegs + 2: raise ValueError("".join((
-            f"Operator PEPO tensor has wring shape. Expected {nLegs + 2} ",
+            f"Operator TNO tensor has wring shape. Expected {nLegs + 2} ",
             f"legs, received {W.ndim}. W should have one dimension per ",
             "neighbor, plus two physical dimensions."
         )))
